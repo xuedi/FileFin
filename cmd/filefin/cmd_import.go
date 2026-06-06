@@ -259,6 +259,17 @@ func mergeMeta(primary, fallback importer.MetaContent) importer.MetaContent {
 	return out
 }
 
+// dropKey returns kvs without any entry whose key equals key.
+func dropKey(kvs []model.KV, key string) []model.KV {
+	var out []model.KV
+	for _, kv := range kvs {
+		if kv.Key != key {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // fillKeys appends every key from fallback that is absent in primary, keeping
 // primary's entries first and in order.
 func fillKeys(primary, fallback []model.KV) []model.KV {

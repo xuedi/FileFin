@@ -95,7 +95,12 @@ func enrichWithOMDb(items []importer.Media, lookup omdbLookup) (enriched, fellBa
 			continue
 		}
 		omdbMeta := metaFromOMDb(r.movie, items[i].Title, items[i].Year)
-		items[i].Meta = mergeMeta(omdbMeta, items[i].Meta)
+		// OMDb success supplies the `## ratings` section, so drop Plex's lone
+		// `rating` (a different scale) instead of letting the merge carry it into
+		// `## metadata`.
+		plexMeta := items[i].Meta
+		plexMeta.Metadata = dropKey(plexMeta.Metadata, "rating")
+		items[i].Meta = mergeMeta(omdbMeta, plexMeta)
 		enriched++
 	}
 	return enriched, fellBack

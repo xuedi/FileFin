@@ -88,14 +88,17 @@ func TestEnrichWithOMDb(t *testing.T) {
 	if md["release"] != "1999" { // OMDb omitted a release; Plex's fills the gap
 		t.Fatalf("found release fallback: %+v", found.Metadata)
 	}
-	if md["rating"] != "7.0" { // a Plex-only key is carried over
-		t.Fatalf("found carried plex rating: %+v", found.Metadata)
+	if _, ok := md["rating"]; ok { // OMDb success supplies ## ratings; Plex's lone rating is dropped
+		t.Fatalf("plex rating should be dropped when OMDb succeeds: %+v", found.Metadata)
 	}
 
-	// The missing item is untouched: full Plex meta, run never aborted.
+	// The missing item is untouched: full Plex meta (rating included), run never aborted.
 	missing := items[1].Meta
 	if missing.Description != "plex summary for Missing" || len(missing.Ratings) != 0 {
 		t.Fatalf("missing should keep plex meta: %+v", missing)
+	}
+	if kvMap(missing.Metadata)["rating"] != "7.0" { // fallback keeps Plex's rating
+		t.Fatalf("fallback should keep plex rating: %+v", missing.Metadata)
 	}
 }
 
