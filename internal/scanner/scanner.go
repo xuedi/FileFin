@@ -21,8 +21,8 @@ import (
 
 var (
 	folderRe = regexp.MustCompile(`^\((\d{4})\)\s+(.+)$`)
-	// "(YYYY) Title" optionally followed by " - SxE".
-	fileRe = regexp.MustCompile(`^\((\d{4})\)\s+(.+?)(?:\s+-\s+(\d+)x(\d+))?$`)
+	// "(YYYY) Title" optionally followed by " - SxE" and/or " - partN".
+	fileRe = regexp.MustCompile(`^\((\d{4})\)\s+(.+?)(?:\s+-\s+(\d+)x(\d+))?(?:\s+-\s+part\d+)?$`)
 )
 
 var videoExts = map[string]bool{

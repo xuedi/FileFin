@@ -99,9 +99,14 @@ type Request struct {
 	Year       int
 	Season     int
 	Episode    int
-	Move       bool
-	Force      bool
-	Progress   ProgressFunc
+	// Part numbers one file of a multi-file item (a multi-disc movie, or an
+	// episode split across files) so the parts do not collide on one target
+	// name. 0 means the item is a single file. A part is not a TV episode: it
+	// is appended as " - partN", distinct from the " - SxE" episode marker.
+	Part     int
+	Move     bool
+	Force    bool
+	Progress ProgressFunc
 	// Label is what the progress bar shows for this copy. Empty falls back to the
 	// target file name; the batch importers set it to the "[i/N] category / title"
 	// line so each copy renders on a single, self-describing line.
@@ -130,11 +135,15 @@ func FolderName(year int, title string) string {
 }
 
 // TargetFileName is the canonical media file name, with a season/episode suffix
-// when this is part of a numbered series.
-func TargetFileName(year int, title string, season, episode int, ext string) string {
+// when this is part of a numbered series and a part suffix when one item spans
+// several files (a multi-disc movie or a split episode).
+func TargetFileName(year int, title string, season, episode, part int, ext string) string {
 	base := fmt.Sprintf("(%d) %s", year, sanitizeComponent(title))
 	if season > 0 || episode > 0 {
 		base += fmt.Sprintf(" - %dx%d", season, episode)
+	}
+	if part > 0 {
+		base += fmt.Sprintf(" - part%d", part)
 	}
 	return base + ext
 }
@@ -167,7 +176,7 @@ func Execute(req Request) (*Result, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	target := filepath.Join(dir, TargetFileName(req.Year, req.Title, req.Season, req.Episode, ext))
+	target := filepath.Join(dir, TargetFileName(req.Year, req.Title, req.Season, req.Episode, req.Part, ext))
 	// Re-copy only when the file is new or its size changed; same size is treated as
 	// unchanged and skipped (a content hash would mean reading the whole source, which
 	// over a remote mount costs as much as copying). --force always re-copies.
@@ -379,16 +388,30 @@ func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tec
 	var folder string
 	var targets []string
 	var stats ApplyStats
+	// Files that resolve to the same (season, episode) slot would collide on one
+	// target name; number them as parts so each survives. A multi-disc movie's
+	// files share slot (0,0); a split episode shares its real SxE slot.
+	slotTotal := map[[2]int]int{}
+	for _, f := range m.Files {
+		slotTotal[[2]int{f.Season, f.Episode}]++
+	}
+	slotSeen := map[[2]int]int{}
 	for fi, f := range m.Files {
 		index, total := itemIndex, itemTotal
 		if len(m.Files) > 1 {
 			index, total = fi+1, len(m.Files)
 		}
+		slot := [2]int{f.Season, f.Episode}
+		part := 0
+		if slotTotal[slot] > 1 {
+			slotSeen[slot]++
+			part = slotSeen[slot]
+		}
 		label := fmt.Sprintf("[%d/%d] %s / (%d) %s", index, total, m.Category, m.Year, m.Title)
 		res, err := Execute(Request{
 			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
-			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Force: force,
-			Progress: prog, Label: label,
+			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Part: part,
+			Force: force, Progress: prog, Label: label,
 		})
 		if err != nil {
 			return "", stats, err

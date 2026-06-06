@@ -59,6 +59,7 @@ func cmdImport(c *cli.Context) error {
 	if c.IsSet("episode") {
 		episode = c.Int("episode")
 	}
+	part := c.Int("part")
 
 	interactive := !c.Bool("yes")
 	if interactive {
@@ -83,6 +84,7 @@ func cmdImport(c *cli.Context) error {
 		Year:       year,
 		Season:     season,
 		Episode:    episode,
+		Part:       part,
 		Move:       c.Bool("move"),
 		Force:      c.Bool("force"),
 		Progress:   copyProgress(),

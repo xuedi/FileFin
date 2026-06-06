@@ -42,6 +42,7 @@ func main() {
 					&cli.IntFlag{Name: "year", Usage: "override the detected year"},
 					&cli.IntFlag{Name: "season", Usage: "season number (for an episode)"},
 					&cli.IntFlag{Name: "episode", Usage: "episode number (for an episode)"},
+					&cli.IntFlag{Name: "part", Usage: "part number (for one file of a multi-file item)"},
 					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "accept detected values without prompting"},
 					&cli.BoolFlag{Name: "move", Usage: "move the file instead of copying"},
 					&cli.BoolFlag{Name: "force", Usage: "overwrite an existing target file"},

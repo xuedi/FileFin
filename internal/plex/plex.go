@@ -189,7 +189,7 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 			JOIN media_items m ON m.metadata_item_id = ep.id
 			JOIN media_parts mp ON mp.media_item_id = m.id
 			WHERE show.id = ? AND ep.metadata_type = 4 AND ep.deleted_at IS NULL AND mp.deleted_at IS NULL
-			ORDER BY season."index", ep."index"`
+			ORDER BY season."index", ep."index", mp.file`
 	} else {
 		q = `SELECT 0, 0, mp.file
 			FROM media_items m JOIN media_parts mp ON mp.media_item_id = m.id

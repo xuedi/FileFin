@@ -266,6 +266,56 @@ func TestMediaApplyEpisodes(t *testing.T) {
 	}
 }
 
+func TestMediaApplyMultiPart(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(n string) string {
+		p := filepath.Join(dir, n)
+		os.WriteFile(p, []byte("x"), 0o644)
+		return p
+	}
+	data := filepath.Join(dir, "data")
+
+	// A two-disc movie: both files share slot (0,0) and must become parts, not
+	// collide on one name.
+	movie := Media{
+		Category: "Films", Title: "Two Discs", Year: 2010,
+		Files: []SourceFile{{Path: mk("cd1.avi")}, {Path: mk("cd2.avi")}},
+	}
+	if _, _, err := movie.Apply(data, false, false, nil, nil, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	mf := filepath.Join(data, "Films", "(2010) Two Discs")
+	for _, name := range []string{"(2010) Two Discs - part1.avi", "(2010) Two Discs - part2.avi"} {
+		if _, err := os.Stat(filepath.Join(mf, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+
+	// A split episode: two files share slot (1,1); the episode marker stays and a
+	// part suffix is appended. A neighbouring single-file episode keeps no suffix.
+	show := Media{
+		Category: "Shows", Title: "Split", Year: 2011, IsShow: true,
+		Files: []SourceFile{
+			{Path: mk("e1a.avi"), Season: 1, Episode: 1},
+			{Path: mk("e1b.avi"), Season: 1, Episode: 1},
+			{Path: mk("e2.avi"), Season: 1, Episode: 2},
+		},
+	}
+	if _, _, err := show.Apply(data, false, false, nil, nil, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	sf := filepath.Join(data, "Shows", "(2011) Split")
+	for _, name := range []string{
+		"(2011) Split - 1x1 - part1.avi",
+		"(2011) Split - 1x1 - part2.avi",
+		"(2011) Split - 1x2.avi",
+	} {
+		if _, err := os.Stat(filepath.Join(sf, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+}
+
 func TestWriteMetaTechnicalRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	mc := MetaContent{
