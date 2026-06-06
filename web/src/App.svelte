@@ -13,6 +13,7 @@
   let mediaList = $state([])
   let detail = $state(null)
   let currentFile = $state(0)
+  let playing = $state(false)
 
   onMount(async () => {
     try {
@@ -60,6 +61,12 @@
   async function openMedia(id) {
     detail = await api('/api/media/' + id)
     currentFile = 0
+    playing = false
+  }
+
+  function playFile(idx) {
+    currentFile = idx
+    playing = true
   }
 
   function fileLabel(f) {
@@ -98,14 +105,21 @@
         {#if detail.hasBanner}
           <img class="banner" src={'/api/media/' + detail.id + '/banner'} alt="" />
         {/if}
-        <h2>{detail.title} <span class="year">({detail.year})</span></h2>
+        <div class="titlebar">
+          <h2>{detail.title} <span class="year">({detail.year})</span></h2>
+          {#if !playing}
+            <button class="play" onclick={() => playFile(currentFile)}>▶ Play</button>
+          {/if}
+        </div>
 
-        <video class="player" controls src={'/api/media/' + detail.id + '/file/' + currentFile}></video>
+        {#if playing}
+          <video class="player" controls autoplay src={'/api/media/' + detail.id + '/file/' + currentFile}></video>
+        {/if}
 
         {#if detail.files.length > 1}
           <div class="episodes">
             {#each detail.files as f}
-              <button class:active={f.index === currentFile} onclick={() => (currentFile = f.index)}>
+              <button class:active={f.index === currentFile} onclick={() => playFile(f.index)}>
                 {fileLabel(f)}
               </button>
             {/each}
