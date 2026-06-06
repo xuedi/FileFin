@@ -235,6 +235,8 @@ func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) er
 			// A multi-file folder gets a bold header; its files are numbered below.
 			boldLine(label, color)
 		}
+		p.m.SubtitleLanguage = cfg.SubtitleLanguage
+		p.m.FFmpegPath = cfg.FFmpegPath
 		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog, tech, i+1, len(plans))
 		if err != nil {
 			fmt.Printf("  error: %v\n", err)

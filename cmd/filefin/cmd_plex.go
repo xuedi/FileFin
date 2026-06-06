@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -116,11 +117,24 @@ func plexToMedia(it plex.Item, remaps []remap) importer.Media {
 		PosterPath: it.PosterPath,
 	}
 	for _, f := range it.Files {
-		m.Files = append(m.Files, importer.SourceFile{
+		sf := importer.SourceFile{
 			Path:    applyRemap(f.Path, remaps),
 			Season:  f.Season,
 			Episode: f.Episode,
-		})
+		}
+		for _, s := range f.Subtitles {
+			path := applyRemap(s.Path, remaps)
+			lang := s.Language
+			if lang == "" {
+				lang = importer.SubtitleLangFromName(path) // Plex rarely tags external subs
+			}
+			sf.Subtitles = append(sf.Subtitles, importer.Subtitle{
+				Path:     path,
+				Language: lang,
+				Ext:      strings.ToLower(filepath.Ext(path)),
+			})
+		}
+		m.Files = append(m.Files, sf)
 	}
 	return m
 }

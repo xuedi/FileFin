@@ -124,6 +124,20 @@ If you add an [OMDb API](https://www.omdbapi.com) key to the config, `import` wi
 
 Pass `--no-fetch` to skip the lookup for a single import.
 
+### Optional: subtitles
+
+All three importers (`import`, `plex`, `jellyfin`) carry external subtitle files into the media folder,
+named after the video with a language infix - `(1967) The Assassin.en.srt`. `ass`/`ssa` subtitles are
+converted to `srt` with `ffmpeg`; VobSub `sub`+`idx` pairs are copied verbatim. When a subtitle's language
+cannot be determined, it falls back to a configurable default:
+
+```markdown
+## subtitles
+ - defaultLanguage: en
+```
+
+`import` also accepts `--sub-lang <tag>` to set the fallback for a single run.
+
 ### Optional: transcoding
 
 Browser-native containers (`.mp4`, `.webm`, `.m4v`) are streamed directly. Everything else (`.avi`, `.mkv`,

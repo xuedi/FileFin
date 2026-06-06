@@ -15,11 +15,22 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SourceFile is one media file to copy, with its season/episode (0 for movies).
+// SourceFile is one media file to copy, with its season/episode (0 for movies)
+// and any external subtitle streams Plex recorded for it.
 type SourceFile struct {
-	Path    string
-	Season  int
-	Episode int
+	Path      string
+	Season    int
+	Episode   int
+	Subtitles []Subtitle
+}
+
+// Subtitle is one external subtitle stream from Plex's media_streams table. Path
+// is the decoded local path (the file:// url stripped and percent-decoded);
+// Language is Plex's tag (often empty); Codec is the format ("srt", "ass", ...).
+type Subtitle struct {
+	Path     string
+	Language string
+	Codec    string
 }
 
 // Item is one media folder's worth of data extracted from Plex.
@@ -182,7 +193,7 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 	var q string
 	if shows {
-		q = `SELECT COALESCE(season."index",0), COALESCE(ep."index",0), mp.file
+		q = `SELECT COALESCE(season."index",0), COALESCE(ep."index",0), mp.file, mp.id
 			FROM metadata_items ep
 			JOIN metadata_items season ON season.id = ep.parent_id
 			JOIN metadata_items show ON show.id = season.parent_id
@@ -191,7 +202,7 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 			WHERE show.id = ? AND ep.metadata_type = 4 AND ep.deleted_at IS NULL AND mp.deleted_at IS NULL
 			ORDER BY season."index", ep."index", mp.file`
 	} else {
-		q = `SELECT 0, 0, mp.file
+		q = `SELECT 0, 0, mp.file, mp.id
 			FROM media_items m JOIN media_parts mp ON mp.media_item_id = m.id
 			WHERE m.metadata_item_id = ? AND mp.deleted_at IS NULL
 			ORDER BY mp."index", mp.file`
@@ -202,16 +213,68 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 	}
 	defer rows.Close()
 	var files []SourceFile
+	var partIDs []int64
 	for rows.Next() {
 		var f SourceFile
-		if err := rows.Scan(&f.Season, &f.Episode, &f.Path); err != nil {
+		var partID int64
+		if err := rows.Scan(&f.Season, &f.Episode, &f.Path, &partID); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(f.Path) != "" {
 			files = append(files, f)
+			partIDs = append(partIDs, partID)
 		}
 	}
-	return files, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range files {
+		subs, err := d.subtitles(partIDs[i])
+		if err != nil {
+			return nil, err
+		}
+		files[i].Subtitles = subs
+	}
+	return files, nil
+}
+
+// subtitles returns the external subtitle streams (those carrying a file url) for
+// one media part, with the url decoded to a local path.
+func (d *DB) subtitles(partID int64) ([]Subtitle, error) {
+	rows, err := d.db.Query(`SELECT COALESCE(url,''), COALESCE(language,''), COALESCE(codec,'')
+		FROM media_streams
+		WHERE stream_type_id = 3 AND url <> '' AND media_part_id = ?`, partID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Subtitle
+	for rows.Next() {
+		var rawURL, lang, codec string
+		if err := rows.Scan(&rawURL, &lang, &codec); err != nil {
+			return nil, err
+		}
+		path := decodeFileURL(rawURL)
+		if path == "" {
+			continue
+		}
+		out = append(out, Subtitle{Path: path, Language: strings.TrimSpace(lang), Codec: strings.TrimSpace(codec)})
+	}
+	return out, rows.Err()
+}
+
+// decodeFileURL turns a Plex external-subtitle url ("file:///mnt/...%20...") into a
+// local filesystem path. A non-file url or an undecodable one yields "".
+func decodeFileURL(rawURL string) string {
+	s := strings.TrimSpace(rawURL)
+	if !strings.HasPrefix(s, "file://") {
+		return ""
+	}
+	s = strings.TrimPrefix(s, "file://")
+	if dec, err := url.PathUnescape(s); err == nil {
+		return dec
+	}
+	return s
 }
 
 // artwork resolves a "metadata://" thumb/art URL to a file path inside the Plex

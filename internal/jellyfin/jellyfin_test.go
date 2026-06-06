@@ -121,3 +121,41 @@ func TestScanShow(t *testing.T) {
 		t.Fatalf("episode numbers: %+v", got)
 	}
 }
+
+func TestScanLooseMultiPartWithSubtitles(t *testing.T) {
+	root := t.TempDir()
+	// A two-disc movie sitting loose under root, each disc with its own subtitle.
+	write(t, filepath.Join(root, "(1989) God of Gamblers CD1.avi"), "V1")
+	write(t, filepath.Join(root, "(1989) God of Gamblers CD1.en.srt"), "S1")
+	write(t, filepath.Join(root, "(1989) God of Gamblers CD2.avi"), "V2")
+	write(t, filepath.Join(root, "(1989) God of Gamblers CD2.en.srt"), "S2")
+	// An unrelated single movie stays its own item.
+	write(t, filepath.Join(root, "(1999) The Matrix.mkv"), "V")
+
+	items, err := Scan(root, "Films")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("want 2 items (one grouped, one single), got %d: %+v", len(items), items)
+	}
+	var multi *struct {
+		files int
+		subs  int
+	}
+	for _, it := range items {
+		if it.Title == "God of Gamblers" {
+			subs := 0
+			for _, f := range it.Files {
+				subs += len(f.Subtitles)
+			}
+			multi = &struct {
+				files int
+				subs  int
+			}{len(it.Files), subs}
+		}
+	}
+	if multi == nil || multi.files != 2 || multi.subs != 2 {
+		t.Fatalf("grouped multi-part: %+v", multi)
+	}
+}

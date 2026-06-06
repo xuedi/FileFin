@@ -37,18 +37,14 @@ var (
 
 // ParseName extracts title, year, and (if present) season/episode from a file
 // name. It handles both prefix-year names ("(1962) Lawrence of Arabia.avi") and
-// suffix-year release names ("The.Matrix.1999.1080p.mkv").
-func ParseName(name string) Parsed {
+// suffix-year release names ("The.Matrix.1999.1080p.mkv"). isShow enables the
+// looser, ambiguous episode schemes (bare trailing numbers like "Beck 04") that
+// would otherwise be mistaken for part of a movie title; explicit markers
+// (SxE, NxNN, "Season N Episode M", E-markers) are always recognised.
+func ParseName(name string, isShow bool) Parsed {
 	base := name[:len(name)-len(filepath.Ext(name))]
 	p := Parsed{Ext: strings.ToLower(filepath.Ext(name))}
-
-	if m := reEpX.FindStringSubmatch(base); m != nil {
-		p.Season, _ = strconv.Atoi(m[1])
-		p.Episode, _ = strconv.Atoi(m[2])
-	} else if m := reEpSE.FindStringSubmatch(base); m != nil {
-		p.Season, _ = strconv.Atoi(m[1])
-		p.Episode, _ = strconv.Atoi(m[2])
-	}
+	p.Season, p.Episode = parseSeasonEpisode(base, isShow)
 
 	var titlePart string
 	switch {
@@ -73,6 +69,14 @@ func ParseName(name string) Parsed {
 	}
 
 	p.Title = cleanTitle(titlePart)
+	if isShow {
+		// Drop a trailing bare episode number ("Reply 1988 - 17" -> "Reply 1988")
+		// only for shows, where it was just parsed as the episode. Years and part
+		// markers are left intact (reBareEp caps at three digits; detectPart wins).
+		if _, _, isPart := detectPart(p.Title); !isPart {
+			p.Title = strings.Trim(reBareEp.ReplaceAllString(p.Title, ""), " -")
+		}
+	}
 	return p
 }
 
@@ -80,6 +84,9 @@ func cleanTitle(s string) string {
 	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
 	s = reEpX.ReplaceAllString(s, " ")
 	s = reEpSE.ReplaceAllString(s, " ")
+	s = reSeasonEp.ReplaceAllString(s, " ")
+	s = reEpWord.ReplaceAllString(s, " ")
+	s = reEpE.ReplaceAllString(s, " ")
 	s = reJunk.ReplaceAllString(s, " ")
 	s = reSpaces.ReplaceAllString(s, " ")
 	return strings.Trim(s, " -")
@@ -111,6 +118,13 @@ type Request struct {
 	// target file name; the batch importers set it to the "[i/N] category / title"
 	// line so each copy renders on a single, self-describing line.
 	Label string
+	// Subtitles are external subtitle files placed beside the video under the same
+	// base name (see SubtitleTargetName). Carrying them costs nothing when empty.
+	Subtitles []Subtitle
+	// SubtitleLanguage is the fallback language tag for a subtitle whose own
+	// language is unknown. FFmpegPath, when set, enables ASS/SSA -> SRT conversion.
+	SubtitleLanguage string
+	FFmpegPath       string
 }
 
 // Result reports what an import produced.
@@ -195,6 +209,10 @@ func Execute(req Request) (*Result, error) {
 			return nil, err
 		}
 	}
+	// External subtitles are placed (or refreshed) regardless of whether the video
+	// itself was skipped, since a sidecar may be new on a reimport. Best-effort: a
+	// subtitle failure never fails the item.
+	placeSubtitles(target, req.SubtitleLanguage, req.FFmpegPath, req.Subtitles, req.Force)
 	return &Result{Folder: dir, TargetPath: target, MetaExisted: metaErr == nil, Skipped: skipped}, nil
 }
 
@@ -340,11 +358,13 @@ func WriteMeta(folder string, m MetaContent) error {
 	return os.WriteFile(filepath.Join(folder, "meta.md"), []byte(b.String()), 0o644)
 }
 
-// SourceFile is one media file to import, with season/episode (0 for a movie).
+// SourceFile is one media file to import, with season/episode (0 for a movie)
+// and any external subtitle sidecars that belong to it.
 type SourceFile struct {
-	Path    string
-	Season  int
-	Episode int
+	Path      string
+	Season    int
+	Episode   int
+	Subtitles []Subtitle
 }
 
 // Media is one media folder to import, assembled by a source-specific importer
@@ -357,6 +377,10 @@ type Media struct {
 	Meta       MetaContent
 	PosterPath string // absolute source path to a poster image, or ""
 	Files      []SourceFile
+	// SubtitleLanguage is the fallback subtitle language; FFmpegPath, when set,
+	// enables ASS/SSA -> SRT conversion. Both flow into each file's Request.
+	SubtitleLanguage string
+	FFmpegPath       string
 }
 
 // TargetFolder is where this media will be written under dataDir.
@@ -390,16 +414,20 @@ func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tec
 	var stats ApplyStats
 	// Files that resolve to the same (season, episode) slot would collide on one
 	// target name; number them as parts so each survives. A multi-disc movie's
-	// files share slot (0,0); a split episode shares its real SxE slot.
+	// files share slot (0,0); a split episode shares its real SxE slot. Order the
+	// files first so parts are numbered by their on-disk marker (CD1 < CD2 < CD10),
+	// not by the order the source happened to list them in.
+	files := append([]SourceFile(nil), m.Files...)
+	sortFiles(files)
 	slotTotal := map[[2]int]int{}
-	for _, f := range m.Files {
+	for _, f := range files {
 		slotTotal[[2]int{f.Season, f.Episode}]++
 	}
 	slotSeen := map[[2]int]int{}
-	for fi, f := range m.Files {
+	for fi, f := range files {
 		index, total := itemIndex, itemTotal
-		if len(m.Files) > 1 {
-			index, total = fi+1, len(m.Files)
+		if len(files) > 1 {
+			index, total = fi+1, len(files)
 		}
 		slot := [2]int{f.Season, f.Episode}
 		part := 0
@@ -412,6 +440,7 @@ func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tec
 			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
 			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Part: part,
 			Force: force, Progress: prog, Label: label,
+			Subtitles: f.Subtitles, SubtitleLanguage: m.SubtitleLanguage, FFmpegPath: m.FFmpegPath,
 		})
 		if err != nil {
 			return "", stats, err

@@ -41,7 +41,10 @@ func cmdImport(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	detected := importer.ParseName(filepath.Base(src))
+	// A single ad-hoc import is treated as a movie unless the user marks it an
+	// episode with --season/--episode; that keeps a trailing number in a movie
+	// title ("Blade 2") from being read as an episode.
+	detected := importer.ParseName(filepath.Base(src), c.IsSet("season") || c.IsSet("episode"))
 
 	title := detected.Title
 	if c.String("title") != "" {
@@ -76,18 +79,25 @@ func cmdImport(c *cli.Context) error {
 		}
 	}
 
+	subLang := cfg.SubtitleLanguage
+	if c.String("sub-lang") != "" {
+		subLang = c.String("sub-lang")
+	}
 	req := importer.Request{
-		SourcePath: src,
-		DataDir:    cfg.DataDir,
-		Category:   category,
-		Title:      strings.TrimSpace(title),
-		Year:       year,
-		Season:     season,
-		Episode:    episode,
-		Part:       part,
-		Move:       c.Bool("move"),
-		Force:      c.Bool("force"),
-		Progress:   copyProgress(),
+		SourcePath:       src,
+		DataDir:          cfg.DataDir,
+		Category:         category,
+		Title:            strings.TrimSpace(title),
+		Year:             year,
+		Season:           season,
+		Episode:          episode,
+		Part:             part,
+		Move:             c.Bool("move"),
+		Force:            c.Bool("force"),
+		Progress:         copyProgress(),
+		Subtitles:        importer.FindSidecarSubtitles(src),
+		SubtitleLanguage: subLang,
+		FFmpegPath:       cfg.FFmpegPath,
 	}
 
 	if interactive {

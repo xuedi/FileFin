@@ -19,6 +19,7 @@ func TestRoundTrip(t *testing.T) {
 	c.OptimizeTargetLoad = 75
 	c.LogLevel = "debug"
 	c.LogOutput = "/var/log/filefin.log"
+	c.SubtitleLanguage = "zh"
 	c.APIKeys["tmdb"] = "abc123"
 	c.Users["alice"] = User{Hash: "hash1", Admin: true}
 	c.Users["bob"] = User{Hash: "hash2"}
@@ -50,6 +51,12 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if d := New(); d.LogLevel != "info" || d.LogOutput != "STDOUT" {
 		t.Fatalf("logging defaults wrong: %+v", d)
+	}
+	if got.SubtitleLanguage != "zh" {
+		t.Fatalf("subtitle language mismatch: %q", got.SubtitleLanguage)
+	}
+	if d := New(); d.SubtitleLanguage != "en" {
+		t.Fatalf("subtitle default wrong: %q", d.SubtitleLanguage)
 	}
 	if got.APIKeys["tmdb"] != "abc123" {
 		t.Fatalf("apikey mismatch: %v", got.APIKeys)

@@ -23,9 +23,113 @@ func TestParseName(t *testing.T) {
 		{"Show S03E07 The Episode.mp4", Parsed{Title: "Show The Episode", Season: 3, Episode: 7, Ext: ".mp4"}},
 	}
 	for _, c := range cases {
-		got := ParseName(c.name)
+		got := ParseName(c.name, false)
 		if got != c.want {
 			t.Errorf("ParseName(%q)\n got: %+v\nwant: %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestParseNameEpisodeSchemes(t *testing.T) {
+	cases := []struct {
+		name            string
+		isShow          bool
+		season, episode int
+	}{
+		// Explicit markers: parsed regardless of isShow.
+		{"(2002) Firefly - 1x05.mkv", false, 1, 5},
+		{"Show - s1e5.mkv", false, 1, 5},
+		{"Babylon 5 - S04E22.mkv", false, 4, 22},
+		{"Stand Alone Complex - 02x03.mkv", false, 2, 3},
+		{"Star Trek TNG - Season 1 Episode 14.mkv", false, 1, 14},
+		{"Star Trek TNG - Episode 01 & 02.mkv", false, 1, 1}, // multi-ep: first wins
+		{"Arang - E16.121004.HDTV.mkv", false, 1, 16},        // trailing date ignored
+		{"Empress Chun Chu - E50.mkv", false, 1, 50},
+		// Bare trailing numbers: only when the item is a show.
+		{"Reply 1988 - 17.mkv", true, 1, 17},
+		{"Beck 04.mkv", true, 1, 4},
+		{"Amachan - 090.mkv", true, 1, 90},
+		{"Maison Ikkoku - 64.mkv", true, 1, 64},
+		{"Shogun - 4.mkv", true, 1, 4},
+		{"Beck 04.mkv", false, 0, 0}, // same file, not a show: no episode
+		// Movie negatives: never an episode.
+		{"Blade 2.mkv", false, 0, 0},
+		{"Blade Runner 2049.mkv", true, 0, 0}, // four-digit year, not episode 2049
+		{"2046 Disk 1.avi", true, 0, 0},       // a disc part marker, not episode 1
+		{"God of Gamblers CD1.avi", true, 0, 0},
+	}
+	for _, c := range cases {
+		got := ParseName(c.name, c.isShow)
+		if got.Season != c.season || got.Episode != c.episode {
+			t.Errorf("ParseName(%q, show=%v) = S%dE%d, want S%dE%d",
+				c.name, c.isShow, got.Season, got.Episode, c.season, c.episode)
+		}
+	}
+}
+
+func TestParseNameBareEpisodeTitle(t *testing.T) {
+	// A show's trailing episode number is dropped from the title.
+	if got := ParseName("Beck 04.mkv", true); got.Title != "Beck" {
+		t.Errorf("title = %q, want %q", got.Title, "Beck")
+	}
+	// A movie keeps its trailing number.
+	if got := ParseName("Blade 2.mkv", false); got.Title != "Blade 2" {
+		t.Errorf("title = %q, want %q", got.Title, "Blade 2")
+	}
+}
+
+func TestDetectPart(t *testing.T) {
+	cases := []struct {
+		name  string
+		num   int
+		ok    bool
+		strip string
+	}{
+		{"God of Gamblers CD1", 1, true, "God of Gamblers"},
+		{"God of Gamblers cd2", 2, true, "God of Gamblers"},
+		{"God of Gamblers CD 1", 1, true, "God of Gamblers"},
+		{"God of Gamblers CD_1", 1, true, "God of Gamblers"},
+		{"Suzhou River Disc 1", 1, true, "Suzhou River"},
+		{"Suzhou River Disk1", 1, true, "Suzhou River"},
+		{"Dirty Ho Part 1", 1, true, "Dirty Ho"},
+		{"Tie Xi Qu - Rust - pt1", 1, true, "Tie Xi Qu - Rust"},
+		{"Tie Xi Qu - Rust - pt.1", 1, true, "Tie Xi Qu - Rust"},
+		{"Yellow Earth (1)", 1, true, "Yellow Earth"},
+		{"Yellow Earth (1 of 2)", 1, true, "Yellow Earth"},
+		{"Yellow Earth (1/2)", 1, true, "Yellow Earth"},
+		{"Yellow Earth [1]", 1, true, "Yellow Earth"},
+		{"2046 Disk 1", 1, true, "2046"}, // marker stripped, title (a year) survives
+		{"God of Gamblers CD10", 10, true, "God of Gamblers"},
+		// Negatives: bare numbers are not markers (need sibling context).
+		{"Blade 2", 0, false, "Blade 2"},
+		{"Blade Runner 2049", 0, false, "Blade Runner 2049"},
+		{"Some Movie", 0, false, "Some Movie"},
+	}
+	for _, c := range cases {
+		strip, num, ok := detectPart(c.name)
+		if ok != c.ok || num != c.num || strip != c.strip {
+			t.Errorf("detectPart(%q) = (%q, %d, %v), want (%q, %d, %v)",
+				c.name, strip, num, ok, c.strip, c.num, c.ok)
+		}
+	}
+}
+
+func TestSortFilesPartOrder(t *testing.T) {
+	// CD2 must precede CD10 (numeric, not lexical).
+	files := []SourceFile{
+		{Path: "/m/God of Gamblers CD10.avi"},
+		{Path: "/m/God of Gamblers CD1.avi"},
+		{Path: "/m/God of Gamblers CD2.avi"},
+	}
+	sortFiles(files)
+	want := []string{
+		"/m/God of Gamblers CD1.avi",
+		"/m/God of Gamblers CD2.avi",
+		"/m/God of Gamblers CD10.avi",
+	}
+	for i, f := range files {
+		if f.Path != want[i] {
+			t.Fatalf("sortFiles order[%d] = %q, want %q", i, f.Path, want[i])
 		}
 	}
 }

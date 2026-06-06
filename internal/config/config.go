@@ -42,6 +42,8 @@ type Config struct {
 	LogLevel  string // error | info | debug
 	LogOutput string // STDOUT | STDERR | a file path
 
+	SubtitleLanguage string // fallback language tag for external subtitles with no detectable language
+
 	path string
 }
 
@@ -57,6 +59,7 @@ func New() *Config {
 		HWAccel:          "auto",
 		LogLevel:         "info",
 		LogOutput:        "STDOUT",
+		SubtitleLanguage: "en",
 	}
 }
 
@@ -162,6 +165,12 @@ func Load(path string) (*Config, error) {
 					c.LogOutput = val
 				}
 			}
+		case "subtitles":
+			if key == "defaultLanguage" {
+				if v := strings.ToLower(strings.TrimSpace(val)); v != "" {
+					c.SubtitleLanguage = v
+				}
+			}
 		case "apikeys":
 			if key != "" {
 				c.APIKeys[key] = val
@@ -210,6 +219,8 @@ func (c *Config) Save(path string) error {
 	b.WriteString("\n## logging\n")
 	fmt.Fprintf(&b, " - level: %s\n", c.LogLevel)
 	fmt.Fprintf(&b, " - output: %s\n", c.LogOutput)
+	b.WriteString("\n## subtitles\n")
+	fmt.Fprintf(&b, " - defaultLanguage: %s\n", c.SubtitleLanguage)
 	b.WriteString("\n## apikeys\n")
 	for _, k := range sortedKeys(c.APIKeys) {
 		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])

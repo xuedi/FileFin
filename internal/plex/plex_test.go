@@ -32,6 +32,20 @@ func TestToDate(t *testing.T) {
 	}
 }
 
+func TestDecodeFileURL(t *testing.T) {
+	cases := map[string]string{
+		"file:///mnt/data/plex/films-korea/(2020)%20Alive.srt": "/mnt/data/plex/films-korea/(2020) Alive.srt",
+		"file:///media/plex/show/ep.en.srt":                    "/media/plex/show/ep.en.srt",
+		"":                                                     "", // not a file url
+		"http://example/x.srt":                                 "", // wrong scheme
+	}
+	for in, want := range cases {
+		if got := decodeFileURL(in); got != want {
+			t.Errorf("decodeFileURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestArtworkPath(t *testing.T) {
 	dir := "/meta"
 	hash := "a000ec1d539ef47158152454be418f84c2db89f2"

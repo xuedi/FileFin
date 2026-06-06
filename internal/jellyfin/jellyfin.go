@@ -39,25 +39,24 @@ func Scan(root, category string) ([]importer.Media, error) {
 		return nil, err
 	}
 	var out []importer.Media
+	var loose []string
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		full := filepath.Join(root, e.Name())
 		if e.IsDir() {
-			if m, ok := scanDir(full, category); ok {
+			if m, ok := scanDir(filepath.Join(root, e.Name()), category); ok {
 				out = append(out, m)
 			}
 			continue
 		}
-		// A loose movie file directly under root.
+		// A loose movie file directly under root; grouped after the walk so a
+		// multi-disc movie's parts land in one folder.
 		if videoExts[strings.ToLower(filepath.Ext(e.Name()))] {
-			if m, ok := scanLooseMovie(root, e.Name(), category); ok {
-				out = append(out, m)
-			}
+			loose = append(loose, e.Name())
 		}
 	}
-	return out, nil
+	return append(out, scanLooseMovies(root, loose, category)...), nil
 }
 
 func scanDir(dir, category string) (importer.Media, bool) {
@@ -114,23 +113,53 @@ func scanMovieDir(dir, category string) (importer.Media, bool) {
 		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
 	}
 	for _, v := range videos {
-		m.Files = append(m.Files, importer.SourceFile{Path: filepath.Join(dir, v)})
+		path := filepath.Join(dir, v)
+		m.Files = append(m.Files, importer.SourceFile{Path: path, Subtitles: importer.FindSidecarSubtitles(path)})
 	}
 	return m, true
 }
 
-func scanLooseMovie(dir, video, category string) (importer.Media, bool) {
-	folderTitle, folderYear := parseFolderName(stripExt(video))
-	var nfo movieNFO
-	readNFO(filepath.Join(dir, stripExt(video)+".nfo"), &nfo)
-	title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, folderTitle, folderYear)
-	return importer.Media{
-		Category: category,
-		Title:    title,
-		Year:     year,
-		Meta:     metaFromDetails(nfo.detailsNFO, year),
-		Files:    []importer.SourceFile{{Path: filepath.Join(dir, video)}},
-	}, true
+// scanLooseMovies turns loose video files directly under root into one Media each,
+// grouping a multi-disc movie's parts (same name modulo a "CD1"/"Part 2" marker)
+// into a single folder. First-seen order is preserved.
+func scanLooseMovies(dir string, videos []string, category string) []importer.Media {
+	type key struct {
+		title string
+		year  int
+	}
+	var order []key
+	groups := map[key][]string{}
+	for _, v := range videos {
+		base := stripExt(v)
+		if stripped, _, ok := importer.DetectPart(base); ok {
+			base = stripped
+		}
+		title, year := parseFolderName(base)
+		k := key{title, year}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], v)
+	}
+	var out []importer.Media
+	for _, k := range order {
+		vs := groups[k]
+		var nfo movieNFO
+		readNFO(filepath.Join(dir, stripExt(vs[0])+".nfo"), &nfo)
+		title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, k.title, k.year)
+		m := importer.Media{
+			Category: category,
+			Title:    title,
+			Year:     year,
+			Meta:     metaFromDetails(nfo.detailsNFO, year),
+		}
+		for _, v := range vs {
+			path := filepath.Join(dir, v)
+			m.Files = append(m.Files, importer.SourceFile{Path: path, Subtitles: importer.FindSidecarSubtitles(path)})
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func scanShow(dir, category string) (importer.Media, bool) {
@@ -156,7 +185,7 @@ func scanShow(dir, category string) (importer.Media, bool) {
 			return nil
 		}
 		s, e := episodeNumbers(path)
-		m.Files = append(m.Files, importer.SourceFile{Path: path, Season: s, Episode: e})
+		m.Files = append(m.Files, importer.SourceFile{Path: path, Season: s, Episode: e, Subtitles: importer.FindSidecarSubtitles(path)})
 		return nil
 	})
 	if len(m.Files) == 0 {
@@ -172,7 +201,7 @@ func episodeNumbers(videoPath string) (int, int) {
 	if readNFO(stripExt(videoPath)+".nfo", &ep) && (ep.Season > 0 || ep.Episode > 0) {
 		return ep.Season, ep.Episode
 	}
-	p := importer.ParseName(filepath.Base(videoPath))
+	p := importer.ParseName(filepath.Base(videoPath), true)
 	return p.Season, p.Episode
 }
 
