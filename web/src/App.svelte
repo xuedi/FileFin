@@ -1,6 +1,5 @@
 <script>
   import { onMount } from 'svelte'
-  import Hls from 'hls.js'
   import { api, Unauthorized } from './api.js'
 
   let booting = $state(true)
@@ -19,8 +18,9 @@
   let hls = null
 
   // Wire up playback whenever the player appears or the chosen file changes.
-  // Direct-play files get a plain src; transcode files load HLS (hls.js, or the
-  // browser's native HLS on Safari).
+  // Direct-play files get a plain src; transcode files load HLS via the browser's
+  // native HLS on Safari, or hls.js elsewhere. hls.js is imported lazily so its
+  // weight only loads when a transcode file is actually played.
   $effect(() => {
     if (!playing || !videoEl || !detail) return
     const base = '/api/media/' + detail.id + '/file/' + currentFile
@@ -32,14 +32,21 @@
     const url = base + '/hls/index.m3u8'
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
       videoEl.src = url
-    } else if (Hls.isSupported()) {
-      hls = new Hls()
-      hls.loadSource(url)
-      hls.attachMedia(videoEl)
-    } else {
-      videoEl.src = url
+      return
     }
+    let cancelled = false
+    import('hls.js').then(({ default: Hls }) => {
+      if (cancelled || !videoEl) return
+      if (Hls.isSupported()) {
+        hls = new Hls()
+        hls.loadSource(url)
+        hls.attachMedia(videoEl)
+      } else {
+        videoEl.src = url
+      }
+    })
     return () => {
+      cancelled = true
       if (hls) {
         hls.destroy()
         hls = null
