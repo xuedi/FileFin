@@ -95,7 +95,7 @@ func (d *DB) Items(section string) ([]Item, error) {
 }
 
 const itemCols = `mi.id, ls.name, COALESCE(mi.title,''), mi.year,
-	COALESCE(mi.summary,''), CAST(mi.originally_available_at AS TEXT),
+	COALESCE(mi.summary,''), COALESCE(CAST(mi.originally_available_at AS TEXT),''),
 	COALESCE(mi.duration,0), mi.rating, COALESCE(mi.content_rating,''),
 	COALESCE(mi.tags_genre,''), COALESCE(mi.tags_director,''),
 	COALESCE(mi.tags_writer,''), COALESCE(mi.tags_star,''),
