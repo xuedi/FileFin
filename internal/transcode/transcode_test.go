@@ -123,6 +123,165 @@ func TestHighestSeg(t *testing.T) {
 	}
 }
 
+func TestVideoEncodeArgs(t *testing.T) {
+	contains := func(args []string, want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Software path: libx264, no VAAPI flags, keyframe expr present.
+	pre, codec := videoEncodeArgs(softwareEncoder, 0)
+	if len(pre) != 0 {
+		t.Errorf("software preInput = %v, want empty", pre)
+	}
+	if !contains(codec, "libx264") {
+		t.Errorf("software codec missing libx264: %v", codec)
+	}
+	if contains(codec, "h264_vaapi") || contains(codec, "hwupload") {
+		t.Errorf("software codec leaked vaapi flags: %v", codec)
+	}
+	if !contains(codec, "expr:gte(t,(n_forced+0)*6)") {
+		t.Errorf("software codec missing keyframe expr: %v", codec)
+	}
+
+	// VAAPI path: -vaapi_device before input, hwupload + h264_vaapi, offset keyframes.
+	vaapi := Encoder{Kind: "vaapi", Device: "/dev/dri/renderD128", Codec: "h264_vaapi"}
+	pre, codec = videoEncodeArgs(vaapi, 5)
+	if len(pre) != 2 || pre[0] != "-vaapi_device" || pre[1] != "/dev/dri/renderD128" {
+		t.Errorf("vaapi preInput = %v, want -vaapi_device /dev/dri/renderD128", pre)
+	}
+	if !contains(codec, "h264_vaapi") || !contains(codec, "format=nv12,hwupload") {
+		t.Errorf("vaapi codec missing hw flags: %v", codec)
+	}
+	if contains(codec, "libx264") {
+		t.Errorf("vaapi codec leaked libx264: %v", codec)
+	}
+	if !contains(codec, "expr:gte(t,(n_forced+5)*6)") {
+		t.Errorf("vaapi codec missing offset keyframe expr: %v", codec)
+	}
+}
+
+func TestOptimizeArgs(t *testing.T) {
+	contains := func(args []string, want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	sw := OptimizeArgs(softwareEncoder, "in.avi", "out.mp4")
+	if !contains(sw, "libx264") || !contains(sw, "+faststart") {
+		t.Errorf("software optimize args missing libx264/faststart: %v", sw)
+	}
+	if contains(sw, "h264_vaapi") || contains(sw, "-force_key_frames") {
+		t.Errorf("software optimize args leaked vaapi/hls flags: %v", sw)
+	}
+	if sw[len(sw)-1] != "out.mp4" {
+		t.Errorf("output path must be last arg: %v", sw)
+	}
+
+	vaapi := Encoder{Kind: "vaapi", Device: "/dev/dri/renderD128", Codec: "h264_vaapi"}
+	hw := OptimizeArgs(vaapi, "in.avi", "out.mp4")
+	if !contains(hw, "-vaapi_device") || !contains(hw, "h264_vaapi") || !contains(hw, "+faststart") {
+		t.Errorf("vaapi optimize args missing expected flags: %v", hw)
+	}
+	// -vaapi_device must precede -i (global option).
+	di, ii := indexOf(hw, "-vaapi_device"), indexOf(hw, "-i")
+	if di < 0 || ii < 0 || di > ii {
+		t.Errorf("-vaapi_device must come before -i: %v", hw)
+	}
+}
+
+func indexOf(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestOptimizedSibling(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "(1966) Django.avi")
+	if err := os.WriteFile(src, []byte("source"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opt, fresh := OptimizedSibling(src)
+	if opt != filepath.Join(dir, "(1966) Django.optimized.mp4") {
+		t.Errorf("sibling path = %q", opt)
+	}
+	if fresh {
+		t.Error("no optimized file yet, must not be fresh")
+	}
+
+	// Write an optimized copy newer than the source -> fresh.
+	if err := os.WriteFile(opt, []byte("optimized"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(opt, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if _, fresh := OptimizedSibling(src); !fresh {
+		t.Error("optimized newer than source must be fresh")
+	}
+
+	// Make the source newer (re-import) -> stale.
+	later := time.Now().Add(2 * time.Hour)
+	if err := os.Chtimes(src, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if _, fresh := OptimizedSibling(src); fresh {
+		t.Error("source newer than optimized must be stale")
+	}
+}
+
+func TestRenderNodes(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"renderD128", "renderD129", "card0", "card1", "by-path"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := renderNodes(dir)
+	want := []string{filepath.Join(dir, "renderD128"), filepath.Join(dir, "renderD129")}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("renderNodes = %v, want %v", got, want)
+	}
+	if nodes := renderNodes(filepath.Join(dir, "does-not-exist")); nodes != nil {
+		t.Errorf("renderNodes(missing) = %v, want nil", nodes)
+	}
+}
+
+func TestEncoderListed(t *testing.T) {
+	out := " V....D h264_vaapi           H.264/AVC (VAAPI) (codec h264)\n" +
+		" V..... libx264              libx264 H.264 / AVC\n"
+	if !encoderListed(out, "h264_vaapi") {
+		t.Error("h264_vaapi should be listed")
+	}
+	if !encoderListed(out, "libx264") {
+		t.Error("libx264 should be listed")
+	}
+	if encoderListed(out, "h264_nvenc") {
+		t.Error("h264_nvenc should not be listed")
+	}
+}
+
+func TestDetectEncoderOff(t *testing.T) {
+	got := DetectEncoder(context.Background(), Options{HWAccel: "off"})
+	if got.Kind != "software" {
+		t.Errorf("hwaccel=off -> %+v, want software (no probing)", got)
+	}
+}
+
 func TestHLSEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
@@ -212,5 +371,51 @@ func TestHLSStartSegment(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(runDir, "seg0.ts")); err == nil {
 		t.Error("start_number=4 ignored: the run produced seg0.ts")
+	}
+}
+
+// TestVAAPIEncode is gated on an actually-working VAAPI device: it skips unless
+// DetectEncoder finds one. When it does, it confirms a Manager built with that
+// hardware encoder produces a valid H.264 segment end to end.
+func TestVAAPIEncode(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	enc := DetectEncoder(context.Background(), Options{HWAccel: "auto"})
+	if enc.Kind != "vaapi" {
+		t.Skip("no working VAAPI device detected")
+	}
+	t.Logf("detected %s on %s", enc.Codec, enc.Device)
+
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.avi")
+	gen := exec.Command("ffmpeg", "-nostdin", "-y",
+		"-f", "lavfi", "-i", "testsrc=duration=4:size=320x240:rate=15",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+		"-shortest", in,
+	)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate test input: %v\n%s", err, out)
+	}
+
+	m := NewManager(Options{Encoder: enc})
+	defer m.Close()
+	if _, err := m.Playlist("k", in); err != nil {
+		t.Fatalf("Playlist: %v", err)
+	}
+	seg, err := m.Segment("k", "seg0.ts")
+	if err != nil {
+		t.Fatalf("Segment: %v", err)
+	}
+	if fi, err := os.Stat(seg); err != nil || fi.Size() == 0 {
+		t.Fatalf("segment missing or empty: %v", err)
+	}
+	codec, err := exec.Command("ffprobe", "-v", "error",
+		"-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", seg).Output()
+	if err != nil {
+		t.Fatalf("ffprobe segment: %v", err)
+	}
+	if !strings.Contains(string(codec), "h264") {
+		t.Errorf("hardware segment codec = %q, want h264", strings.TrimSpace(string(codec)))
 	}
 }

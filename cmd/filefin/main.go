@@ -30,6 +30,7 @@ func main() {
 			{Name: "serve", Usage: "run the media server", Action: cmdServe},
 			{Name: "validate", Usage: "check that the data directory is readable", Action: cmdValidate},
 			{Name: "rebuild", Usage: "rebuild the cache database from the data directory", Action: cmdRebuild},
+			{Name: "optimize", Usage: "pre-transcode non-native media to direct-play copies, then exit", Action: cmdOptimize},
 			{
 				Name:      "import",
 				Usage:     "copy a media file into the data directory",

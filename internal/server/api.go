@@ -70,12 +70,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad file index", http.StatusBadRequest)
 		return
 	}
-	p, err := s.store.FilePath(r.PathValue("id"), n)
+	p, needsTranscode, err := s.store.PlaybackPath(r.PathValue("id"), n)
 	if err != nil || p == "" {
 		http.NotFound(w, r)
 		return
 	}
-	if transcode.NeedsTranscode(filepath.Ext(p)) {
+	if needsTranscode {
 		if !s.cfg.TranscodeEnabled {
 			http.Error(w, "transcoding disabled", http.StatusUnsupportedMediaType)
 			return

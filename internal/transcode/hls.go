@@ -26,16 +26,24 @@ const (
 
 var segmentName = regexp.MustCompile(`^seg\d+\.ts$`)
 
-// Options configures the external tool paths the Manager invokes.
+// Options configures the external tool paths the Manager invokes and the video
+// encoder it uses.
 type Options struct {
 	FFmpegPath  string
 	FFprobePath string
+
+	// HWAccel ("auto"|"off") and HWAccelDevice steer DetectEncoder; Encoder is the
+	// detected result the Manager encodes with (zero value falls back to software).
+	HWAccel       string
+	HWAccelDevice string
+	Encoder       Encoder
 }
 
 // Manager runs and tracks on-the-fly HLS transcode sessions. Each session owns a
 // temp dir of segments produced by one ffmpeg run; idle sessions are reaped.
 type Manager struct {
 	opts     Options
+	encoder  Encoder
 	mu       sync.Mutex
 	sessions map[string]*session
 	stop     chan struct{}
@@ -59,9 +67,21 @@ func NewManager(opts Options) *Manager {
 	if opts.FFprobePath == "" {
 		opts.FFprobePath = "ffprobe"
 	}
-	m := &Manager{opts: opts, sessions: map[string]*session{}, stop: make(chan struct{})}
+	enc := opts.Encoder
+	if enc.Kind == "" {
+		enc = softwareEncoder
+	}
+	m := &Manager{opts: opts, encoder: enc, sessions: map[string]*session{}, stop: make(chan struct{})}
 	go m.reap()
 	return m
+}
+
+// ActiveSessions reports how many live transcode sessions exist, so the background
+// optimizer can yield the GPU/CPU to anyone currently watching.
+func (m *Manager) ActiveSessions() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sessions)
 }
 
 // Close cancels every active session and removes its temp dir.
@@ -233,8 +253,25 @@ func (m *Manager) ensure(key, inputPath string) (*session, error) {
 	return s, nil
 }
 
+// videoEncodeArgs returns the pre-input global flags and the codec flags for a
+// re-encode, branching on the encoder. The -force_key_frames expression places
+// keyframes on the absolute segmentSeconds grid (offset by startSeg under -copyts) so
+// segment boundaries line up across seek relaunches; it is identical for both paths.
+func videoEncodeArgs(enc Encoder, startSeg int) (preInput, codec []string) {
+	keyframes := fmt.Sprintf("expr:gte(t,(n_forced+%d)*%d)", startSeg, segmentSeconds)
+	preInput, vcodec := videoCodecArgs(enc)
+	codec = append(vcodec, "-force_key_frames", keyframes, "-c:a", "aac", "-b:a", "160k", "-ac", "2")
+	return preInput, codec
+}
+
 func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux bool, startSeg int) error {
 	args := []string{"-nostdin"}
+	var codec []string
+	if !remux {
+		var preInput []string
+		preInput, codec = videoEncodeArgs(m.encoder, startSeg)
+		args = append(args, preInput...) // -vaapi_device is global, must precede -i
+	}
 	if startSeg > 0 {
 		// Seek the input to the segment's start. -copyts preserves source timestamps so
 		// the relaunched encoder's segments stay aligned with the up-front VOD playlist.
@@ -244,13 +281,7 @@ func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux 
 	if remux {
 		args = append(args, "-c", "copy")
 	} else {
-		args = append(args,
-			"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-			// Force keyframes on the absolute 6s grid so boundaries line up across
-			// relaunches; with -copyts, t is source time, so offset by startSeg.
-			"-force_key_frames", fmt.Sprintf("expr:gte(t,(n_forced+%d)*%d)", startSeg, segmentSeconds),
-			"-c:a", "aac", "-b:a", "160k", "-ac", "2",
-		)
+		args = append(args, codec...)
 	}
 	args = append(args,
 		"-sn",

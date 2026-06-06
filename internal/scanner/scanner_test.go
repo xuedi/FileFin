@@ -1,6 +1,10 @@
 package scanner
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestScan(t *testing.T) {
 	scan, err := Scan("testdata")
@@ -39,6 +43,28 @@ func TestScan(t *testing.T) {
 	}
 	if show.Files[0].Season != 1 || show.Files[0].Episode != 1 || show.Files[1].Episode != 2 {
 		t.Fatalf("episode parse: %+v", show.Files)
+	}
+}
+
+// An `*.optimized.mp4` sidecar must not be scanned as a media file of its own.
+func TestScanIgnoresOptimizedSidecar(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "Films", "(1966) Django")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"(1966) Django.avi", "(1966) Django.optimized.mp4"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scan, err := Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := scan.Categories[0].Media[0].Files
+	if len(files) != 1 || files[0].Ext != ".avi" {
+		t.Fatalf("want only the .avi source, got %+v", files)
 	}
 }
 

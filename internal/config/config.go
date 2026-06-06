@@ -27,6 +27,9 @@ type Config struct {
 	FFmpegPath       string
 	FFprobePath      string
 	TranscodeEnabled bool
+	HWAccel          string // "auto" (detect GPU) | "off" (force software)
+	HWAccelDevice    string // optional DRM render node override, e.g. /dev/dri/renderD128
+	OptimizeEnabled  bool   // background pre-transcode to direct-play copies (off by default)
 
 	path string
 }
@@ -40,6 +43,7 @@ func New() *Config {
 		FFmpegPath:       "ffmpeg",
 		FFprobePath:      "ffprobe",
 		TranscodeEnabled: true,
+		HWAccel:          "auto",
 	}
 }
 
@@ -112,6 +116,18 @@ func Load(path string) (*Config, error) {
 				if b, err := strconv.ParseBool(val); err == nil {
 					c.TranscodeEnabled = b
 				}
+			case "hwaccel":
+				if val != "" {
+					c.HWAccel = val
+				}
+			case "device":
+				c.HWAccelDevice = val
+			}
+		case "optimize":
+			if key == "enabled" {
+				if b, err := strconv.ParseBool(val); err == nil {
+					c.OptimizeEnabled = b
+				}
 			}
 		case "apikeys":
 			if key != "" {
@@ -146,6 +162,12 @@ func (c *Config) Save(path string) error {
 	fmt.Fprintf(&b, " - ffmpeg: %s\n", c.FFmpegPath)
 	fmt.Fprintf(&b, " - ffprobe: %s\n", c.FFprobePath)
 	fmt.Fprintf(&b, " - enabled: %t\n", c.TranscodeEnabled)
+	fmt.Fprintf(&b, " - hwaccel: %s\n", c.HWAccel)
+	if c.HWAccelDevice != "" {
+		fmt.Fprintf(&b, " - device: %s\n", c.HWAccelDevice)
+	}
+	b.WriteString("\n## optimize\n")
+	fmt.Fprintf(&b, " - enabled: %t\n", c.OptimizeEnabled)
 	b.WriteString("\n## apikeys\n")
 	for _, k := range sortedKeys(c.APIKeys) {
 		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])

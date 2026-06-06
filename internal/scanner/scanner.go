@@ -15,6 +15,7 @@ import (
 
 	"filefin/internal/meta"
 	"filefin/internal/model"
+	"filefin/internal/transcode"
 )
 
 var (
@@ -108,14 +109,18 @@ func scanMediaFolder(m *model.Media) []string {
 			continue
 		}
 		name := e.Name()
+		lower := strings.ToLower(name)
 		ext := strings.ToLower(filepath.Ext(name))
 		base := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
 		switch {
+		case strings.HasSuffix(lower, transcode.OptimizedExt):
+			// Derived direct-play copy of a source file, discovered live at playback
+			// time (transcode.OptimizedSibling), never a media file of its own.
 		case base == "poster":
 			m.Poster = filepath.Join(m.Path, name)
 		case base == "banner":
 			m.Banner = filepath.Join(m.Path, name)
-		case strings.ToLower(name) == "meta.md":
+		case lower == "meta.md":
 			mt, err := meta.ParseFile(filepath.Join(m.Path, name))
 			if err != nil {
 				issues = append(issues, fmt.Sprintf("%s/%s: meta.md: %v", m.Category, m.Folder, err))

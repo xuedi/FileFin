@@ -125,6 +125,22 @@ specific render node, or turn transcoding off in the config:
 `hwaccel` is `auto` (detect a GPU, the default) or `off` (force software). `device` is optional - when set,
 only that render node is used; otherwise the first working one is chosen.
 
+### Optional: optimize for playback
+
+Files whose video codec a browser cannot decode (old MPEG-4/DivX `.avi`, HEVC, ...) are re-encoded on every
+playback. Enabling the optimizer pre-transcodes them **once** into a browser-direct-play
+`<name>.optimized.mp4` stored beside the source, so playback becomes a plain file with instant seeking and
+no per-play CPU/GPU. A single background worker (GPU-accelerated when available) processes the backlog while
+the server runs, yielding to live playback.
+
+```markdown
+## optimize
+ - enabled: false
+```
+
+> **Warning:** this keeps the original **and** an optimized copy, so it roughly **doubles on-disk size** for
+> the affected files. It is **off by default**; enable it only if you have the disk headroom.
+
 ## Status
 
 FileFin is an early MVP. Working today:

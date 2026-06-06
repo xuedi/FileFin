@@ -12,6 +12,7 @@ import (
 	"filefin/internal/cache"
 	"filefin/internal/config"
 	"filefin/internal/scanner"
+	"filefin/internal/transcode"
 )
 
 func testServer(t *testing.T) *Server {
@@ -31,7 +32,7 @@ func testServer(t *testing.T) *Server {
 	cfg := config.New()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	cfg.Users["alice"] = string(hash)
-	return New(cfg, store)
+	return New(cfg, store, transcode.Encoder{})
 }
 
 func TestAuthRequired(t *testing.T) {

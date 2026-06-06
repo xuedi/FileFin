@@ -21,8 +21,9 @@ type Server struct {
 	hls      *transcode.Manager
 }
 
-// New constructs a Server.
-func New(cfg *config.Config, store *cache.Store) *Server {
+// New constructs a Server. enc is the video encoder transcode sessions use (detected
+// once at startup); the zero value falls back to software encoding.
+func New(cfg *config.Config, store *cache.Store, enc transcode.Encoder) *Server {
 	return &Server{
 		cfg:      cfg,
 		store:    store,
@@ -30,12 +31,17 @@ func New(cfg *config.Config, store *cache.Store) *Server {
 		hls: transcode.NewManager(transcode.Options{
 			FFmpegPath:  cfg.FFmpegPath,
 			FFprobePath: cfg.FFprobePath,
+			Encoder:     enc,
 		}),
 	}
 }
 
 // Close releases server-held resources (active transcode sessions).
 func (s *Server) Close() { s.hls.Close() }
+
+// TranscodeActive reports whether any live transcode session is running, so the
+// background optimizer can yield to a viewer.
+func (s *Server) TranscodeActive() bool { return s.hls.ActiveSessions() > 0 }
 
 // Handler builds the HTTP routes.
 func (s *Server) Handler() http.Handler {

@@ -122,6 +122,12 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 			return nil, err
 		}
 		f.Transcode = transcode.NeedsTranscode(filepath.Ext(path))
+		if f.Transcode {
+			// A fresh optimized copy makes the file direct-play, so the client skips HLS.
+			if _, fresh := transcode.OptimizedSibling(path); fresh {
+				f.Transcode = false
+			}
+		}
 		d.Files = append(d.Files, f)
 	}
 	if err := files.Err(); err != nil {
@@ -166,11 +172,26 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 	return d, trows.Err()
 }
 
-// FilePath returns the absolute path of media file n (by index).
+// FilePath returns the absolute path of the source media file n (by index). HLS
+// transcoding always works from the source, never the optimized copy.
 func (s *Store) FilePath(id string, idx int) (string, error) {
 	var p string
 	err := s.db.QueryRow(`SELECT path FROM media_files WHERE media_id = ? AND idx = ?`, id, idx).Scan(&p)
 	return p, err
+}
+
+// PlaybackPath returns the best file to serve for media file idx and whether it still
+// needs transcoding. A fresh optimized copy beside the source is preferred (direct-play);
+// otherwise the source, which needs transcoding when the browser cannot play it directly.
+func (s *Store) PlaybackPath(id string, idx int) (path string, needsTranscode bool, err error) {
+	src, err := s.FilePath(id, idx)
+	if err != nil {
+		return "", false, err
+	}
+	if opt, fresh := transcode.OptimizedSibling(src); fresh {
+		return opt, false, nil
+	}
+	return src, transcode.NeedsTranscode(filepath.Ext(src)), nil
 }
 
 // PosterPath returns the poster path for a media item, or "" if none.
