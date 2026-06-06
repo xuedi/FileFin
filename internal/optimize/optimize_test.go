@@ -57,6 +57,71 @@ func TestWorkList(t *testing.T) {
 	}
 }
 
+func TestSweepStaleLocks(t *testing.T) {
+	dir := t.TempDir()
+	media := filepath.Join(dir, "cat", "(1966) Django")
+	if err := os.MkdirAll(media, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := []string{
+		filepath.Join(media, "(1966) Django.avi"),
+		filepath.Join(media, "(1966) Django.optimized.mp4"),
+		filepath.Join(media, "notes.txt"),
+	}
+	locks := []string{
+		filepath.Join(media, "(1966) Django.optimized.mp4.tmp"),
+		filepath.Join(dir, "cat", "(1970) X.optimized.mp4.tmp"),
+	}
+	for _, p := range append(append([]string{}, keep...), locks...) {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := SweepStaleLocks(dir)
+	if err != nil || n != 2 {
+		t.Fatalf("SweepStaleLocks = %d (err=%v), want 2", n, err)
+	}
+	for _, p := range keep {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("swept a non-lock file: %s", p)
+		}
+	}
+	for _, p := range locks {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("lock not removed: %s", p)
+		}
+	}
+}
+
+// TestProcessOneSkipsClaimed verifies the temp-as-lock claim: a candidate whose lock
+// already exists is left untouched (no encode, no final copy), so two workers/processes
+// never do the same work.
+func TestProcessOneSkipsClaimed(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "(1966) Django.avi")
+	if err := os.WriteFile(src, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt, _ := transcode.OptimizedSibling(src)
+	lock := opt + ".tmp"
+	if err := os.WriteFile(lock, []byte("claimed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// FFmpeg/FFprobe would error if invoked; the claim must short-circuit before then.
+	w := NewWorker(Options{DataDir: dir, FFmpeg: "false", FFprobe: "false"})
+	if err := w.processOne(context.Background(), Candidate{Source: src, Optimized: opt}, transcode.SoftwareEncoder()); err != nil {
+		t.Fatalf("processOne on a claimed item: %v", err)
+	}
+	if b, _ := os.ReadFile(lock); string(b) != "claimed" {
+		t.Errorf("another worker's lock was modified: %q", b)
+	}
+	if _, err := os.Stat(opt); err == nil {
+		t.Error("optimized copy should not be produced for a claimed item")
+	}
+}
+
 // TestWorkerEndToEnd is gated on ffmpeg: it optimizes a generated non-native clip and
 // asserts a fresh, browser-direct-play H.264 copy is produced.
 func TestWorkerEndToEnd(t *testing.T) {
@@ -103,5 +168,49 @@ func TestWorkerEndToEnd(t *testing.T) {
 	}
 	if got := string(codec); got[:4] != "h264" {
 		t.Errorf("optimized video codec = %q, want h264", got)
+	}
+}
+
+// TestWorkerParallel is gated on ffmpeg: it runs several inputs through the adaptive pool
+// with room for multiple workers and asserts every direct-play copy is produced and no
+// stale lock files remain.
+func TestWorkerParallel(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not on PATH")
+	}
+
+	dir := filepath.Join(t.TempDir(), "data")
+	var srcs []string
+	for i := 0; i < 4; i++ {
+		media := filepath.Join(dir, "cat", "(196"+string(rune('0'+i))+") Film")
+		if err := os.MkdirAll(media, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(media, filepath.Base(media)+".avi")
+		gen := exec.Command("ffmpeg", "-nostdin", "-y",
+			"-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=15",
+			"-c:v", "mpeg4", src,
+		)
+		if out, err := gen.CombinedOutput(); err != nil {
+			t.Fatalf("generate input %d: %v\n%s", i, err, out)
+		}
+		srcs = append(srcs, src)
+	}
+
+	w := NewWorker(Options{DataDir: dir, MaxWorkers: 4, Logger: logging.New(logging.Info, new(bytes.Buffer))})
+	if err := w.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	for _, src := range srcs {
+		if _, fresh := transcode.OptimizedSibling(src); !fresh {
+			t.Errorf("missing/stale optimized copy for %s", src)
+		}
+	}
+	if n, _ := SweepStaleLocks(dir); n != 0 {
+		t.Errorf("%d stale lock(s) left after a clean run", n)
 	}
 }

@@ -12,6 +12,12 @@ import (
 // media file, stored beside it as `<source-base>.optimized.mp4`.
 const OptimizedExt = ".optimized.mp4"
 
+// OptimizedTmpSuffix names the optimizer's in-progress temp file (`<optimized>.tmp`).
+// The optimizer creates it atomically so it doubles as a per-item lock; the suffix is
+// a single source of truth shared by the worker and serve's stale-lock sweep. It is not
+// a video extension, so a leftover is never scanned as media.
+const OptimizedTmpSuffix = OptimizedExt + ".tmp"
+
 // OptimizedSibling returns the path of the optimized direct-play copy for srcPath and
 // whether that copy currently exists and is fresh (at least as new as the source, so a
 // re-imported source invalidates a stale copy). The path is returned even when not

@@ -113,6 +113,11 @@ func (l *Logger) For(category string) *Scoped { return &Scoped{l: l, cat: catego
 // Info records an event visible at info and debug levels.
 func (s *Scoped) Info(msg string, f ...Fields) { s.emit(Info, msg, f) }
 
+// Debug records an event visible only at debug level. Use it for high-frequency or
+// mechanical detail (e.g. the optimizer scaling its worker pool) that would be noise
+// at info.
+func (s *Scoped) Debug(msg string, f ...Fields) { s.emit(Debug, msg, f) }
+
 // Error records an event visible at every level.
 func (s *Scoped) Error(msg string, f ...Fields) { s.emit(Error, msg, f) }
 

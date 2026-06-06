@@ -24,12 +24,14 @@ type Config struct {
 	APIKeys   map[string]string
 	Users     map[string]string // username -> bcrypt hash
 
-	FFmpegPath       string
-	FFprobePath      string
-	TranscodeEnabled bool
-	HWAccel          string // "auto" (detect GPU) | "off" (force software)
-	HWAccelDevice    string // optional DRM render node override, e.g. /dev/dri/renderD128
-	OptimizeEnabled  bool   // background pre-transcode to direct-play copies (off by default)
+	FFmpegPath         string
+	FFprobePath        string
+	TranscodeEnabled   bool
+	HWAccel            string // "auto" (detect GPU) | "off" (force software)
+	HWAccelDevice      string // optional DRM render node override, e.g. /dev/dri/renderD128
+	OptimizeEnabled    bool   // background pre-transcode to direct-play copies (off by default)
+	OptimizeMaxWorkers int    // ceiling on concurrent optimize encodes; 0 = auto (CPU count)
+	OptimizeTargetLoad int    // CPU busy %% under which CPU workers may be added; 0 = default (80)
 
 	LogLevel  string // error | info | debug
 	LogOutput string // STDOUT | STDERR | a file path
@@ -129,9 +131,18 @@ func Load(path string) (*Config, error) {
 				c.HWAccelDevice = val
 			}
 		case "optimize":
-			if key == "enabled" {
+			switch key {
+			case "enabled":
 				if b, err := strconv.ParseBool(val); err == nil {
 					c.OptimizeEnabled = b
+				}
+			case "maxWorkers":
+				if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+					c.OptimizeMaxWorkers = n
+				}
+			case "targetLoad":
+				if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+					c.OptimizeTargetLoad = n
 				}
 			}
 		case "logging":
@@ -184,6 +195,12 @@ func (c *Config) Save(path string) error {
 	}
 	b.WriteString("\n## optimize\n")
 	fmt.Fprintf(&b, " - enabled: %t\n", c.OptimizeEnabled)
+	if c.OptimizeMaxWorkers > 0 {
+		fmt.Fprintf(&b, " - maxWorkers: %d\n", c.OptimizeMaxWorkers)
+	}
+	if c.OptimizeTargetLoad > 0 {
+		fmt.Fprintf(&b, " - targetLoad: %d\n", c.OptimizeTargetLoad)
+	}
 	b.WriteString("\n## logging\n")
 	fmt.Fprintf(&b, " - level: %s\n", c.LogLevel)
 	fmt.Fprintf(&b, " - output: %s\n", c.LogOutput)

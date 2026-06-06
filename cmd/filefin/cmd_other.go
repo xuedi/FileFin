@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -91,17 +92,27 @@ func cmdServe(c *cli.Context) error {
 	})
 	blog.Info(gpuStatusLine(cfg, enc))
 	if cfg.OptimizeEnabled {
+		// Clear locks left by a crashed run before any worker starts (serve owns the
+		// data dir at this point, so no live lock is removed).
+		if n, err := optimize.SweepStaleLocks(cfg.DataDir); err == nil && n > 0 {
+			blog.Info(fmt.Sprintf("cleared %d stale optimize lock(s)", n))
+		}
+		workers := optimizeWorkers(cfg)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		go optimize.NewWorker(optimize.Options{
-			DataDir: cfg.DataDir,
-			FFmpeg:  cfg.FFmpegPath,
-			FFprobe: cfg.FFprobePath,
-			Encoder: enc,
-			Busy:    srv.TranscodeActive,
-			Logger:  lg,
+			DataDir:    cfg.DataDir,
+			FFmpeg:     cfg.FFmpegPath,
+			FFprobe:    cfg.FFprobePath,
+			Encoder:    enc,
+			CPUEncoder: transcode.SoftwareEncoder(),
+			MaxWorkers: workers,
+			TargetLoad: cfg.OptimizeTargetLoad,
+			Busy:       srv.TranscodeActive,
+			Logger:     lg,
 		}).Run(ctx)
-		blog.Info("optimize worker enabled (pre-transcoding to direct-play copies)")
+		blog.Info("optimize worker enabled (pre-transcoding to direct-play copies)",
+			logging.Fields{"max_workers": workers, "target_load": optimizeTargetLoad(cfg)})
 	}
 	return http.ListenAndServe(addr, srv.Handler())
 }
@@ -123,12 +134,33 @@ func cmdOptimize(c *cli.Context) error {
 		olog.Info("optimizing with software encoder (libx264)")
 	}
 	return optimize.NewWorker(optimize.Options{
-		DataDir: cfg.DataDir,
-		FFmpeg:  cfg.FFmpegPath,
-		FFprobe: cfg.FFprobePath,
-		Encoder: enc,
-		Logger:  lg,
+		DataDir:    cfg.DataDir,
+		FFmpeg:     cfg.FFmpegPath,
+		FFprobe:    cfg.FFprobePath,
+		Encoder:    enc,
+		CPUEncoder: transcode.SoftwareEncoder(),
+		MaxWorkers: optimizeWorkers(cfg),
+		TargetLoad: cfg.OptimizeTargetLoad,
+		Logger:     lg,
 	}).RunOnce(c.Context)
+}
+
+// optimizeWorkers resolves the concurrency ceiling for the optimize pool: the configured
+// value, or the CPU count when unset. The adaptive manager scales up to this cap based on
+// live CPU/GPU load, so it is a ceiling, not a fixed worker count.
+func optimizeWorkers(cfg *config.Config) int {
+	if cfg.OptimizeMaxWorkers > 0 {
+		return cfg.OptimizeMaxWorkers
+	}
+	return runtime.NumCPU()
+}
+
+// optimizeTargetLoad resolves the grow-threshold percentage for logging.
+func optimizeTargetLoad(cfg *config.Config) int {
+	if cfg.OptimizeTargetLoad > 0 {
+		return cfg.OptimizeTargetLoad
+	}
+	return 80
 }
 
 // detectEncoder picks the video encoder for serve, probing for a GPU once at startup.

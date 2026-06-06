@@ -27,6 +27,10 @@ type Encoder struct {
 // acceleration is disabled. It is also the zero-value-equivalent default.
 var softwareEncoder = Encoder{Kind: "software", Codec: "libx264"}
 
+// SoftwareEncoder returns the libx264 CPU encoder. The optimizer uses it for its
+// CPU-only workers, which run alongside the single GPU worker.
+func SoftwareEncoder() Encoder { return softwareEncoder }
+
 // videoCodecArgs returns the pre-input global flags and the video-codec flags (no
 // keyframe or container options) for enc, shared by the HLS and optimize encoders.
 func videoCodecArgs(enc Encoder) (preInput, vcodec []string) {

@@ -14,6 +14,9 @@ func TestRoundTrip(t *testing.T) {
 	c.FFmpegPath = "/opt/ffmpeg"
 	c.FFprobePath = "/opt/ffprobe"
 	c.TranscodeEnabled = false
+	c.OptimizeEnabled = true
+	c.OptimizeMaxWorkers = 6
+	c.OptimizeTargetLoad = 75
 	c.LogLevel = "debug"
 	c.LogOutput = "/var/log/filefin.log"
 	c.APIKeys["tmdb"] = "abc123"
@@ -35,6 +38,12 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if d := New(); d.FFmpegPath != "ffmpeg" || d.FFprobePath != "ffprobe" || !d.TranscodeEnabled {
 		t.Fatalf("transcode defaults wrong: %+v", d)
+	}
+	if !got.OptimizeEnabled || got.OptimizeMaxWorkers != 6 || got.OptimizeTargetLoad != 75 {
+		t.Fatalf("optimize config mismatch: %+v", got)
+	}
+	if d := New(); d.OptimizeEnabled || d.OptimizeMaxWorkers != 0 || d.OptimizeTargetLoad != 0 {
+		t.Fatalf("optimize defaults wrong: %+v", d)
 	}
 	if got.LogLevel != "debug" || got.LogOutput != "/var/log/filefin.log" {
 		t.Fatalf("logging config mismatch: %+v", got)
