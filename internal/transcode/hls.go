@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,9 @@ const (
 	segmentWaitTimeout = 30 * time.Second
 	sessionIdleTimeout = 60 * time.Second
 	reapInterval       = 30 * time.Second
+	// repositionLead is how many segments past the encode head a request may be before
+	// it counts as a seek (rather than normal prebuffer) and relaunches the encoder.
+	repositionLead = 3
 )
 
 var segmentName = regexp.MustCompile(`^seg\d+\.ts$`)
@@ -39,7 +43,10 @@ type Manager struct {
 
 type session struct {
 	dir        string
+	inputPath  string
+	remux      bool // copy path: races through the file, never repositioned
 	duration   float64
+	startSeg   int // first segment the current encoder was launched at
 	cancel     context.CancelFunc
 	lastAccess time.Time
 }
@@ -97,6 +104,14 @@ func (m *Manager) Segment(key, name string) (string, error) {
 	}
 
 	path := filepath.Join(s.dir, name)
+	if _, err := os.Stat(path); err == nil {
+		return path, nil // already encoded (covers buffered-back seeks)
+	}
+
+	// Not on disk yet: a far-forward or backward seek may need the lone encoder
+	// relaunched to seek there rather than grinding forward to it.
+	m.maybeReposition(s, segIndex(name))
+
 	deadline := time.Now().Add(segmentWaitTimeout)
 	for {
 		if _, err := os.Stat(path); err == nil {
@@ -107,6 +122,70 @@ func (m *Manager) Segment(key, name string) (string, error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// segIndex extracts N from a name already validated against segmentName (seg<N>.ts).
+func segIndex(name string) int {
+	n, _ := strconv.Atoi(name[len("seg") : len(name)-len(".ts")])
+	return n
+}
+
+// repositionTarget decides whether the lone encoder should be relaunched to serve a
+// requested segment. produced is the highest segment present from the current run
+// (startSeg-1 if none yet). A request behind the run's start, or far enough past the
+// encode head that waiting would stall, relaunches the encoder seeking to it.
+func repositionTarget(startSeg, produced, requested int) (target int, reposition bool) {
+	if requested < startSeg || requested > produced+repositionLead {
+		return requested, true
+	}
+	return 0, false
+}
+
+// highestSeg returns the largest segment index >= startSeg present in dir, or
+// startSeg-1 when the current run has produced none yet.
+func highestSeg(dir string, startSeg int) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return startSeg - 1
+	}
+	max := startSeg - 1
+	for _, e := range entries {
+		name := e.Name()
+		if !segmentName.MatchString(name) {
+			continue
+		}
+		if n := segIndex(name); n >= startSeg && n > max {
+			max = n
+		}
+	}
+	return max
+}
+
+// maybeReposition relaunches the session's encoder seeking to segment n when the
+// request is a seek out of the current run's reach. Re-encode sessions only; the
+// remux/copy path is left to race through the file sequentially.
+func (m *Manager) maybeReposition(s *session, n int) {
+	if s.remux {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	produced := highestSeg(s.dir, s.startSeg)
+	target, ok := repositionTarget(s.startSeg, produced, n)
+	if !ok {
+		return
+	}
+	// Start the new encoder before cancelling the old one so a launch failure leaves
+	// the session encoding rather than dead. Segments already on disk stay valid; the
+	// two processes write disjoint segment numbers, and +temp_file hides partials.
+	runCtx, cancel := context.WithCancel(context.Background())
+	if err := m.startFFmpeg(runCtx, s.dir, s.inputPath, s.remux, target); err != nil {
+		cancel()
+		return
+	}
+	s.cancel()
+	s.cancel = cancel
+	s.startSeg = target
 }
 
 func (m *Manager) ensure(key, inputPath string) (*session, error) {
@@ -131,13 +210,14 @@ func (m *Manager) ensure(key, inputPath string) (*session, error) {
 		return nil, err
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	if err := m.startFFmpeg(runCtx, dir, inputPath, RemuxEligible(streams)); err != nil {
+	remux := RemuxEligible(streams)
+	if err := m.startFFmpeg(runCtx, dir, inputPath, remux, 0); err != nil {
 		cancel()
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 
-	s := &session{dir: dir, duration: streams.Duration, cancel: cancel, lastAccess: time.Now()}
+	s := &session{dir: dir, inputPath: inputPath, remux: remux, duration: streams.Duration, cancel: cancel, lastAccess: time.Now()}
 
 	m.mu.Lock()
 	// Another request may have created the session while we were probing.
@@ -153,14 +233,22 @@ func (m *Manager) ensure(key, inputPath string) (*session, error) {
 	return s, nil
 }
 
-func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux bool) error {
-	args := []string{"-nostdin", "-i", inputPath}
+func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux bool, startSeg int) error {
+	args := []string{"-nostdin"}
+	if startSeg > 0 {
+		// Seek the input to the segment's start. -copyts preserves source timestamps so
+		// the relaunched encoder's segments stay aligned with the up-front VOD playlist.
+		args = append(args, "-copyts", "-ss", fmt.Sprint(startSeg*segmentSeconds))
+	}
+	args = append(args, "-i", inputPath)
 	if remux {
 		args = append(args, "-c", "copy")
 	} else {
 		args = append(args,
 			"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds),
+			// Force keyframes on the absolute 6s grid so boundaries line up across
+			// relaunches; with -copyts, t is source time, so offset by startSeg.
+			"-force_key_frames", fmt.Sprintf("expr:gte(t,(n_forced+%d)*%d)", startSeg, segmentSeconds),
 			"-c:a", "aac", "-b:a", "160k", "-ac", "2",
 		)
 	}
@@ -171,6 +259,7 @@ func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux 
 		"-hls_playlist_type", "vod",
 		"-hls_flags", "independent_segments+temp_file",
 		"-hls_segment_type", "mpegts",
+		"-start_number", fmt.Sprint(startSeg),
 		"-hls_list_size", "0",
 		"-hls_segment_filename", filepath.Join(dir, "seg%d.ts"),
 		filepath.Join(dir, "index.m3u8"),
