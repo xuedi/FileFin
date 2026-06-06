@@ -103,14 +103,16 @@ Pass `--no-fetch` to skip the lookup for a single import.
 
 FileFin is an early MVP. Working today:
 
-- `setup`, `validate`, `rebuild`, `serve`, and `import` (with optional OMDb enrichment)
+- `setup`, `validate`, `rebuild`, `serve`, `import` (with optional OMDb enrichment), and `plex`
+- `plex` imports media, metadata, and posters from a Plex library database (read-only) into the
+  canonical layout, with a new/existing plan and confirmation before writing
 - filesystem scan → SQLite cache → authenticated API → embedded web UI
 - direct-play streaming with byte-range support
 
 Not yet implemented:
 
 - transcoding (the web player currently direct-plays browser-native containers such as `.mp4`/`.webm`)
-- `plex` and `jellyfin` library importers
+- `jellyfin` library importer
 - configurable naming scheme
 
 ## License

@@ -47,7 +47,22 @@ func main() {
 				},
 				Action: cmdImport,
 			},
-			{Name: "plex", Usage: "import from a Plex database (not implemented)", Action: notImplemented},
+			{
+				Name:      "plex",
+				Usage:     "import media and metadata from a Plex database",
+				ArgsUsage: "<library.db>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "metadata-dir", Usage: "Plex Metadata directory (default: derived from the db path)"},
+					&cli.StringSliceFlag{Name: "remap", Usage: "rewrite a source path prefix, old=new (repeatable)"},
+					&cli.StringFlag{Name: "section", Usage: "only import this Plex section"},
+					&cli.IntFlag{Name: "limit", Usage: "limit the number of items (for testing)"},
+					&cli.BoolFlag{Name: "dry-run", Usage: "show the plan without writing anything"},
+					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+					&cli.BoolFlag{Name: "force", Usage: "overwrite existing media folders"},
+					&cli.BoolFlag{Name: "no-posters", Usage: "do not copy posters/banners"},
+				},
+				Action: cmdPlex,
+			},
 			{Name: "jellyfin", Usage: "import from a Jellyfin library (not implemented)", Action: notImplemented},
 		},
 	}
