@@ -26,7 +26,7 @@ operation; only the explicit import commands and `setup` ever write there.
 │       ├── poster.jpg                       # optional
 │       ├── banner.png                       # optional
 │       └── meta.md                          # optional metadata
-└── Shows - China/
+└── Shows - English/
     └── (2002) Firefly/
         ├── (2002) Firefly - 1x1.avi         # "(YYYY) Title - SxE"
         ├── (2002) Firefly - 1x2.avi
