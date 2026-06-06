@@ -50,7 +50,7 @@ func cmdPlex(c *cli.Context) error {
 	if n := c.Int("limit"); n > 0 && n < len(items) {
 		items = items[:n]
 	}
-	return planAndApply(c, items, cfg.DataDir)
+	return planAndApply(c, items, cfg)
 }
 
 func plexToMedia(it plex.Item, remaps []remap) importer.Media {

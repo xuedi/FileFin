@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"filefin/internal/meta"
 	"filefin/internal/model"
 )
 
@@ -239,8 +240,30 @@ type MetaContent struct {
 	Description string
 	Plot        string
 	Metadata    []model.KV
+	Technical   []model.KV
 	Actors      []string
 	Tags        []string
+}
+
+// TechnicalFunc derives the `## technical` facts for a media folder from its
+// copied media files. It is built in the cmd layer (it shells out to ffprobe);
+// the importer appends the mediaEnriched flag itself so the flag is guaranteed.
+type TechnicalFunc func(mediaPaths []string) []model.KV
+
+// AlreadyEnriched reports whether folder's meta.md carries a truthy mediaEnriched
+// flag in its `## technical` section. A missing file or flag means not enriched.
+func AlreadyEnriched(folder string) bool {
+	m, err := meta.ParseFile(filepath.Join(folder, "meta.md"))
+	if err != nil {
+		return false
+	}
+	for _, kv := range m.Technical {
+		if kv.Key == "mediaEnriched" {
+			b, _ := strconv.ParseBool(kv.Value)
+			return b
+		}
+	}
+	return false
 }
 
 // StubMeta is the minimal meta.md content used when no enrichment is available.
@@ -275,6 +298,12 @@ func WriteMeta(folder string, m MetaContent) error {
 	b.WriteString("\n## tags\n")
 	for _, t := range m.Tags {
 		fmt.Fprintf(&b, " - %s\n", t)
+	}
+	if len(m.Technical) > 0 {
+		b.WriteString("\n## technical\n")
+		for _, kv := range m.Technical {
+			fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
+		}
 	}
 	return os.WriteFile(filepath.Join(folder, "meta.md"), []byte(b.String()), 0o644)
 }
@@ -311,16 +340,20 @@ type ApplyStats struct {
 	Skipped int
 }
 
-// Apply copies the media's files into the canonical layout, then writes meta.md and
-// (when posters is true) poster.jpg/banner.jpg. Sidecar files that already exist are
-// left untouched - for plex/jellyfin the metadata source is local and authoritative,
-// so there is no reason to recreate them. prog, if non-nil, receives per-file copy
-// progress. --force overrides every skip. It returns the folder and per-file stats.
-func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc) (string, ApplyStats, error) {
+// Apply copies the media's files into the canonical layout, then - once per media
+// folder - enriches it: it writes meta.md (with a `## technical` section and the
+// mediaEnriched flag) and, when posters is true, poster.jpg/banner.jpg. Enrichment
+// runs only when the folder is not yet enriched (or force is set); an already
+// enriched folder keeps its hand-edited sidecars. Media files are copied
+// independently of enrichment, so a changed file is still re-copied. tech, if
+// non-nil, supplies the technical facts. prog, if non-nil, receives per-file copy
+// progress. It returns the folder and per-file stats.
+func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tech TechnicalFunc) (string, ApplyStats, error) {
 	if len(m.Files) == 0 {
 		return "", ApplyStats{}, errors.New("no media files")
 	}
 	var folder string
+	var targets []string
 	var stats ApplyStats
 	for _, f := range m.Files {
 		res, err := Execute(Request{
@@ -332,39 +365,33 @@ func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc) (st
 			return "", stats, err
 		}
 		folder = res.Folder
+		targets = append(targets, res.TargetPath)
 		if res.Skipped {
 			stats.Skipped++
 		} else {
 			stats.Copied++
 		}
 	}
-	if force || !fileExists(filepath.Join(folder, "meta.md")) {
-		meta := m.Meta
-		meta.Title = m.Title
-		if err := WriteMeta(folder, meta); err != nil {
+	if force || !AlreadyEnriched(folder) {
+		mc := m.Meta
+		mc.Title = m.Title
+		if tech != nil {
+			mc.Technical = tech(targets)
+		}
+		mc.Technical = append(mc.Technical, model.KV{Key: "mediaEnriched", Value: "true"})
+		if err := WriteMeta(folder, mc); err != nil {
 			return "", stats, err
 		}
-	}
-	if posters {
-		if m.PosterPath != "" {
-			copyArtIfMissing(m.PosterPath, filepath.Join(folder, "poster.jpg"), force)
-		}
-		if m.BannerPath != "" {
-			copyArtIfMissing(m.BannerPath, filepath.Join(folder, "banner.jpg"), force)
+		if posters {
+			if m.PosterPath != "" {
+				_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
+			}
+			if m.BannerPath != "" {
+				_ = copyArt(m.BannerPath, filepath.Join(folder, "banner.jpg"))
+			}
 		}
 	}
 	return folder, stats, nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func copyArtIfMissing(src, dst string, force bool) {
-	if force || !fileExists(dst) {
-		_ = copyArt(src, dst)
-	}
 }
 
 func copyArt(src, dst string) error {

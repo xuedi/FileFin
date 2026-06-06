@@ -105,9 +105,10 @@ func cmdImport(c *cli.Context) error {
 		fmt.Printf("Imported: %s\n", res.TargetPath)
 	}
 
-	// Create meta.md only for a new media folder; never overwrite an existing one
-	// (e.g. when adding another episode).
-	if !res.MetaExisted {
+	// Enrich the folder once: when it has no mediaEnriched flag yet (or --force),
+	// write meta.md and download a poster. Already-enriched folders (e.g. when
+	// adding another episode) keep their existing, possibly hand-edited meta.md.
+	if c.Bool("force") || !importer.AlreadyEnriched(res.Folder) {
 		enrichMeta(cfg, req, res, !c.Bool("no-fetch"))
 	}
 	fmt.Printf("Run `%s rebuild` to update the cache.\n", config.AppName)
@@ -126,7 +127,7 @@ func enrichMeta(cfg *config.Config, req importer.Request, res *importer.Result, 
 			fmt.Printf("OMDb lookup failed (%v); writing stub meta.md\n", err)
 		} else {
 			mc := metaFromOMDb(movie, req.Title, req.Year)
-			if err := importer.WriteMeta(res.Folder, mc); err != nil {
+			if err := writeEnrichedMeta(cfg, res, mc); err != nil {
 				fmt.Printf("could not write meta.md: %v\n", err)
 				return
 			}
@@ -142,11 +143,20 @@ func enrichMeta(cfg *config.Config, req importer.Request, res *importer.Result, 
 			return
 		}
 	}
-	if err := importer.WriteMeta(res.Folder, importer.StubMeta(req.Title, req.Year)); err != nil {
+	if err := writeEnrichedMeta(cfg, res, importer.StubMeta(req.Title, req.Year)); err != nil {
 		fmt.Printf("could not write meta.md: %v\n", err)
 		return
 	}
 	fmt.Printf("Wrote meta stub: %s\n", filepath.Join(res.Folder, "meta.md"))
+}
+
+// writeEnrichedMeta probes the imported file for technical facts, appends the
+// mediaEnriched flag, and writes meta.md. The flag is set even when probing
+// yields nothing, so enrichment is attempted exactly once.
+func writeEnrichedMeta(cfg *config.Config, res *importer.Result, mc importer.MetaContent) error {
+	mc.Technical = technicalProvider(cfg)([]string{res.TargetPath})
+	mc.Technical = append(mc.Technical, model.KV{Key: "mediaEnriched", Value: "true"})
+	return importer.WriteMeta(res.Folder, mc)
 }
 
 // metaFromOMDb maps an OMDb result into meta.md content. The user's title/year

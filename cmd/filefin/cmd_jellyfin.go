@@ -49,5 +49,5 @@ func cmdJellyfin(c *cli.Context) error {
 		fmt.Printf("No movies or shows found under %s\n", src)
 		return nil
 	}
-	return planAndApply(c, items, cfg.DataDir)
+	return planAndApply(c, items, cfg)
 }

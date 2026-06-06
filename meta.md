@@ -31,8 +31,19 @@ Xi eventually arrives at the top of a cliff with a solid layer of low-lying clou
  - boxOffice: $200 million
 
 ## technical
- - codec:
- - bitrate:
+ - mediaEnriched: true
+ - container: matroska
+ - videoCodec: h264
+ - videoProfile: High
+ - resolution: 1920x1080
+ - bitDepth: 8
+ - frameRate: 23.976
+ - audioCodec: ac3
+ - audioChannels: 5.1
+ - audioLanguages: eng, afr
+ - subtitleLanguages: eng
+ - bitrate: 8.5 Mbit/s
+ - fileSize: 6.2 GB
 
 ## actors
  - Nǃxau ǂToma (Xi)

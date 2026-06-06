@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"filefin/internal/meta"
+	"filefin/internal/model"
 )
 
 func TestParseName(t *testing.T) {
@@ -152,7 +155,7 @@ func TestMediaApply(t *testing.T) {
 		PosterPath: poster,
 		Files:      []SourceFile{{Path: src}},
 	}
-	folder, _, err := m.Apply(data, false, true, nil)
+	folder, _, err := m.Apply(data, false, true, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,25 +192,26 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 		Files:      []SourceFile{{Path: src}},
 	}
 
-	folder, stats, err := m.Apply(data, false, true, nil)
+	folder, stats, err := m.Apply(data, false, true, nil, nil)
 	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
 		t.Fatalf("first apply: stats=%+v err=%v", stats, err)
 	}
 
-	// Edit the already-imported sidecars; a reimport must not overwrite them, and the
-	// unchanged media file (same size) must be skipped.
+	// Edit the already-enriched sidecars; a reimport must not overwrite them, and the
+	// unchanged media file (same size) must be skipped. The hand edit keeps the
+	// mediaEnriched flag so the folder still reads as enriched.
 	mediaPath := filepath.Join(folder, "(2020) Movie.avi")
 	metaPath := filepath.Join(folder, "meta.md")
 	posterPath := filepath.Join(folder, "poster.jpg")
-	os.WriteFile(metaPath, []byte("HAND EDITED"), 0o644)
+	os.WriteFile(metaPath, []byte("# Movie\nHAND EDITED\n\n## technical\n - mediaEnriched: true\n"), 0o644)
 	os.WriteFile(posterPath, []byte("HAND EDITED ART"), 0o644)
 
 	m.Meta = MetaContent{Description: "second"}
-	_, stats, err = m.Apply(data, false, true, nil)
+	_, stats, err = m.Apply(data, false, true, nil, nil)
 	if err != nil || stats.Copied != 0 || stats.Skipped != 1 {
 		t.Fatalf("reimport stats: %+v err=%v", stats, err)
 	}
-	if b, _ := os.ReadFile(metaPath); string(b) != "HAND EDITED" {
+	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "HAND EDITED") {
 		t.Fatalf("meta.md was overwritten: %q", b)
 	}
 	if b, _ := os.ReadFile(posterPath); string(b) != "HAND EDITED ART" {
@@ -216,7 +220,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 
 	// A changed source (different size) is re-copied on reimport.
 	os.WriteFile(src, []byte("A MUCH LONGER REPLACEMENT FILE"), 0o644)
-	_, stats, err = m.Apply(data, false, true, nil)
+	_, stats, err = m.Apply(data, false, true, nil, nil)
 	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
 		t.Fatalf("changed-file reimport stats: %+v err=%v", stats, err)
 	}
@@ -225,7 +229,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 	}
 
 	// --force overwrites sidecars too.
-	if _, _, err = m.Apply(data, true, true, nil); err != nil {
+	if _, _, err = m.Apply(data, true, true, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "second") {
@@ -251,7 +255,7 @@ func TestMediaApplyEpisodes(t *testing.T) {
 			{Path: mk("e2.avi"), Season: 1, Episode: 2},
 		},
 	}
-	if _, _, err := m.Apply(data, false, false, nil); err != nil {
+	if _, _, err := m.Apply(data, false, false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	folder := filepath.Join(data, "Shows", "(2002) Firefly")
@@ -259,6 +263,113 @@ func TestMediaApplyEpisodes(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(folder, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+}
+
+func TestWriteMetaTechnicalRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	mc := MetaContent{
+		Title: "Movie",
+		Technical: []model.KV{
+			{Key: "container", Value: "matroska"},
+			{Key: "videoCodec", Value: "h264, hevc"},
+			{Key: "mediaEnriched", Value: "true"},
+		},
+	}
+	if err := WriteMeta(dir, mc); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := meta.ParseFile(filepath.Join(dir, "meta.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"container": "matroska", "videoCodec": "h264, hevc", "mediaEnriched": "true"}
+	got := map[string]string{}
+	for _, kv := range parsed.Technical {
+		got[kv.Key] = kv.Value
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("technical[%q] = %q, want %q (parsed: %+v)", k, got[k], v, parsed.Technical)
+		}
+	}
+}
+
+func TestWriteMetaNoTechnicalSection(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteMeta(dir, StubMeta("Movie", 2020)); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "meta.md"))
+	if strings.Contains(string(b), "## technical") {
+		t.Fatalf("empty Technical should omit the section:\n%s", b)
+	}
+}
+
+func TestAlreadyEnriched(t *testing.T) {
+	dir := t.TempDir()
+	if AlreadyEnriched(dir) {
+		t.Error("missing meta.md should not read as enriched")
+	}
+	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## metadata\n - release: 2020\n"), 0o644)
+	if AlreadyEnriched(dir) {
+		t.Error("meta.md without the flag should not read as enriched")
+	}
+	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## technical\n - mediaEnriched: true\n"), 0o644)
+	if !AlreadyEnriched(dir) {
+		t.Error("mediaEnriched: true should read as enriched")
+	}
+	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## technical\n - mediaEnriched: false\n"), 0o644)
+	if AlreadyEnriched(dir) {
+		t.Error("mediaEnriched: false should not read as enriched")
+	}
+}
+
+func TestApplyEnrichmentFlag(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.avi")
+	os.WriteFile(src, []byte("MOVIE"), 0o644)
+	data := filepath.Join(dir, "data")
+
+	m := Media{
+		Category: "C", Title: "Movie", Year: 2020,
+		Meta:  MetaContent{Description: "first"},
+		Files: []SourceFile{{Path: src}},
+	}
+	// A technical func that records a marker key; the importer appends mediaEnriched.
+	tech := func(paths []string) []model.KV {
+		return []model.KV{{Key: "container", Value: "avi"}}
+	}
+
+	folder, _, err := m.Apply(data, false, false, nil, tech)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(folder, "meta.md")
+	b, _ := os.ReadFile(metaPath)
+	if !strings.Contains(string(b), "container: avi") || !strings.Contains(string(b), "mediaEnriched: true") {
+		t.Fatalf("first apply missing technical/flag:\n%s", b)
+	}
+	if !AlreadyEnriched(folder) {
+		t.Fatal("folder should read as enriched after first apply")
+	}
+
+	// Second apply must not re-enrich (the tech func would panic if called).
+	panicTech := func(paths []string) []model.KV { panic("must not re-enrich") }
+	os.WriteFile(metaPath, []byte("# Movie\nHAND\n\n## technical\n - mediaEnriched: true\n"), 0o644)
+	if _, _, err := m.Apply(data, false, false, nil, panicTech); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "HAND") {
+		t.Fatalf("enriched folder was re-enriched:\n%s", b)
+	}
+
+	// --force re-enriches.
+	if _, _, err := m.Apply(data, true, false, nil, tech); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "container: avi") {
+		t.Fatalf("--force did not re-enrich:\n%s", b)
 	}
 }
 

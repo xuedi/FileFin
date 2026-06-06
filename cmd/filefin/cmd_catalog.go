@@ -1,17 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/term"
 
 	"filefin/internal/config"
 	"filefin/internal/importer"
+	"filefin/internal/model"
 	"filefin/internal/progress"
+	"filefin/internal/transcode"
 )
+
+// maxDistinct caps how many distinct values a technical key lists before
+// collapsing the overflow into ", N more".
+const maxDistinct = 10
 
 // copyProgress returns a per-file copy callback that draws a live braille bar to
 // stderr, or nil when stderr is not a terminal (so logs and pipes stay clean).
@@ -22,10 +31,157 @@ func copyProgress() importer.ProgressFunc {
 	return progress.NewReporter(os.Stderr).Track
 }
 
+// technicalProvider builds an importer.TechnicalFunc that probes each of a media
+// folder's files with ffprobe and aggregates their facts into the `## technical`
+// key set. Files that fail to probe are skipped; if every probe fails it returns
+// nil (enrichment still records the flag). It does not emit mediaEnriched - the
+// importer appends that.
+func technicalProvider(cfg *config.Config) importer.TechnicalFunc {
+	return func(paths []string) []model.KV {
+		var infos []transcode.MediaInfo
+		for _, p := range paths {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			mi, err := transcode.Inspect(ctx, cfg.FFprobePath, p)
+			cancel()
+			if err != nil {
+				continue
+			}
+			infos = append(infos, mi)
+		}
+		if len(infos) == 0 {
+			return nil
+		}
+		return buildTechnical(infos)
+	}
+}
+
+// buildTechnical maps probed MediaInfos to `## technical` key/value pairs in a
+// fixed key order. Per-key values are the order-preserving distinct set across the
+// folder's files (capped via aggregate); fileSize is the summed total and bitrate
+// the per-file container rate. Empty keys are omitted.
+func buildTechnical(infos []transcode.MediaInfo) []model.KV {
+	var kvs []model.KV
+	add := func(key string, vals []string) {
+		if v := aggregate(vals); v != "" {
+			kvs = append(kvs, model.KV{Key: key, Value: v})
+		}
+	}
+	perFile := func(f func(transcode.MediaInfo) string) []string {
+		out := make([]string, len(infos))
+		for i, mi := range infos {
+			out[i] = f(mi)
+		}
+		return out
+	}
+	acrossStreams := func(f func(transcode.MediaInfo) []string) []string {
+		var out []string
+		for _, mi := range infos {
+			out = append(out, f(mi)...)
+		}
+		return out
+	}
+
+	add("container", perFile(func(mi transcode.MediaInfo) string { return mi.Container }))
+	add("videoCodec", perFile(func(mi transcode.MediaInfo) string { return mi.VideoCodec }))
+	add("videoProfile", perFile(func(mi transcode.MediaInfo) string { return mi.VideoProfile }))
+	add("resolution", perFile(func(mi transcode.MediaInfo) string {
+		if mi.Width > 0 && mi.Height > 0 {
+			return fmt.Sprintf("%dx%d", mi.Width, mi.Height)
+		}
+		return ""
+	}))
+	add("bitDepth", perFile(func(mi transcode.MediaInfo) string {
+		if mi.BitDepth > 0 {
+			return strconv.Itoa(mi.BitDepth)
+		}
+		return ""
+	}))
+	add("hdr", perFile(func(mi transcode.MediaInfo) string { return mi.HDR }))
+	add("frameRate", perFile(func(mi transcode.MediaInfo) string {
+		if mi.FrameRate > 0 {
+			return formatFrameRate(mi.FrameRate)
+		}
+		return ""
+	}))
+	add("audioCodec", perFile(func(mi transcode.MediaInfo) string { return mi.AudioCodec }))
+	add("audioChannels", perFile(func(mi transcode.MediaInfo) string { return mi.AudioChannels }))
+	add("audioLanguages", acrossStreams(func(mi transcode.MediaInfo) []string { return mi.AudioLanguages }))
+	add("subtitleLanguages", acrossStreams(func(mi transcode.MediaInfo) []string { return mi.SubtitleLanguages }))
+	add("bitrate", perFile(func(mi transcode.MediaInfo) string {
+		if mi.BitRate > 0 {
+			return humanBitrate(mi.BitRate)
+		}
+		return ""
+	}))
+
+	var totalSize int64
+	for _, mi := range infos {
+		totalSize += mi.Size
+	}
+	if totalSize > 0 {
+		kvs = append(kvs, model.KV{Key: "fileSize", Value: humanBytes(totalSize)})
+	}
+	return kvs
+}
+
+// aggregate dedupes vals order-preserving, drops empties, and joins with ", ".
+// More than maxDistinct values collapse to the first maxDistinct plus ", N more".
+func aggregate(vals []string) string {
+	var distinct []string
+	seen := map[string]bool{}
+	for _, v := range vals {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		distinct = append(distinct, v)
+	}
+	if len(distinct) == 0 {
+		return ""
+	}
+	if len(distinct) <= maxDistinct {
+		return strings.Join(distinct, ", ")
+	}
+	return strings.Join(distinct[:maxDistinct], ", ") + fmt.Sprintf(", %d more", len(distinct)-maxDistinct)
+}
+
+func formatFrameRate(f float64) string {
+	s := strconv.FormatFloat(f, 'f', 3, 64)
+	s = strings.TrimRight(s, "0")
+	return strings.TrimRight(s, ".")
+}
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func humanBitrate(n int64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d bit/s", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cbit/s", float64(n)/float64(div), "kMGT"[exp])
+}
+
 // planAndApply is shared by the plex and jellyfin commands: it prints a
 // new/existing plan for the catalog, then (unless --dry-run) confirms and
 // applies it. The command's flags (dry-run/yes/force/no-posters) drive it.
-func planAndApply(c *cli.Context, items []importer.Media, dataDir string) error {
+func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) error {
+	dataDir := cfg.DataDir
 	type plan struct {
 		m      importer.Media
 		exists bool
@@ -65,10 +221,11 @@ func planAndApply(c *cli.Context, items []importer.Media, dataDir string) error 
 	}
 
 	prog := copyProgress()
+	tech := technicalProvider(cfg)
 	copied, skipped, failed := 0, 0, 0
 	for i, p := range plans {
 		fmt.Printf("[%d/%d] %s / (%d) %s\n", i+1, len(plans), p.m.Category, p.m.Year, p.m.Title)
-		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog)
+		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog, tech)
 		if err != nil {
 			fmt.Printf("  error: %v\n", err)
 			failed++
