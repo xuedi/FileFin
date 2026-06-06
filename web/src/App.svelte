@@ -85,8 +85,10 @@
   }
 
   function slugFor(m) {
-    const base = (m.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-    return m.year ? base + '-' + m.year : base
+    // e.g. "1966-Django", "1968-Once-Upon-a-Time-in-the-West".
+    const title = (m.title || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    if (!title) return m.id // non-Latin titles slugify to nothing; fall back to the id
+    return m.year ? m.year + '-' + title : title
   }
 
   // --- restore view from the current URL (browser back/forward, deep links) ---
