@@ -115,17 +115,36 @@ main { flex: 1; padding: 1.25rem; overflow-y: auto; }
   cursor: pointer;
 }
 .play:hover { background: #3f7bef; }
+.detail-body { display: flex; gap: 1.5rem; align-items: flex-start; }
+.detail-main { flex: 1 1 0; min-width: 0; }
+.detail-poster { flex: 0 0 20%; }
+.detail-poster img { width: 100%; border-radius: 8px; display: block; }
 .player { width: 100%; max-height: 70vh; background: black; border-radius: 8px; margin: 0.75rem 0; }
 .year { color: #8b93a1; font-weight: normal; }
-.episodes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
-.episodes button {
+.seasons { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
+.seasons button {
   background: #1d2128;
   border: 1px solid #2a2f3a;
   color: inherit;
   border-radius: 6px;
-  padding: 0.3rem 0.6rem;
+  padding: 0.3rem 0.8rem;
   cursor: pointer;
 }
+.seasons button:hover { border-color: #4f8cff; }
+.seasons button.active { background: #2a3340; border-color: #4f8cff; color: white; }
+.episodes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.episodes button {
+  flex: 0 0 auto;
+  min-width: 3rem;
+  background: #1d2128;
+  border: 1px solid #2a2f3a;
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  text-align: center;
+  cursor: pointer;
+}
+.episodes button:hover { border-color: #4f8cff; }
 .episodes button.active { background: #4f8cff; color: white; }
 .tags span {
   display: inline-block;

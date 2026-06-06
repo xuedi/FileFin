@@ -13,9 +13,15 @@
   let mediaList = $state([])
   let detail = $state(null)
   let currentFile = $state(0)
+  let currentSeason = $state(null)
   let playing = $state(false)
   let videoEl = $state(null)
   let hls = null
+
+  // Episodes grouped by season, ordered. Movies (single file, no numbering) yield
+  // one group with season 0, which the UI renders without a season selector.
+  const seasons = $derived(groupSeasons(detail))
+  const currentEpisodes = $derived(seasons.find((s) => s.season === currentSeason)?.episodes ?? [])
 
   // Wire up playback whenever the player appears or the chosen file changes.
   // Direct-play files get a plain src; transcode files load HLS via the browser's
@@ -110,6 +116,8 @@
     detail = await api('/api/media/' + id)
     currentFile = 0
     playing = false
+    const groups = groupSeasons(detail)
+    currentSeason = groups.length ? groups[0].season : null
   }
 
   // --- click handlers (push a history entry, then update the URL) ---
@@ -149,9 +157,25 @@
     playing = true
   }
 
-  function fileLabel(f) {
-    if (f.season || f.episode) return `S${f.season} E${f.episode} - ${f.name}`
-    return f.name
+  function groupSeasons(d) {
+    if (!d || !d.files) return []
+    const map = new Map()
+    for (const f of d.files) {
+      const s = f.season || 0
+      if (!map.has(s)) map.set(s, [])
+      map.get(s).push(f)
+    }
+    return [...map.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([season, episodes]) => ({
+        season,
+        episodes: episodes.sort((a, b) => (a.episode || 0) - (b.episode || 0)),
+      }))
+  }
+
+  // Short chip label for an episode: "E1" when numbered, else the file name.
+  function episodeLabel(f) {
+    return f.episode ? 'E' + f.episode : f.name
   }
 </script>
 
@@ -182,53 +206,73 @@
     <main>
       {#if detail}
         <button class="link" onclick={() => history.back()}>← Back</button>
-        <div class="titlebar">
-          <h2>{detail.title} <span class="year">({detail.year})</span></h2>
-          {#if !playing}
-            <button class="play" onclick={() => playFile(currentFile)}>▶ Play</button>
+        <div class="detail-body">
+          <div class="detail-main">
+            <div class="titlebar">
+              <h2>{detail.title} <span class="year">({detail.year})</span></h2>
+              {#if !playing}
+                <button class="play" onclick={() => playFile(currentFile)}>▶ Play</button>
+              {/if}
+            </div>
+
+            {#if playing}
+              <video class="player" controls autoplay bind:this={videoEl}></video>
+            {/if}
+
+            {#if detail.description}<p>{detail.description}</p>{/if}
+            {#if detail.tags.length}<p class="tags">{#each detail.tags as t}<span>{t}</span>{/each}</p>{/if}
+
+            {#if detail.files.length > 1}
+              <h3>Episodes</h3>
+              {#if seasons.length > 1}
+                <div class="seasons">
+                  {#each seasons as s}
+                    <button class:active={s.season === currentSeason} onclick={() => (currentSeason = s.season)}>
+                      {s.season ? 'Season ' + s.season : 'Episodes'}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+              <div class="episodes">
+                {#each currentEpisodes as f}
+                  <button class:active={f.index === currentFile} onclick={() => playFile(f.index)} title={f.name}>
+                    {episodeLabel(f)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+
+            {#if detail.metadata.length}
+              <table>
+                <tbody>
+                  {#each detail.metadata as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
+                </tbody>
+              </table>
+            {/if}
+
+            {#if detail.ratings.length}
+              <h3>Ratings</h3>
+              <table>
+                <tbody>
+                  {#each detail.ratings as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
+                </tbody>
+              </table>
+            {/if}
+
+            {#if detail.actors.length}
+              <h3>Cast</h3>
+              <ul>{#each detail.actors as a}<li>{a}</li>{/each}</ul>
+            {/if}
+
+            {#if detail.plot}<h3>Plot</h3><p>{detail.plot}</p>{/if}
+          </div>
+
+          {#if detail.hasPoster}
+            <aside class="detail-poster">
+              <img src={'/api/media/' + detail.id + '/poster'} alt={detail.title} />
+            </aside>
           {/if}
         </div>
-
-        {#if playing}
-          <video class="player" controls autoplay bind:this={videoEl}></video>
-        {/if}
-
-        {#if detail.files.length > 1}
-          <div class="episodes">
-            {#each detail.files as f}
-              <button class:active={f.index === currentFile} onclick={() => playFile(f.index)}>
-                {fileLabel(f)}
-              </button>
-            {/each}
-          </div>
-        {/if}
-
-        {#if detail.description}<p>{detail.description}</p>{/if}
-        {#if detail.tags.length}<p class="tags">{#each detail.tags as t}<span>{t}</span>{/each}</p>{/if}
-
-        {#if detail.metadata.length}
-          <table>
-            <tbody>
-              {#each detail.metadata as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
-            </tbody>
-          </table>
-        {/if}
-
-        {#if detail.ratings.length}
-          <h3>Ratings</h3>
-          <table>
-            <tbody>
-              {#each detail.ratings as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
-            </tbody>
-          </table>
-        {/if}
-
-        {#if detail.actors.length}
-          <h3>Cast</h3>
-          <ul>{#each detail.actors as a}<li>{a}</li>{/each}</ul>
-        {/if}
-
-        {#if detail.plot}<h3>Plot</h3><p>{detail.plot}</p>{/if}
       {:else if activeCat}
         <div class="grid">
           {#each mediaList as m}
