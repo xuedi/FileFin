@@ -1,7 +1,6 @@
 # Task runner for this project. Run `just` to list recipes.
 # All routine dev actions live here so they can be allowed once as `just` commands.
 
-# placeholder binary name (not final)
 app := "filefin"
 bindir := "bin"
 

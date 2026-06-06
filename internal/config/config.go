@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// AppName is a placeholder; the final product name is not decided.
+// AppName is the binary name and the config-file stem (~/.filefin.md).
 const AppName = "filefin"
 
 // Config is the durable application state. It is the only thing the app persists
