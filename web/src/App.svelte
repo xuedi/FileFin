@@ -19,11 +19,13 @@
     try {
       categories = await api('/api/categories')
       loggedIn = true
+      await route()
     } catch (e) {
       if (!(e instanceof Unauthorized)) console.error(e)
     } finally {
       booting = false
     }
+    window.addEventListener('popstate', route)
   })
 
   async function doLogin(e) {
@@ -38,6 +40,7 @@
       categories = await api('/api/categories')
       loggedIn = true
       password = ''
+      await route()
     } catch (e) {
       loginError = 'Invalid credentials'
     }
@@ -47,21 +50,57 @@
     await api('/api/logout', { method: 'POST' })
     loggedIn = false
     categories = []
-    activeCat = null
-    mediaList = []
-    detail = null
+    showHome()
+    history.pushState({}, '', '/')
   }
 
-  async function openCategory(name) {
+  // --- state setters (no history changes) ---
+  function showHome() {
+    activeCat = null
+    detail = null
+    mediaList = []
+  }
+
+  async function showCategory(name) {
     activeCat = name
     detail = null
     mediaList = await api('/api/categories/' + encodeURIComponent(name) + '/media')
   }
 
-  async function openMedia(id) {
+  async function showMedia(id) {
     detail = await api('/api/media/' + id)
     currentFile = 0
     playing = false
+  }
+
+  // --- click handlers (push a history entry, then update the URL) ---
+  async function openCategory(name) {
+    await showCategory(name)
+    history.pushState({}, '', '/' + encodeURIComponent(name) + '/')
+  }
+
+  async function openMedia(m) {
+    await showMedia(m.id)
+    history.pushState({}, '', '/' + encodeURIComponent(activeCat) + '/' + slugFor(m) + '/')
+  }
+
+  function slugFor(m) {
+    const base = (m.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    return m.year ? base + '-' + m.year : base
+  }
+
+  // --- restore view from the current URL (browser back/forward, deep links) ---
+  async function route() {
+    const segs = location.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+    if (segs.length === 0) {
+      showHome()
+      return
+    }
+    await showCategory(segs[0])
+    if (segs.length >= 2) {
+      const m = mediaList.find((x) => slugFor(x) === segs[1])
+      if (m) await showMedia(m.id)
+    }
   }
 
   function playFile(idx) {
@@ -101,7 +140,7 @@
 
     <main>
       {#if detail}
-        <button class="link" onclick={() => (detail = null)}>← Back</button>
+        <button class="link" onclick={() => history.back()}>← Back</button>
         {#if detail.hasBanner}
           <img class="banner" src={'/api/media/' + detail.id + '/banner'} alt="" />
         {/if}
@@ -146,7 +185,7 @@
       {:else if activeCat}
         <div class="grid">
           {#each mediaList as m}
-            <button class="card" onclick={() => openMedia(m.id)}>
+            <button class="card" onclick={() => openMedia(m)}>
               {#if m.hasPoster}
                 <img src={'/api/media/' + m.id + '/poster'} alt={m.title} />
               {:else}
