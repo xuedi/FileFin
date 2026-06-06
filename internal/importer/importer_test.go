@@ -155,7 +155,7 @@ func TestMediaApply(t *testing.T) {
 		PosterPath: poster,
 		Files:      []SourceFile{{Path: src}},
 	}
-	folder, _, err := m.Apply(data, false, true, nil, nil)
+	folder, _, err := m.Apply(data, false, true, nil, nil, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 		Files:      []SourceFile{{Path: src}},
 	}
 
-	folder, stats, err := m.Apply(data, false, true, nil, nil)
+	folder, stats, err := m.Apply(data, false, true, nil, nil, 1, 1)
 	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
 		t.Fatalf("first apply: stats=%+v err=%v", stats, err)
 	}
@@ -207,7 +207,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 	os.WriteFile(posterPath, []byte("HAND EDITED ART"), 0o644)
 
 	m.Meta = MetaContent{Description: "second"}
-	_, stats, err = m.Apply(data, false, true, nil, nil)
+	_, stats, err = m.Apply(data, false, true, nil, nil, 1, 1)
 	if err != nil || stats.Copied != 0 || stats.Skipped != 1 {
 		t.Fatalf("reimport stats: %+v err=%v", stats, err)
 	}
@@ -220,7 +220,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 
 	// A changed source (different size) is re-copied on reimport.
 	os.WriteFile(src, []byte("A MUCH LONGER REPLACEMENT FILE"), 0o644)
-	_, stats, err = m.Apply(data, false, true, nil, nil)
+	_, stats, err = m.Apply(data, false, true, nil, nil, 1, 1)
 	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
 		t.Fatalf("changed-file reimport stats: %+v err=%v", stats, err)
 	}
@@ -229,7 +229,7 @@ func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
 	}
 
 	// --force overwrites sidecars too.
-	if _, _, err = m.Apply(data, true, true, nil, nil); err != nil {
+	if _, _, err = m.Apply(data, true, true, nil, nil, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "second") {
@@ -255,7 +255,7 @@ func TestMediaApplyEpisodes(t *testing.T) {
 			{Path: mk("e2.avi"), Season: 1, Episode: 2},
 		},
 	}
-	if _, _, err := m.Apply(data, false, false, nil, nil); err != nil {
+	if _, _, err := m.Apply(data, false, false, nil, nil, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	folder := filepath.Join(data, "Shows", "(2002) Firefly")
@@ -341,7 +341,7 @@ func TestApplyEnrichmentFlag(t *testing.T) {
 		return []model.KV{{Key: "container", Value: "avi"}}
 	}
 
-	folder, _, err := m.Apply(data, false, false, nil, tech)
+	folder, _, err := m.Apply(data, false, false, nil, tech, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestApplyEnrichmentFlag(t *testing.T) {
 	// Second apply must not re-enrich (the tech func would panic if called).
 	panicTech := func(paths []string) []model.KV { panic("must not re-enrich") }
 	os.WriteFile(metaPath, []byte("# Movie\nHAND\n\n## technical\n - mediaEnriched: true\n"), 0o644)
-	if _, _, err := m.Apply(data, false, false, nil, panicTech); err != nil {
+	if _, _, err := m.Apply(data, false, false, nil, panicTech, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "HAND") {
@@ -365,11 +365,61 @@ func TestApplyEnrichmentFlag(t *testing.T) {
 	}
 
 	// --force re-enriches.
-	if _, _, err := m.Apply(data, true, false, nil, tech); err != nil {
+	if _, _, err := m.Apply(data, true, false, nil, tech, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "container: avi") {
 		t.Fatalf("--force did not re-enrich:\n%s", b)
+	}
+}
+
+func TestApplyProgressLabels(t *testing.T) {
+	dir := t.TempDir()
+	data := filepath.Join(dir, "data")
+	mk := func(n string) string {
+		p := filepath.Join(dir, n)
+		os.WriteFile(p, []byte("payload-"+n), 0o644)
+		return p
+	}
+
+	// A single-file folder uses the item position "[i/N]".
+	var labels []string
+	capture := func(name string, copied, total int64) {
+		if total > 0 && copied >= total {
+			labels = append(labels, name)
+		}
+	}
+	single := Media{
+		Category: "western", Title: "Django", Year: 1966,
+		Files: []SourceFile{{Path: mk("d.avi")}},
+	}
+	if _, _, err := single.Apply(data, false, false, capture, nil, 3, 6); err != nil {
+		t.Fatal(err)
+	}
+	if len(labels) != 1 || labels[0] != "[3/6] western / (1966) Django" {
+		t.Fatalf("single-file label = %v", labels)
+	}
+
+	// A multi-file folder numbers its files "[j/M]" regardless of item position.
+	labels = nil
+	show := Media{
+		Category: "Show - Startrek", Title: "TNG", Year: 1987, IsShow: true,
+		Files: []SourceFile{
+			{Path: mk("e1.avi"), Season: 1, Episode: 1},
+			{Path: mk("e2.avi"), Season: 1, Episode: 2},
+			{Path: mk("e3.avi"), Season: 1, Episode: 3},
+		},
+	}
+	if _, _, err := show.Apply(data, false, false, capture, nil, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"[1/3] Show - Startrek / (1987) TNG",
+		"[2/3] Show - Startrek / (1987) TNG",
+		"[3/3] Show - Startrek / (1987) TNG",
+	}
+	if strings.Join(labels, "|") != strings.Join(want, "|") {
+		t.Fatalf("multi-file labels = %v, want %v", labels, want)
 	}
 }
 

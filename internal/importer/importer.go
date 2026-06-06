@@ -102,6 +102,10 @@ type Request struct {
 	Move       bool
 	Force      bool
 	Progress   ProgressFunc
+	// Label is what the progress bar shows for this copy. Empty falls back to the
+	// target file name; the batch importers set it to the "[i/N] category / title"
+	// line so each copy renders on a single, self-describing line.
+	Label string
 }
 
 // Result reports what an import produced.
@@ -166,28 +170,32 @@ func Execute(req Request) (*Result, error) {
 
 	_, metaErr := os.Stat(filepath.Join(dir, "meta.md"))
 	if !skipped {
-		if err := placeFile(req.SourcePath, target, req.Move, req.Progress); err != nil {
+		label := req.Label
+		if label == "" {
+			label = filepath.Base(target)
+		}
+		if err := placeFile(req.SourcePath, target, req.Move, req.Progress, label); err != nil {
 			return nil, err
 		}
 	}
 	return &Result{Folder: dir, TargetPath: target, MetaExisted: metaErr == nil, Skipped: skipped}, nil
 }
 
-func placeFile(src, dst string, move bool, prog ProgressFunc) error {
+func placeFile(src, dst string, move bool, prog ProgressFunc, label string) error {
 	if move {
 		if err := os.Rename(src, dst); err == nil {
 			return nil
 		}
 		// Fall back to copy+remove across filesystems or read-only sources.
-		if err := copyFile(src, dst, prog); err != nil {
+		if err := copyFile(src, dst, prog, label); err != nil {
 			return err
 		}
 		return os.Remove(src)
 	}
-	return copyFile(src, dst, prog)
+	return copyFile(src, dst, prog, label)
 }
 
-func copyFile(src, dst string, prog ProgressFunc) error {
+func copyFile(src, dst string, prog ProgressFunc, label string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -204,7 +212,7 @@ func copyFile(src, dst string, prog ProgressFunc) error {
 		if fi, err := in.Stat(); err == nil {
 			total = fi.Size()
 		}
-		w = &progressWriter{w: out, name: filepath.Base(dst), total: total, prog: prog}
+		w = &progressWriter{w: out, name: label, total: total, prog: prog}
 	}
 	if _, err := io.Copy(w, in); err != nil {
 		out.Close()
@@ -347,19 +355,26 @@ type ApplyStats struct {
 // enriched folder keeps its hand-edited sidecars. Media files are copied
 // independently of enrichment, so a changed file is still re-copied. tech, if
 // non-nil, supplies the technical facts. prog, if non-nil, receives per-file copy
-// progress. It returns the folder and per-file stats.
-func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tech TechnicalFunc) (string, ApplyStats, error) {
+// progress; itemIndex/itemTotal position this media in the batch so the progress
+// label reads "[i/N] category / title" for a single file, or "[j/M] ..." numbered
+// within a multi-file folder. It returns the folder and per-file stats.
+func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tech TechnicalFunc, itemIndex, itemTotal int) (string, ApplyStats, error) {
 	if len(m.Files) == 0 {
 		return "", ApplyStats{}, errors.New("no media files")
 	}
 	var folder string
 	var targets []string
 	var stats ApplyStats
-	for _, f := range m.Files {
+	for fi, f := range m.Files {
+		index, total := itemIndex, itemTotal
+		if len(m.Files) > 1 {
+			index, total = fi+1, len(m.Files)
+		}
+		label := fmt.Sprintf("[%d/%d] %s / (%d) %s", index, total, m.Category, m.Year, m.Title)
 		res, err := Execute(Request{
 			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
 			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Force: force,
-			Progress: prog,
+			Progress: prog, Label: label,
 		})
 		if err != nil {
 			return "", stats, err

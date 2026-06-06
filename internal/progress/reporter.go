@@ -5,7 +5,9 @@ import (
 	"io"
 )
 
-const nameWidth = 32
+// labelWidth is the fixed column the label is padded/truncated to so the boxed
+// bars line up underneath each other regardless of title length.
+const labelWidth = 74
 
 // Reporter renders a single in-place progress line per file copy, Docker-style:
 // the line is rewritten with \r as bytes arrive and finalized with a newline when
@@ -40,7 +42,9 @@ func (r *Reporter) Track(name string, copied, total int64) {
 	}
 	r.lastPct = ip
 
-	fmt.Fprintf(r.w, "\r  %-*s %s %3d%%  %s", nameWidth, truncate(name, nameWidth), Bar(pct), ip, sizePair(copied, total))
+	// \033[K clears any leftover from a previous, longer redraw (otherwise a
+	// shrinking size string leaves trailing characters, e.g. "2.2 GB GB").
+	fmt.Fprintf(r.w, "\r%-*s [%s] %3d%%  %s\033[K", labelWidth, truncate(name, labelWidth), Bar(pct), ip, sizePair(copied, total))
 	if done {
 		fmt.Fprintln(r.w)
 	}

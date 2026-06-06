@@ -224,12 +224,25 @@ func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) er
 	tech := technicalProvider(cfg)
 	copied, skipped, failed := 0, 0, 0
 	for i, p := range plans {
-		fmt.Printf("[%d/%d] %s / (%d) %s\n", i+1, len(plans), p.m.Category, p.m.Year, p.m.Title)
-		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog, tech)
+		label := fmt.Sprintf("[%d/%d] %s / (%d) %s", i+1, len(plans), p.m.Category, p.m.Year, p.m.Title)
+		multi := len(p.m.Files) > 1
+		switch {
+		case prog == nil:
+			// No TTY: no bars will draw, so print one static line per item.
+			fmt.Println(label)
+		case multi:
+			// A multi-file folder gets a bold header; its files are numbered below.
+			boldLine(label, color)
+		}
+		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog, tech, i+1, len(plans))
 		if err != nil {
 			fmt.Printf("  error: %v\n", err)
 			failed++
 			continue
+		}
+		// A single-file folder whose file was skipped draws no bar, so note it here.
+		if prog != nil && !multi && stats.Copied == 0 {
+			fmt.Printf("%s  unchanged\n", label)
 		}
 		copied += stats.Copied
 		skipped += stats.Skipped
@@ -237,6 +250,15 @@ func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) er
 	fmt.Printf("Done: %d file(s) copied, %d unchanged, %d item(s) failed.\n", copied, skipped, failed)
 	fmt.Printf("Run `%s rebuild` to update the cache.\n", config.AppName)
 	return nil
+}
+
+// boldLine prints s in bold on a TTY, or plainly otherwise.
+func boldLine(s string, color bool) {
+	if color {
+		fmt.Printf("\033[1m%s\033[0m\n", s)
+	} else {
+		fmt.Println(s)
+	}
 }
 
 func printDiffLine(m importer.Media, exists, color bool) {
