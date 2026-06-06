@@ -116,15 +116,23 @@ type Result struct {
 	Skipped     bool // target already existed with the same size; the copy was skipped
 }
 
+// sanitizeComponent makes a title safe to use as a single path component:
+// path separators in the title (e.g. "Little Forest: Summer/Autumn") would
+// otherwise be read as directory boundaries and break the copy. Replace them
+// with a hyphen so the name stays one human-readable folder/file.
+func sanitizeComponent(s string) string {
+	return strings.NewReplacer("/", "-", "\\", "-").Replace(s)
+}
+
 // FolderName is the canonical media folder name.
 func FolderName(year int, title string) string {
-	return fmt.Sprintf("(%d) %s", year, title)
+	return fmt.Sprintf("(%d) %s", year, sanitizeComponent(title))
 }
 
 // TargetFileName is the canonical media file name, with a season/episode suffix
 // when this is part of a numbered series.
 func TargetFileName(year int, title string, season, episode int, ext string) string {
-	base := fmt.Sprintf("(%d) %s", year, title)
+	base := fmt.Sprintf("(%d) %s", year, sanitizeComponent(title))
 	if season > 0 || episode > 0 {
 		base += fmt.Sprintf(" - %dx%d", season, episode)
 	}
