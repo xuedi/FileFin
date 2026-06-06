@@ -34,3 +34,6 @@ go.work.sum
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Local runtime log
+/app.log
