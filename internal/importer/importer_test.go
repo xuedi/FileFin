@@ -104,6 +104,68 @@ func TestExecuteEpisodeNamingAndKeepsMeta(t *testing.T) {
 	}
 }
 
+func TestMediaApply(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "blade.avi")
+	os.WriteFile(src, []byte("MOVIE"), 0o644)
+	poster := filepath.Join(dir, "poster_src")
+	os.WriteFile(poster, []byte("JPEGDATA"), 0o644)
+	data := filepath.Join(dir, "data")
+
+	m := Media{
+		Category:   "x_Cyberpunk",
+		Title:      "Blade Runner",
+		Year:       1982,
+		Meta:       MetaContent{Description: "A blade runner.", Tags: []string{"sci-fi"}},
+		PosterPath: poster,
+		Files:      []SourceFile{{Path: src}},
+	}
+	folder, err := m.Apply(data, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(folder, "(1982) Blade Runner.avi")); err != nil || string(b) != "MOVIE" {
+		t.Fatalf("media: %q err=%v", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(folder, "poster.jpg")); err != nil || string(b) != "JPEGDATA" {
+		t.Fatalf("poster: %q err=%v", b, err)
+	}
+	meta, err := os.ReadFile(filepath.Join(folder, "meta.md"))
+	if err != nil || !strings.Contains(string(meta), "A blade runner.") || !strings.Contains(string(meta), "sci-fi") {
+		t.Fatalf("meta: %q err=%v", meta, err)
+	}
+	// Title is taken from Media.Title even if Meta.Title is unset.
+	if !strings.Contains(string(meta), "# Blade Runner") {
+		t.Fatalf("meta title: %q", meta)
+	}
+}
+
+func TestMediaApplyEpisodes(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(n string) string {
+		p := filepath.Join(dir, n)
+		os.WriteFile(p, []byte("x"), 0o644)
+		return p
+	}
+	data := filepath.Join(dir, "data")
+	m := Media{
+		Category: "Shows", Title: "Firefly", Year: 2002, IsShow: true,
+		Files: []SourceFile{
+			{Path: mk("e1.avi"), Season: 1, Episode: 1},
+			{Path: mk("e2.avi"), Season: 1, Episode: 2},
+		},
+	}
+	if _, err := m.Apply(data, false, false); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(data, "Shows", "(2002) Firefly")
+	for _, name := range []string{"(2002) Firefly - 1x1.avi", "(2002) Firefly - 1x2.avi", "meta.md"} {
+		if _, err := os.Stat(filepath.Join(folder, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+}
+
 func TestExecuteRequiresFields(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "s.mp4")

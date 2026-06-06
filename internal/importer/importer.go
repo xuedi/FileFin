@@ -4,6 +4,7 @@
 package importer
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -239,4 +240,79 @@ func WriteMeta(folder string, m MetaContent) error {
 		fmt.Fprintf(&b, " - %s\n", t)
 	}
 	return os.WriteFile(filepath.Join(folder, "meta.md"), []byte(b.String()), 0o644)
+}
+
+// SourceFile is one media file to import, with season/episode (0 for a movie).
+type SourceFile struct {
+	Path    string
+	Season  int
+	Episode int
+}
+
+// Media is one media folder to import, assembled by a source-specific importer
+// (e.g. plex, jellyfin) and applied with Apply.
+type Media struct {
+	Category   string
+	Title      string
+	Year       int
+	IsShow     bool
+	Meta       MetaContent
+	PosterPath string // absolute source path to a poster image, or ""
+	BannerPath string
+	Files      []SourceFile
+}
+
+// TargetFolder is where this media will be written under dataDir.
+func (m Media) TargetFolder(dataDir string) string {
+	return filepath.Join(dataDir, m.Category, FolderName(m.Year, m.Title))
+}
+
+// Apply copies the media's files into the canonical layout, writes meta.md, and
+// (when posters is true) copies poster.jpg/banner.jpg. It returns the folder.
+func (m Media) Apply(dataDir string, force, posters bool) (string, error) {
+	if len(m.Files) == 0 {
+		return "", errors.New("no media files")
+	}
+	var folder string
+	for _, f := range m.Files {
+		res, err := Execute(Request{
+			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
+			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Force: force,
+		})
+		if err != nil {
+			return "", err
+		}
+		folder = res.Folder
+	}
+	meta := m.Meta
+	meta.Title = m.Title
+	if err := WriteMeta(folder, meta); err != nil {
+		return "", err
+	}
+	if posters {
+		if m.PosterPath != "" {
+			_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
+		}
+		if m.BannerPath != "" {
+			_ = copyArt(m.BannerPath, filepath.Join(folder, "banner.jpg"))
+		}
+	}
+	return folder, nil
+}
+
+func copyArt(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

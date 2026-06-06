@@ -63,7 +63,19 @@ func main() {
 				},
 				Action: cmdPlex,
 			},
-			{Name: "jellyfin", Usage: "import from a Jellyfin library (not implemented)", Action: notImplemented},
+			{
+				Name:      "jellyfin",
+				Usage:     "import a Jellyfin/NFO media library directory",
+				ArgsUsage: "[category] <source-dir>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "category", Usage: "target category"},
+					&cli.BoolFlag{Name: "dry-run", Usage: "show the plan without writing anything"},
+					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},
+					&cli.BoolFlag{Name: "force", Usage: "overwrite existing media folders"},
+					&cli.BoolFlag{Name: "no-posters", Usage: "do not copy posters/banners"},
+				},
+				Action: cmdJellyfin,
+			},
 		},
 	}
 	if err := app.Run(os.Args); err != nil {
