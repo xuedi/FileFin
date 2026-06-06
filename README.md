@@ -41,6 +41,7 @@ worked example of the per-media metadata file.
 
 - Go 1.24+
 - Node.js + npm (to build the web frontend)
+- `ffmpeg` and `ffprobe` (optional, only needed to transcode non-browser-native formats such as `.avi`/`.mkv`)
 - [`just`](https://github.com/casey/just) (optional, for the task recipes below)
 
 ## Build
@@ -54,7 +55,7 @@ Without `just`:
 
 ```sh
 cd web && npm install && npm run build && cd ..
-CGO_ENABLED=0 go build -o bin/filefin .
+CGO_ENABLED=0 go build -o bin/filefin ./cmd/filefin
 ```
 
 The binary embeds the built frontend, so the result is fully self-contained.
@@ -99,6 +100,20 @@ If you add an [OMDb API](https://www.omdbapi.com) key to the config, `import` wi
 
 Pass `--no-fetch` to skip the lookup for a single import.
 
+### Optional: transcoding
+
+Browser-native containers (`.mp4`, `.webm`, `.m4v`) are streamed directly. Everything else (`.avi`, `.mkv`,
+`.mov`, ...) is transcoded to HLS on the fly with `ffmpeg` so it plays in the browser. Sources that are
+already H.264 + AAC/MP3 are remuxed without re-encoding. The defaults expect `ffmpeg`/`ffprobe` on `PATH`;
+override the paths or turn transcoding off in the config:
+
+```markdown
+## transcode
+ - ffmpeg: ffmpeg
+ - ffprobe: ffprobe
+ - enabled: true
+```
+
 ## Status
 
 FileFin is an early MVP. Working today:
@@ -108,11 +123,15 @@ FileFin is an early MVP. Working today:
   canonical layout, with a new/existing plan and confirmation before writing
 - `jellyfin` imports a Jellyfin/Kodi NFO library (per-item `.nfo` XML plus poster/fanart images)
 - filesystem scan → SQLite cache → authenticated API → embedded web UI
-- direct-play streaming with byte-range support
+- direct-play streaming with byte-range support for browser-native containers
+- on-the-fly HLS transcoding (via `ffmpeg`) so non-native formats like `.avi`/`.mkv` play in the browser,
+  with stream-copy remux when the source is already H.264 + AAC/MP3
 
 Not yet implemented:
 
-- transcoding (the web player currently direct-plays browser-native containers such as `.mp4`/`.webm`)
+- per-segment transcoding for instant far-forward seeking (a forward seek into a not-yet-transcoded
+  region currently waits for the encoder to reach it; backward/buffered seeking is fine)
+- adaptive bitrate / multiple renditions, and subtitle delivery for transcoded streams
 - configurable naming scheme
 
 ## License

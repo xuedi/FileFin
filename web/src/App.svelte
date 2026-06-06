@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import Hls from 'hls.js'
   import { api, Unauthorized } from './api.js'
 
   let booting = $state(true)
@@ -14,6 +15,37 @@
   let detail = $state(null)
   let currentFile = $state(0)
   let playing = $state(false)
+  let videoEl = $state(null)
+  let hls = null
+
+  // Wire up playback whenever the player appears or the chosen file changes.
+  // Direct-play files get a plain src; transcode files load HLS (hls.js, or the
+  // browser's native HLS on Safari).
+  $effect(() => {
+    if (!playing || !videoEl || !detail) return
+    const base = '/api/media/' + detail.id + '/file/' + currentFile
+    const file = detail.files.find((f) => f.index === currentFile)
+    if (!file?.transcode) {
+      videoEl.src = base
+      return
+    }
+    const url = base + '/hls/index.m3u8'
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = url
+    } else if (Hls.isSupported()) {
+      hls = new Hls()
+      hls.loadSource(url)
+      hls.attachMedia(videoEl)
+    } else {
+      videoEl.src = url
+    }
+    return () => {
+      if (hls) {
+        hls.destroy()
+        hls = null
+      }
+    }
+  })
 
   onMount(async () => {
     try {
@@ -154,7 +186,7 @@
         </div>
 
         {#if playing}
-          <video class="player" controls autoplay src={'/api/media/' + detail.id + '/file/' + currentFile}></video>
+          <video class="player" controls autoplay bind:this={videoEl}></video>
         {/if}
 
         {#if detail.files.length > 1}

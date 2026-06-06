@@ -9,6 +9,7 @@ import (
 
 	"filefin/internal/cache"
 	"filefin/internal/config"
+	"filefin/internal/transcode"
 	"filefin/web"
 )
 
@@ -17,12 +18,24 @@ type Server struct {
 	cfg      *config.Config
 	store    *cache.Store
 	sessions *sessionStore
+	hls      *transcode.Manager
 }
 
 // New constructs a Server.
 func New(cfg *config.Config, store *cache.Store) *Server {
-	return &Server{cfg: cfg, store: store, sessions: newSessionStore()}
+	return &Server{
+		cfg:      cfg,
+		store:    store,
+		sessions: newSessionStore(),
+		hls: transcode.NewManager(transcode.Options{
+			FFmpegPath:  cfg.FFmpegPath,
+			FFprobePath: cfg.FFprobePath,
+		}),
+	}
 }
+
+// Close releases server-held resources (active transcode sessions).
+func (s *Server) Close() { s.hls.Close() }
 
 // Handler builds the HTTP routes.
 func (s *Server) Handler() http.Handler {
@@ -35,6 +48,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
 	mux.Handle("GET /api/media/{id}/banner", s.auth(s.handleBanner))
 	mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
+	mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))
+	mux.Handle("GET /api/media/{id}/file/{n}/hls/{seg}", s.auth(s.handleHLSSegment))
 	mux.Handle("/", s.spa())
 	return mux
 }

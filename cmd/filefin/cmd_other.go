@@ -73,6 +73,7 @@ func cmdServe(c *cli.Context) error {
 	}
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := server.New(cfg, store)
+	defer srv.Close()
 	fmt.Printf("Serving on http://localhost%s (data: %s, %d media)\n", addr, cfg.DataDir, countMedia(scan))
 	return http.ListenAndServe(addr, srv.Handler())
 }

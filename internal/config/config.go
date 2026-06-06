@@ -24,15 +24,22 @@ type Config struct {
 	APIKeys   map[string]string
 	Users     map[string]string // username -> bcrypt hash
 
+	FFmpegPath       string
+	FFprobePath      string
+	TranscodeEnabled bool
+
 	path string
 }
 
 // New returns a Config with defaults applied.
 func New() *Config {
 	return &Config{
-		Port:    8080,
-		APIKeys: map[string]string{},
-		Users:   map[string]string{},
+		Port:             8080,
+		APIKeys:          map[string]string{},
+		Users:            map[string]string{},
+		FFmpegPath:       "ffmpeg",
+		FFprobePath:      "ffprobe",
+		TranscodeEnabled: true,
 	}
 }
 
@@ -91,6 +98,21 @@ func Load(path string) (*Config, error) {
 					c.Port = p
 				}
 			}
+		case "transcode":
+			switch key {
+			case "ffmpeg":
+				if val != "" {
+					c.FFmpegPath = val
+				}
+			case "ffprobe":
+				if val != "" {
+					c.FFprobePath = val
+				}
+			case "enabled":
+				if b, err := strconv.ParseBool(val); err == nil {
+					c.TranscodeEnabled = b
+				}
+			}
 		case "apikeys":
 			if key != "" {
 				c.APIKeys[key] = val
@@ -120,6 +142,10 @@ func (c *Config) Save(path string) error {
 	fmt.Fprintf(&b, " - cache: %s\n", c.CachePath)
 	b.WriteString("\n## server\n")
 	fmt.Fprintf(&b, " - port: %d\n", c.Port)
+	b.WriteString("\n## transcode\n")
+	fmt.Fprintf(&b, " - ffmpeg: %s\n", c.FFmpegPath)
+	fmt.Fprintf(&b, " - ffprobe: %s\n", c.FFprobePath)
+	fmt.Fprintf(&b, " - enabled: %t\n", c.TranscodeEnabled)
 	b.WriteString("\n## apikeys\n")
 	for _, k := range sortedKeys(c.APIKeys) {
 		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])

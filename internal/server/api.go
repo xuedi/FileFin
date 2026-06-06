@@ -2,9 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+
+	"filefin/internal/transcode"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -57,7 +61,9 @@ func (s *Server) handleBanner(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, p)
 }
 
-// handleStream serves a media file with byte-range support (direct play).
+// handleStream serves a media file. Browser-native containers are direct-played with
+// byte-range support; everything else is redirected to its HLS playlist (the player
+// requests that directly, so this branch only guards stray callers and the toggle).
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	n, err := strconv.Atoi(r.PathValue("n"))
 	if err != nil {
@@ -67,6 +73,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	p, err := s.store.FilePath(r.PathValue("id"), n)
 	if err != nil || p == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if transcode.NeedsTranscode(filepath.Ext(p)) {
+		if !s.cfg.TranscodeEnabled {
+			http.Error(w, "transcoding disabled", http.StatusUnsupportedMediaType)
+			return
+		}
+		http.Redirect(w, r, r.URL.Path+"/hls/index.m3u8", http.StatusTemporaryRedirect)
 		return
 	}
 	f, err := os.Open(p)
@@ -81,4 +95,54 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
+}
+
+// streamTarget resolves the media file for an HLS request and enforces the toggle and
+// the transcode-eligibility of the file. It returns the absolute path and a session key.
+func (s *Server) streamTarget(w http.ResponseWriter, r *http.Request) (path, key string, ok bool) {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		http.Error(w, "bad file index", http.StatusBadRequest)
+		return "", "", false
+	}
+	p, err := s.store.FilePath(r.PathValue("id"), n)
+	if err != nil || p == "" {
+		http.NotFound(w, r)
+		return "", "", false
+	}
+	if !s.cfg.TranscodeEnabled || !transcode.NeedsTranscode(filepath.Ext(p)) {
+		http.Error(w, "not transcodable", http.StatusUnsupportedMediaType)
+		return "", "", false
+	}
+	return p, r.PathValue("id") + "/" + r.PathValue("n"), true
+}
+
+func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
+	p, key, ok := s.streamTarget(w, r)
+	if !ok {
+		return
+	}
+	playlist, err := s.hls.Playlist(key, p)
+	if err != nil {
+		log.Printf("hls playlist %s: %v", p, err)
+		http.Error(w, "transcode failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	_, _ = w.Write(playlist)
+}
+
+func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
+	_, key, ok := s.streamTarget(w, r)
+	if !ok {
+		return
+	}
+	seg, err := s.hls.Segment(key, r.PathValue("seg"))
+	if err != nil {
+		log.Printf("hls segment %s/%s: %v", key, r.PathValue("seg"), err)
+		http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp2t")
+	http.ServeFile(w, r, seg)
 }

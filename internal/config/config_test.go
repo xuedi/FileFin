@@ -11,6 +11,9 @@ func TestRoundTrip(t *testing.T) {
 	c.DataDir = "/srv/media"
 	c.CachePath = "/tmp/cache.sqlite"
 	c.Port = 9000
+	c.FFmpegPath = "/opt/ffmpeg"
+	c.FFprobePath = "/opt/ffprobe"
+	c.TranscodeEnabled = false
 	c.APIKeys["tmdb"] = "abc123"
 	c.Users["alice"] = "hash1"
 	c.Users["bob"] = "hash2"
@@ -24,6 +27,12 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if got.DataDir != c.DataDir || got.CachePath != c.CachePath || got.Port != c.Port {
 		t.Fatalf("scalar mismatch: %+v", got)
+	}
+	if got.FFmpegPath != "/opt/ffmpeg" || got.FFprobePath != "/opt/ffprobe" || got.TranscodeEnabled {
+		t.Fatalf("transcode config mismatch: %+v", got)
+	}
+	if d := New(); d.FFmpegPath != "ffmpeg" || d.FFprobePath != "ffprobe" || !d.TranscodeEnabled {
+		t.Fatalf("transcode defaults wrong: %+v", d)
 	}
 	if got.APIKeys["tmdb"] != "abc123" {
 		t.Fatalf("apikey mismatch: %v", got.APIKeys)

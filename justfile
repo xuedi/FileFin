@@ -10,11 +10,11 @@ default:
 
 # build the single binary into ./bin
 build:
-    go build -o {{bindir}}/{{app}} .
+    go build -o {{bindir}}/{{app}} ./cmd/{{app}}
 
 # run the app, passing a subcommand (e.g. `just run serve`)
 run *args:
-    go run . {{args}}
+    go run ./cmd/{{app}} {{args}}
 
 # run the full test suite
 test:

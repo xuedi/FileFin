@@ -1,5 +1,11 @@
 package cache
 
+import (
+	"path/filepath"
+
+	"filefin/internal/transcode"
+)
+
 // API DTOs returned by the read queries. JSON tags define the API shape.
 
 // CategorySummary is one entry in the category list.
@@ -18,10 +24,11 @@ type MediaSummary struct {
 
 // FileInfo describes one playable file of a media item.
 type FileInfo struct {
-	Index   int    `json:"index"`
-	Name    string `json:"name"`
-	Season  int    `json:"season"`
-	Episode int    `json:"episode"`
+	Index     int    `json:"index"`
+	Name      string `json:"name"`
+	Season    int    `json:"season"`
+	Episode   int    `json:"episode"`
+	Transcode bool   `json:"transcode"` // true if the browser cannot direct-play it
 }
 
 // Pair is an ordered metadata key/value.
@@ -103,16 +110,18 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 	d.HasPoster = poster != ""
 	d.HasBanner = banner != ""
 
-	files, err := s.db.Query(`SELECT idx, name, season, episode FROM media_files WHERE media_id = ? ORDER BY idx`, id)
+	files, err := s.db.Query(`SELECT idx, name, season, episode, path FROM media_files WHERE media_id = ? ORDER BY idx`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer files.Close()
 	for files.Next() {
 		var f FileInfo
-		if err := files.Scan(&f.Index, &f.Name, &f.Season, &f.Episode); err != nil {
+		var path string
+		if err := files.Scan(&f.Index, &f.Name, &f.Season, &f.Episode, &path); err != nil {
 			return nil, err
 		}
+		f.Transcode = transcode.NeedsTranscode(filepath.Ext(path))
 		d.Files = append(d.Files, f)
 	}
 	if err := files.Err(); err != nil {
