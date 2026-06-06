@@ -27,8 +27,16 @@ Xi eventually arrives at the top of a cliff with a solid layer of low-lying clou
  - writtenBy: Jamie Uys
  - producedBy: Jamie Uys
  - narratedBy: Paddy O'Byrne
+ - contentRating: PG
+ - awards: 2 wins & 1 nomination
  - budget: $5 million
  - boxOffice: $200 million
+ - imdbID: tt0080801
+
+## ratings
+ - imdb: 7.3 (50,123 votes)
+ - rottenTomatoes: 95%
+ - metacritic: 73/100
 
 ## technical
  - mediaEnriched: true

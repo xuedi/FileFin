@@ -45,15 +45,18 @@ func Parse(s string) *model.Meta {
 			if trimmed != "" {
 				plot = append(plot, trimmed)
 			}
-		case "metadata", "technical":
+		case "metadata", "ratings", "technical":
 			if !bullet {
 				continue
 			}
 			k, v := splitKV(strings.TrimSpace(trimmed[1:]))
 			kv := model.KV{Key: k, Value: v}
-			if section == "metadata" {
+			switch section {
+			case "metadata":
 				m.Metadata = append(m.Metadata, kv)
-			} else {
+			case "ratings":
+				m.Ratings = append(m.Ratings, kv)
+			default:
 				m.Technical = append(m.Technical, kv)
 			}
 		case "actors", "tags":

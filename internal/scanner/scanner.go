@@ -118,8 +118,6 @@ func scanMediaFolder(m *model.Media) []string {
 			// time (transcode.OptimizedSibling), never a media file of its own.
 		case base == "poster":
 			m.Poster = filepath.Join(m.Path, name)
-		case base == "banner":
-			m.Banner = filepath.Join(m.Path, name)
 		case lower == "meta.md":
 			mt, err := meta.ParseFile(filepath.Join(m.Path, name))
 			if err != nil {

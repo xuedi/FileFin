@@ -112,7 +112,6 @@ func scanMovieDir(dir, category string) (importer.Media, bool) {
 		Year:       year,
 		Meta:       metaFromDetails(nfo.detailsNFO, year),
 		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
-		BannerPath: findImage(dir, []string{"fanart", "backdrop", "banner", "background"}, []string{"-fanart", "-backdrop"}),
 	}
 	for _, v := range videos {
 		m.Files = append(m.Files, importer.SourceFile{Path: filepath.Join(dir, v)})
@@ -147,7 +146,6 @@ func scanShow(dir, category string) (importer.Media, bool) {
 		IsShow:     true,
 		Meta:       metaFromDetails(nfo.detailsNFO, year),
 		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
-		BannerPath: findImage(dir, []string{"fanart", "backdrop", "banner", "background"}, []string{"-fanart", "-backdrop"}),
 	}
 	// Collect episode files anywhere under the show directory.
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {

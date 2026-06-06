@@ -164,8 +164,10 @@ func writeEnrichedMeta(cfg *config.Config, res *importer.Result, mc importer.Met
 	return importer.WriteMeta(res.Folder, mc)
 }
 
-// metaFromOMDb maps an OMDb result into meta.md content. The user's title/year
-// win over OMDb's so the file matches its folder name.
+// metaFromOMDb maps an OMDb result into meta.md content, with the full useful
+// field set: a `## metadata` block, a `## ratings` block (imdb/RT/Metacritic),
+// and the description, actors, and tags. The user's title/year win over OMDb's
+// so the file matches its folder name. Keys are emitted in a fixed order.
 func metaFromOMDb(m *omdb.Movie, title string, year int) importer.MetaContent {
 	mc := importer.MetaContent{Title: title, Description: clean(m.Plot)}
 	add := func(k, v string) {
@@ -179,10 +181,27 @@ func metaFromOMDb(m *omdb.Movie, title string, year int) importer.MetaContent {
 	}
 	add("release", release)
 	add("runtime", strings.TrimSuffix(clean(m.Runtime), " min"))
+	add("language", m.Language)
+	add("origin", m.Country)
 	add("directedBy", m.Director)
 	add("writtenBy", m.Writer)
-	add("imdbRating", m.ImdbRating)
+	add("contentRating", m.Rated)
+	add("awards", m.Awards)
+	add("boxOffice", m.BoxOffice)
 	add("imdbID", m.ImdbID)
+	if strings.EqualFold(clean(m.Type), "series") {
+		add("seasons", m.TotalSeasons)
+	}
+
+	rate := func(k, v string) {
+		if v := clean(v); v != "" {
+			mc.Ratings = append(mc.Ratings, model.KV{Key: k, Value: v})
+		}
+	}
+	rate("imdb", imdbRatingWithVotes(m))
+	rate("rottenTomatoes", m.RatingBySource("Rotten Tomatoes"))
+	rate("metacritic", metacritic(m))
+
 	for _, a := range splitList(m.Actors) {
 		mc.Actors = append(mc.Actors, a)
 	}
@@ -190,6 +209,70 @@ func metaFromOMDb(m *omdb.Movie, title string, year int) importer.MetaContent {
 		mc.Tags = append(mc.Tags, strings.ToLower(g))
 	}
 	return mc
+}
+
+// imdbRatingWithVotes renders the imdb rating with its vote count when both are
+// present ("8.1 (835,123 votes)"), the bare rating when votes are missing, or "".
+func imdbRatingWithVotes(m *omdb.Movie) string {
+	rating := clean(m.ImdbRating)
+	if rating == "" {
+		return ""
+	}
+	if votes := clean(m.ImdbVotes); votes != "" {
+		return fmt.Sprintf("%s (%s votes)", rating, votes)
+	}
+	return rating
+}
+
+// metacritic prefers the Ratings[] entry (already formatted "84/100"), falling
+// back to the bare Metascore.
+func metacritic(m *omdb.Movie) string {
+	if v := m.RatingBySource("Metacritic"); v != "" {
+		return v
+	}
+	if v := clean(m.Metascore); v != "" {
+		return v + "/100"
+	}
+	return ""
+}
+
+// mergeMeta returns primary with gaps filled from fallback: an empty description
+// is taken from fallback, empty actors/tags lists are taken whole, and any
+// metadata/ratings key missing from primary is appended from fallback (preserving
+// fallback's order for the added keys). primary's values always win.
+func mergeMeta(primary, fallback importer.MetaContent) importer.MetaContent {
+	out := primary
+	if clean(out.Description) == "" {
+		out.Description = fallback.Description
+	}
+	if clean(out.Plot) == "" {
+		out.Plot = fallback.Plot
+	}
+	if len(out.Actors) == 0 {
+		out.Actors = fallback.Actors
+	}
+	if len(out.Tags) == 0 {
+		out.Tags = fallback.Tags
+	}
+	out.Metadata = fillKeys(out.Metadata, fallback.Metadata)
+	out.Ratings = fillKeys(out.Ratings, fallback.Ratings)
+	return out
+}
+
+// fillKeys appends every key from fallback that is absent in primary, keeping
+// primary's entries first and in order.
+func fillKeys(primary, fallback []model.KV) []model.KV {
+	have := make(map[string]bool, len(primary))
+	for _, kv := range primary {
+		have[kv.Key] = true
+	}
+	out := primary
+	for _, kv := range fallback {
+		if !have[kv.Key] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // clean drops OMDb's "N/A" sentinel and trims whitespace.

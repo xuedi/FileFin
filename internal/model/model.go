@@ -13,6 +13,7 @@ type Meta struct {
 	Description string
 	Plot        string
 	Metadata    []KV
+	Ratings     []KV
 	Technical   []KV
 	Actors      []string
 	Tags        []string
@@ -39,7 +40,6 @@ type Media struct {
 	Title    string
 	Files    []MediaFile
 	Poster   string
-	Banner   string
 	Meta     *Meta
 }
 

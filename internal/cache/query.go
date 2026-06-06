@@ -46,9 +46,9 @@ type MediaDetail struct {
 	Description string     `json:"description"`
 	Plot        string     `json:"plot"`
 	HasPoster   bool       `json:"hasPoster"`
-	HasBanner   bool       `json:"hasBanner"`
 	Files       []FileInfo `json:"files"`
 	Metadata    []Pair     `json:"metadata"`
+	Ratings     []Pair     `json:"ratings"`
 	Technical   []Pair     `json:"technical"`
 	Actors      []string   `json:"actors"`
 	Tags        []string   `json:"tags"`
@@ -99,16 +99,15 @@ func (s *Store) MediaByCategory(category string) ([]MediaSummary, error) {
 
 // MediaDetail returns the full detail for one media item.
 func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
-	d := &MediaDetail{ID: id, Files: []FileInfo{}, Metadata: []Pair{}, Technical: []Pair{}, Actors: []string{}, Tags: []string{}}
-	var poster, banner string
+	d := &MediaDetail{ID: id, Files: []FileInfo{}, Metadata: []Pair{}, Ratings: []Pair{}, Technical: []Pair{}, Actors: []string{}, Tags: []string{}}
+	var poster string
 	err := s.db.QueryRow(
-		`SELECT category, title, year, description, plot, poster, banner FROM media WHERE id = ?`, id).
-		Scan(&d.Category, &d.Title, &d.Year, &d.Description, &d.Plot, &poster, &banner)
+		`SELECT category, title, year, description, plot, poster FROM media WHERE id = ?`, id).
+		Scan(&d.Category, &d.Title, &d.Year, &d.Description, &d.Plot, &poster)
 	if err != nil {
 		return nil, err
 	}
 	d.HasPoster = poster != ""
-	d.HasBanner = banner != ""
 
 	files, err := s.db.Query(`SELECT idx, name, season, episode, path FROM media_files WHERE media_id = ? ORDER BY idx`, id)
 	if err != nil {
@@ -147,6 +146,8 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 		switch section {
 		case "metadata":
 			d.Metadata = append(d.Metadata, Pair{Key: k, Value: v})
+		case "ratings":
+			d.Ratings = append(d.Ratings, Pair{Key: k, Value: v})
 		case "technical":
 			d.Technical = append(d.Technical, Pair{Key: k, Value: v})
 		case "actor":
@@ -205,12 +206,5 @@ func (s *Store) Title(id string) (string, error) {
 func (s *Store) PosterPath(id string) (string, error) {
 	var p string
 	err := s.db.QueryRow(`SELECT poster FROM media WHERE id = ?`, id).Scan(&p)
-	return p, err
-}
-
-// BannerPath returns the banner path for a media item, or "" if none.
-func (s *Store) BannerPath(id string) (string, error) {
-	var p string
-	err := s.db.QueryRow(`SELECT banner FROM media WHERE id = ?`, id).Scan(&p)
 	return p, err
 }

@@ -115,7 +115,6 @@ main { flex: 1; padding: 1.25rem; overflow-y: auto; }
   cursor: pointer;
 }
 .play:hover { background: #3f7bef; }
-.banner { width: 100%; max-height: 240px; object-fit: cover; border-radius: 8px; }
 .player { width: 100%; max-height: 70vh; background: black; border-radius: 8px; margin: 0.75rem 0; }
 .year { color: #8b93a1; font-weight: normal; }
 .episodes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }

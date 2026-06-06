@@ -295,6 +295,43 @@ func TestWriteMetaTechnicalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteMetaRatingsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	mc := MetaContent{
+		Title:    "Movie",
+		Metadata: []model.KV{{Key: "release", Value: "1999"}},
+		Ratings: []model.KV{
+			{Key: "imdb", Value: "8.1 (835,123 votes)"},
+			{Key: "rottenTomatoes", Value: "89%"},
+			{Key: "metacritic", Value: "84/100"},
+		},
+	}
+	if err := WriteMeta(dir, mc); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := meta.ParseFile(filepath.Join(dir, "meta.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Ratings) != 3 || parsed.Ratings[0].Key != "imdb" || parsed.Ratings[0].Value != "8.1 (835,123 votes)" {
+		t.Fatalf("ratings round-trip: %+v", parsed.Ratings)
+	}
+	if parsed.Ratings[1].Value != "89%" || parsed.Ratings[2].Value != "84/100" {
+		t.Fatalf("ratings round-trip: %+v", parsed.Ratings)
+	}
+}
+
+func TestWriteMetaNoRatingsSection(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteMeta(dir, StubMeta("Movie", 2020)); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "meta.md"))
+	if strings.Contains(string(b), "## ratings") {
+		t.Fatalf("empty Ratings should omit the section:\n%s", b)
+	}
+}
+
 func TestWriteMetaNoTechnicalSection(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteMeta(dir, StubMeta("Movie", 2020)); err != nil {

@@ -38,7 +38,6 @@ type Item struct {
 	Writers       []string
 	Actors        []string
 	PosterPath    string // resolved absolute path in the Plex metadata bundle, or ""
-	BannerPath    string
 	Files         []SourceFile
 }
 
@@ -55,8 +54,8 @@ func DeriveMetadataDir(dbPath string) string {
 	return filepath.Join(home, "Metadata")
 }
 
-// Open opens the Plex database read-only. metadataDir is where poster/banner
-// bundles live; pass "" to skip artwork resolution.
+// Open opens the Plex database read-only. metadataDir is where poster bundles
+// live; pass "" to skip artwork resolution.
 func Open(dbPath, metadataDir string) (*DB, error) {
 	// Build a proper file: URI so paths with spaces (e.g. "Plex Media Server")
 	// are escaped. immutable=1 avoids -wal access on read-only mounts.
@@ -100,7 +99,7 @@ const itemCols = `mi.id, ls.name, COALESCE(mi.title,''), mi.year,
 	COALESCE(mi.duration,0), mi.rating, COALESCE(mi.content_rating,''),
 	COALESCE(mi.tags_genre,''), COALESCE(mi.tags_director,''),
 	COALESCE(mi.tags_writer,''), COALESCE(mi.tags_star,''),
-	COALESCE(mi.hash,''), COALESCE(mi.user_thumb_url,''), COALESCE(mi.user_art_url,'')`
+	COALESCE(mi.hash,''), COALESCE(mi.user_thumb_url,'')`
 
 func (d *DB) query(shows bool, section string) ([]Item, error) {
 	mtype, typeDir := 1, "Movies"
@@ -139,10 +138,10 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 			rating                        sql.NullFloat64
 			contentRating                 string
 			genre, director, writer, star string
-			hash, thumb, art              string
+			hash, thumb                   string
 		)
 		if err := rows.Scan(&id, &section, &title, &year, &summary, &oad, &duration, &rating,
-			&contentRating, &genre, &director, &writer, &star, &hash, &thumb, &art); err != nil {
+			&contentRating, &genre, &director, &writer, &star, &hash, &thumb); err != nil {
 			return nil, err
 		}
 		it := Item{
@@ -159,7 +158,6 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 			Writers:       splitTags(writer),
 			Actors:        splitTags(star),
 			PosterPath:    d.artwork(typeDir, hash, thumb),
-			BannerPath:    d.artwork(typeDir, hash, art),
 		}
 		if rating.Valid {
 			it.Rating = strconv.FormatFloat(rating.Float64, 'f', 1, 64)

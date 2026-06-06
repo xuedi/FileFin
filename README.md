@@ -29,7 +29,6 @@ operation; only the explicit import commands and `setup` ever write there.
 │   └── (1980) The Gods Must Be Crazy/      # a media folder: "(YYYY) Title"
 │       ├── (1980) The Gods Must Be Crazy.avi
 │       ├── poster.jpg                       # optional
-│       ├── banner.png                       # optional
 │       └── meta.md                          # optional metadata
 └── Shows - English/
     └── (2002) Firefly/

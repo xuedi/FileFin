@@ -56,7 +56,6 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/categories/{cat}/media", s.auth(s.handleCategoryMedia))
 	mux.Handle("GET /api/media/{id}", s.auth(s.handleMedia))
 	mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
-	mux.Handle("GET /api/media/{id}/banner", s.auth(s.handleBanner))
 	mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
 	mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))
 	mux.Handle("GET /api/media/{id}/file/{n}/hls/{seg}", s.auth(s.handleHLSSegment))

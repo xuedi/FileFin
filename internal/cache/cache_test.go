@@ -50,6 +50,12 @@ func TestRebuildAndQuery(t *testing.T) {
 	if d.Year != 1980 || len(d.Files) != 1 || len(d.Tags) != 1 || d.Tags[0] != "comedy" {
 		t.Fatalf("detail: %+v", d)
 	}
+	if len(d.Ratings) != 2 || d.Ratings[0].Key != "imdb" || d.Ratings[0].Value != "7.3 (50,123 votes)" {
+		t.Fatalf("ratings: %+v", d.Ratings)
+	}
+	if d.Ratings[1].Key != "rottenTomatoes" || d.Ratings[1].Value != "95%" {
+		t.Fatalf("ratings rt: %+v", d.Ratings)
+	}
 
 	p, err := store.FilePath(media[0].ID, 0)
 	if err != nil || p == "" {

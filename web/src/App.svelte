@@ -182,9 +182,6 @@
     <main>
       {#if detail}
         <button class="link" onclick={() => history.back()}>← Back</button>
-        {#if detail.hasBanner}
-          <img class="banner" src={'/api/media/' + detail.id + '/banner'} alt="" />
-        {/if}
         <div class="titlebar">
           <h2>{detail.title} <span class="year">({detail.year})</span></h2>
           {#if !playing}
@@ -213,6 +210,15 @@
           <table>
             <tbody>
               {#each detail.metadata as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
+            </tbody>
+          </table>
+        {/if}
+
+        {#if detail.ratings.length}
+          <h3>Ratings</h3>
+          <table>
+            <tbody>
+              {#each detail.ratings as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
             </tbody>
           </table>
         {/if}

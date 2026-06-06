@@ -3,12 +3,15 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/urfave/cli/v2"
 
 	"filefin/internal/importer"
+	"filefin/internal/logging"
 	"filefin/internal/model"
+	"filefin/internal/omdb"
 	"filefin/internal/plex"
 )
 
@@ -50,7 +53,52 @@ func cmdPlex(c *cli.Context) error {
 	if n := c.Int("limit"); n > 0 && n < len(items) {
 		items = items[:n]
 	}
+
+	// Prefer OMDb when a key is configured: it tends to be richer and consistent
+	// with a freshly imported external film. Plex stays the per-item, per-field
+	// fallback so the import always completes even when OMDb is unreachable.
+	if key := cfg.APIKeys["omdb"]; key != "" && !c.Bool("no-fetch") {
+		enriched, fellBack := enrichWithOMDb(items, omdb.New(key).Lookup)
+		lg, closeLog := openLogger(cfg)
+		lg.For(logging.Plex).Info(
+			fmt.Sprintf("OMDb-enriched %d of %d item(s), %d fell back to Plex", enriched, len(items), fellBack),
+			logging.Fields{"enriched": enriched, "total": len(items), "fell_back": fellBack})
+		closeLog()
+	}
+
 	return planAndApply(c, items, cfg)
+}
+
+// omdbLookup looks up a movie by title and year. omdb.Client.Lookup satisfies it;
+// tests pass a stub.
+type omdbLookup func(title string, year int) (*omdb.Movie, error)
+
+// enrichWithOMDb rewrites each item's Plex-derived meta as OMDb-preferred meta,
+// keeping the Plex meta as the per-field fallback. Lookups are deduped by
+// title+year within the run; an item whose lookup fails keeps its full Plex meta.
+// It returns how many items were OMDb-enriched and how many fell back to Plex.
+func enrichWithOMDb(items []importer.Media, lookup omdbLookup) (enriched, fellBack int) {
+	type result struct {
+		movie *omdb.Movie
+		err   error
+	}
+	seen := map[string]result{}
+	for i := range items {
+		k := strings.ToLower(items[i].Title) + "\x00" + strconv.Itoa(items[i].Year)
+		r, ok := seen[k]
+		if !ok {
+			r.movie, r.err = lookup(items[i].Title, items[i].Year)
+			seen[k] = r
+		}
+		if r.err != nil || r.movie == nil {
+			fellBack++
+			continue
+		}
+		omdbMeta := metaFromOMDb(r.movie, items[i].Title, items[i].Year)
+		items[i].Meta = mergeMeta(omdbMeta, items[i].Meta)
+		enriched++
+	}
+	return enriched, fellBack
 }
 
 func plexToMedia(it plex.Item, remaps []remap) importer.Media {
@@ -61,7 +109,6 @@ func plexToMedia(it plex.Item, remaps []remap) importer.Media {
 		IsShow:     it.IsShow,
 		Meta:       metaFromPlex(it),
 		PosterPath: it.PosterPath,
-		BannerPath: it.BannerPath,
 	}
 	for _, f := range it.Files {
 		m.Files = append(m.Files, importer.SourceFile{

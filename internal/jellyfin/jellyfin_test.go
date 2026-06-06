@@ -68,8 +68,8 @@ func TestScanMovie(t *testing.T) {
 	if m.IsShow || m.Title != "The Matrix" || m.Year != 1999 || m.Category != "Films" {
 		t.Fatalf("movie fields: %+v", m)
 	}
-	if len(m.Files) != 1 || m.PosterPath == "" || m.BannerPath == "" {
-		t.Fatalf("files/art: files=%d poster=%q banner=%q", len(m.Files), m.PosterPath, m.BannerPath)
+	if len(m.Files) != 1 || m.PosterPath == "" {
+		t.Fatalf("files/art: files=%d poster=%q", len(m.Files), m.PosterPath)
 	}
 	meta := map[string]string{}
 	for _, kv := range m.Meta.Metadata {

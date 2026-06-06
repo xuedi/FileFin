@@ -42,7 +42,7 @@ CREATE TABLE categories (name TEXT PRIMARY KEY, path TEXT);
 CREATE TABLE media (
   id TEXT PRIMARY KEY, category TEXT, folder TEXT, path TEXT,
   year INTEGER, title TEXT, description TEXT, plot TEXT,
-  poster TEXT, banner TEXT
+  poster TEXT
 );
 CREATE TABLE media_files (media_id TEXT, idx INTEGER, path TEXT, name TEXT, season INTEGER, episode INTEGER, ext TEXT);
 CREATE TABLE media_meta (media_id TEXT, section TEXT, ord INTEGER, k TEXT, v TEXT);
@@ -75,9 +75,9 @@ func (s *Store) Rebuild(scan *model.Scan) error {
 				desc, plot = m.Meta.Description, m.Meta.Plot
 			}
 			if _, err := tx.Exec(
-				`INSERT INTO media(id,category,folder,path,year,title,description,plot,poster,banner)
-				 VALUES(?,?,?,?,?,?,?,?,?,?)`,
-				m.ID, m.Category, m.Folder, m.Path, m.Year, m.Title, desc, plot, m.Poster, m.Banner,
+				`INSERT INTO media(id,category,folder,path,year,title,description,plot,poster)
+				 VALUES(?,?,?,?,?,?,?,?,?)`,
+				m.ID, m.Category, m.Folder, m.Path, m.Year, m.Title, desc, plot, m.Poster,
 			); err != nil {
 				return err
 			}
@@ -92,6 +92,11 @@ func (s *Store) Rebuild(scan *model.Scan) error {
 			if m.Meta != nil {
 				for i, kv := range m.Meta.Metadata {
 					if err := insertMeta(tx, m.ID, "metadata", i, kv.Key, kv.Value); err != nil {
+						return err
+					}
+				}
+				for i, kv := range m.Meta.Ratings {
+					if err := insertMeta(tx, m.ID, "ratings", i, kv.Key, kv.Value); err != nil {
 						return err
 					}
 				}

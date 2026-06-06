@@ -52,15 +52,6 @@ func (s *Server) handlePoster(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, p)
 }
 
-func (s *Server) handleBanner(w http.ResponseWriter, r *http.Request) {
-	p, err := s.store.BannerPath(r.PathValue("id"))
-	if err != nil || p == "" {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, p)
-}
-
 // handleStream serves a media file. Browser-native containers are direct-played with
 // byte-range support; everything else is redirected to its HLS playlist (the player
 // requests that directly, so this branch only guards stray callers and the toggle).

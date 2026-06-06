@@ -248,6 +248,7 @@ type MetaContent struct {
 	Description string
 	Plot        string
 	Metadata    []model.KV
+	Ratings     []model.KV
 	Technical   []model.KV
 	Actors      []string
 	Tags        []string
@@ -299,6 +300,12 @@ func WriteMeta(folder string, m MetaContent) error {
 	for _, kv := range m.Metadata {
 		fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
 	}
+	if len(m.Ratings) > 0 {
+		b.WriteString("\n## ratings\n")
+		for _, kv := range m.Ratings {
+			fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
+		}
+	}
 	b.WriteString("\n## actors\n")
 	for _, a := range m.Actors {
 		fmt.Fprintf(&b, " - %s\n", a)
@@ -332,7 +339,6 @@ type Media struct {
 	IsShow     bool
 	Meta       MetaContent
 	PosterPath string // absolute source path to a poster image, or ""
-	BannerPath string
 	Files      []SourceFile
 }
 
@@ -350,7 +356,7 @@ type ApplyStats struct {
 
 // Apply copies the media's files into the canonical layout, then - once per media
 // folder - enriches it: it writes meta.md (with a `## technical` section and the
-// mediaEnriched flag) and, when posters is true, poster.jpg/banner.jpg. Enrichment
+// mediaEnriched flag) and, when posters is true, poster.jpg. Enrichment
 // runs only when the folder is not yet enriched (or force is set); an already
 // enriched folder keeps its hand-edited sidecars. Media files are copied
 // independently of enrichment, so a changed file is still re-copied. tech, if
@@ -397,13 +403,8 @@ func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tec
 		if err := WriteMeta(folder, mc); err != nil {
 			return "", stats, err
 		}
-		if posters {
-			if m.PosterPath != "" {
-				_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
-			}
-			if m.BannerPath != "" {
-				_ = copyArt(m.BannerPath, filepath.Join(folder, "banner.jpg"))
-			}
+		if posters && m.PosterPath != "" {
+			_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
 		}
 	}
 	return folder, stats, nil
