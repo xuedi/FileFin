@@ -1,0 +1,17 @@
+# Go build output
+/bin/
+*.test
+*.out
+
+# Built frontend assets (regenerated from the Svelte source)
+/web/dist/
+
+# Local runtime data and cache (filesystem is the source of truth)
+/data/
+*.sqlite
+*.sqlite-*
+*.db
+
+# Editor / OS noise
+/.idea/
+.DS_Store
