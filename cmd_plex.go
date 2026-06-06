@@ -38,9 +38,14 @@ func cmdPlex(c *cli.Context) error {
 	}
 
 	remaps := parseRemaps(c.StringSlice("remap"))
+	catOverride := c.String("category")
 	var items []importer.Media
 	for _, it := range plexItems {
-		items = append(items, plexToMedia(it, remaps))
+		m := plexToMedia(it, remaps)
+		if catOverride != "" {
+			m.Category = catOverride
+		}
+		items = append(items, m)
 	}
 	if n := c.Int("limit"); n > 0 && n < len(items) {
 		items = items[:n]

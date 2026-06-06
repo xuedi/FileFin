@@ -55,6 +55,7 @@ func main() {
 					&cli.StringFlag{Name: "metadata-dir", Usage: "Plex Metadata directory (default: derived from the db path)"},
 					&cli.StringSliceFlag{Name: "remap", Usage: "rewrite a source path prefix, old=new (repeatable)"},
 					&cli.StringFlag{Name: "section", Usage: "only import this Plex section"},
+					&cli.StringFlag{Name: "category", Usage: "override the target category (default: the Plex section name)"},
 					&cli.IntFlag{Name: "limit", Usage: "limit the number of items (for testing)"},
 					&cli.BoolFlag{Name: "dry-run", Usage: "show the plan without writing anything"},
 					&cli.BoolFlag{Name: "yes", Aliases: []string{"y"}, Usage: "skip the confirmation prompt"},

@@ -5,6 +5,7 @@ package plex
 
 import (
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,7 +58,10 @@ func DeriveMetadataDir(dbPath string) string {
 // Open opens the Plex database read-only. metadataDir is where poster/banner
 // bundles live; pass "" to skip artwork resolution.
 func Open(dbPath, metadataDir string) (*DB, error) {
-	d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&immutable=1")
+	// Build a proper file: URI so paths with spaces (e.g. "Plex Media Server")
+	// are escaped. immutable=1 avoids -wal access on read-only mounts.
+	uri := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro&immutable=1"}).String()
+	d, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, err
 	}
