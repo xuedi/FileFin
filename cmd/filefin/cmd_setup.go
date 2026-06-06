@@ -74,7 +74,7 @@ func performSetup(cfgPath, dataDir, user, pass string) error {
 	cfg := config.New()
 	cfg.DataDir = dataDir
 	cfg.CachePath = cachePath
-	cfg.Users[user] = string(hash)
+	cfg.Users[user] = config.User{Hash: string(hash), Admin: true}
 	return cfg.Save(cfgPath)
 }
 

@@ -25,11 +25,11 @@ func TestPerformSetup(t *testing.T) {
 	if cfg.DataDir != dataDir {
 		t.Fatalf("data dir: %q", cfg.DataDir)
 	}
-	hash, ok := cfg.Users["alice"]
+	u, ok := cfg.Users["alice"]
 	if !ok {
 		t.Fatal("user not stored")
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte("secret")) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte("secret")) != nil {
 		t.Fatal("stored hash does not verify against password")
 	}
 }

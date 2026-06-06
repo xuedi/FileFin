@@ -13,6 +13,8 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@fortawesome/free-regular-svg-icons": "^7.2.0",
+    "@fortawesome/free-solid-svg-icons": "^7.2.0",
     "hls.js": "^1.6.16"
   }
 }

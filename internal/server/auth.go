@@ -33,11 +33,11 @@ func (s *sessionStore) create(user string) (string, error) {
 	return id, nil
 }
 
-func (s *sessionStore) valid(id string) bool {
+func (s *sessionStore) user(id string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.m[id]
-	return ok
+	u, ok := s.m[id]
+	return u, ok
 }
 
 func (s *sessionStore) delete(id string) {
@@ -55,8 +55,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	hash, ok := s.cfg.Users[req.Username]
-	if !ok || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+	u, ok := s.cfg.Users[req.Username]
+	if !ok || bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(req.Password)) != nil {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -73,7 +73,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, map[string]string{"user": req.Username})
+	writeJSON(w, map[string]any{"user": req.Username, "admin": u.Admin})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

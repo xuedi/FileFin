@@ -14,12 +14,15 @@ type CategorySummary struct {
 	Count int    `json:"count"`
 }
 
-// MediaSummary is a media entry in a category listing.
+// MediaSummary is a media entry in a category listing. Watched is per-user and filled
+// live from state.md by the server; FolderPath is the on-disk folder for that read.
 type MediaSummary struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Year      int    `json:"year"`
-	HasPoster bool   `json:"hasPoster"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
+	HasPoster  bool   `json:"hasPoster"`
+	Watched    bool   `json:"watched"`
+	FolderPath string `json:"-"`
 }
 
 // FileInfo describes one playable file of a media item.
@@ -29,6 +32,7 @@ type FileInfo struct {
 	Season    int    `json:"season"`
 	Episode   int    `json:"episode"`
 	Transcode bool   `json:"transcode"` // true if the browser cannot direct-play it
+	Watched   bool   `json:"watched"`   // per-user, filled live from state.md by the server
 }
 
 // Pair is an ordered metadata key/value.
@@ -37,21 +41,48 @@ type Pair struct {
 	Value string `json:"value"`
 }
 
-// MediaDetail is the full detail view of a media item.
+// MediaDetail is the full detail view of a media item. The watch fields (Watched,
+// ContinueIndex, ContinueSeconds, and each FileInfo.Watched) are per-user and filled
+// live from state.md by the server, not the cache.
 type MediaDetail struct {
-	ID          string     `json:"id"`
-	Category    string     `json:"category"`
-	Title       string     `json:"title"`
-	Year        int        `json:"year"`
-	Description string     `json:"description"`
-	Plot        string     `json:"plot"`
-	HasPoster   bool       `json:"hasPoster"`
-	Files       []FileInfo `json:"files"`
-	Metadata    []Pair     `json:"metadata"`
-	Ratings     []Pair     `json:"ratings"`
-	Technical   []Pair     `json:"technical"`
-	Actors      []string   `json:"actors"`
-	Tags        []string   `json:"tags"`
+	ID              string     `json:"id"`
+	Category        string     `json:"category"`
+	Title           string     `json:"title"`
+	Year            int        `json:"year"`
+	Description     string     `json:"description"`
+	Plot            string     `json:"plot"`
+	HasPoster       bool       `json:"hasPoster"`
+	Files           []FileInfo `json:"files"`
+	Metadata        []Pair     `json:"metadata"`
+	Ratings         []Pair     `json:"ratings"`
+	Technical       []Pair     `json:"technical"`
+	Actors          []string   `json:"actors"`
+	Tags            []string   `json:"tags"`
+	FolderPath      string     `json:"-"` // on-disk media folder, for the live state.md read/write
+	Watched         bool       `json:"watched"`
+	Favorite        bool       `json:"favorite"`
+	ContinueIndex   int        `json:"continueIndex"`
+	ContinueSeconds int        `json:"continueSeconds"`
+}
+
+// Stats are library-wide totals for the admin dashboard.
+type Stats struct {
+	Categories int `json:"categories"`
+	Media      int `json:"media"`
+	Files      int `json:"files"`
+}
+
+// Stats returns library-wide counts.
+func (s *Store) Stats() (Stats, error) {
+	var st Stats
+	row := s.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM categories),
+		(SELECT COUNT(*) FROM media),
+		(SELECT COUNT(*) FROM media_files)`)
+	if err := row.Scan(&st.Categories, &st.Media, &st.Files); err != nil {
+		return Stats{}, err
+	}
+	return st, nil
 }
 
 // Categories returns all categories with their media counts.
@@ -78,7 +109,7 @@ func (s *Store) Categories() ([]CategorySummary, error) {
 // MediaByCategory returns the media in a category, ordered by year then title.
 func (s *Store) MediaByCategory(category string) ([]MediaSummary, error) {
 	rows, err := s.db.Query(
-		`SELECT id, title, year, (poster <> '') FROM media WHERE category = ? ORDER BY year, title`,
+		`SELECT id, title, year, (poster <> ''), path FROM media WHERE category = ? ORDER BY year, title`,
 		category)
 	if err != nil {
 		return nil, err
@@ -88,7 +119,28 @@ func (s *Store) MediaByCategory(category string) ([]MediaSummary, error) {
 	for rows.Next() {
 		var ms MediaSummary
 		var hasPoster int
-		if err := rows.Scan(&ms.ID, &ms.Title, &ms.Year, &hasPoster); err != nil {
+		if err := rows.Scan(&ms.ID, &ms.Title, &ms.Year, &hasPoster, &ms.FolderPath); err != nil {
+			return nil, err
+		}
+		ms.HasPoster = hasPoster != 0
+		out = append(out, ms)
+	}
+	return out, rows.Err()
+}
+
+// AllMedia returns every media item with its folder path, for cross-library views
+// (e.g. the per-user "continue watching" home page) that filter by live state.
+func (s *Store) AllMedia() ([]MediaSummary, error) {
+	rows, err := s.db.Query(`SELECT id, title, year, (poster <> ''), path FROM media ORDER BY year, title`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MediaSummary{}
+	for rows.Next() {
+		var ms MediaSummary
+		var hasPoster int
+		if err := rows.Scan(&ms.ID, &ms.Title, &ms.Year, &hasPoster, &ms.FolderPath); err != nil {
 			return nil, err
 		}
 		ms.HasPoster = hasPoster != 0
@@ -102,8 +154,8 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 	d := &MediaDetail{ID: id, Files: []FileInfo{}, Metadata: []Pair{}, Ratings: []Pair{}, Technical: []Pair{}, Actors: []string{}, Tags: []string{}}
 	var poster string
 	err := s.db.QueryRow(
-		`SELECT category, title, year, description, plot, poster FROM media WHERE id = ?`, id).
-		Scan(&d.Category, &d.Title, &d.Year, &d.Description, &d.Plot, &poster)
+		`SELECT category, title, year, description, plot, poster, path FROM media WHERE id = ?`, id).
+		Scan(&d.Category, &d.Title, &d.Year, &d.Description, &d.Plot, &poster, &d.FolderPath)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +252,14 @@ func (s *Store) Title(id string) (string, error) {
 	var t string
 	err := s.db.QueryRow(`SELECT title FROM media WHERE id = ?`, id).Scan(&t)
 	return t, err
+}
+
+// FolderPath returns the on-disk media folder for an item, used to read/write its
+// per-user state.md sidecar.
+func (s *Store) FolderPath(id string) (string, error) {
+	var p string
+	err := s.db.QueryRow(`SELECT path FROM media WHERE id = ?`, id).Scan(&p)
+	return p, err
 }
 
 // PosterPath returns the poster path for a media item, or "" if none.

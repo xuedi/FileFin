@@ -31,7 +31,7 @@ func testServer(t *testing.T) *Server {
 	}
 	cfg := config.New()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
-	cfg.Users["alice"] = string(hash)
+	cfg.Users["alice"] = config.User{Hash: string(hash)}
 	return New(cfg, store, transcode.Encoder{}, nil)
 }
 

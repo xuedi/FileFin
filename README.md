@@ -18,8 +18,9 @@ Your media lives on disk in a simple, fixed layout. FileFin scans it into a disp
 only for fast browsing and search - delete the index any time and `rebuild` reconstructs it from the
 filesystem with no data loss. The server exposes an authenticated API and a small web UI, and streams
 files directly with HTTP byte-range support. The only state FileFin keeps outside your media folder is a
-single config file in your home directory. FileFin never modifies your media directory during normal
-operation; only the explicit import commands and `setup` ever write there.
+single config file in your home directory. FileFin never modifies your existing media during normal
+operation; only `setup`, the explicit import commands, the optional optimizer, and per-user watch-state
+tracking (a small `state.md` per folder) ever write to the data directory.
 
 ## Filesystem layout
 
@@ -29,7 +30,8 @@ operation; only the explicit import commands and `setup` ever write there.
 │   └── (1980) The Gods Must Be Crazy/      # a media folder: "(YYYY) Title"
 │       ├── (1980) The Gods Must Be Crazy.avi
 │       ├── poster.jpg                       # optional
-│       └── meta.md                          # optional metadata
+│       ├── meta.md                          # optional metadata
+│       └── state.md                         # per-user watch state (written as you watch)
 └── Shows - English/
     └── (2002) Firefly/
         ├── (2002) Firefly - 1x1.avi         # "(YYYY) Title - SxE"
@@ -91,7 +93,10 @@ canonical `(YYYY) Title/` layout and writes a `meta.md` for new media folders.
 ## Configuration
 
 Configuration lives in `~/.filefin.md` (created by `setup`): a hand-editable markdown file holding the
-data directory, server port, API keys, and user accounts (passwords are stored as bcrypt hashes).
+data directory, server port, API keys, and user accounts (passwords are stored as bcrypt hashes). A user is
+an administrator when its bullet ends with ` (admin)`, e.g. `- root: <hash> (admin)`; `setup` creates the
+first account as an admin. Admins get an in-app admin area (dashboard and optimizer queue) via a toggle in
+the top bar.
 
 ### Optional: logging
 

@@ -15,6 +15,12 @@ import (
 // AppName is the binary name and the config-file stem (~/.filefin.md).
 const AppName = "filefin"
 
+// User is one account: a bcrypt password hash and whether the account is an admin.
+type User struct {
+	Hash  string
+	Admin bool
+}
+
 // Config is the durable application state. It is the only thing the app persists
 // outside the filesystem data directory and the disposable cache.
 type Config struct {
@@ -22,7 +28,7 @@ type Config struct {
 	CachePath string
 	Port      int
 	APIKeys   map[string]string
-	Users     map[string]string // username -> bcrypt hash
+	Users     map[string]User // username -> account
 
 	FFmpegPath         string
 	FFprobePath        string
@@ -44,7 +50,7 @@ func New() *Config {
 	return &Config{
 		Port:             8080,
 		APIKeys:          map[string]string{},
-		Users:            map[string]string{},
+		Users:            map[string]User{},
 		FFmpegPath:       "ffmpeg",
 		FFprobePath:      "ffprobe",
 		TranscodeEnabled: true,
@@ -162,7 +168,7 @@ func Load(path string) (*Config, error) {
 			}
 		case "users":
 			if key != "" {
-				c.Users[key] = val
+				c.Users[key] = parseUser(val)
 			}
 		}
 	}
@@ -209,8 +215,13 @@ func (c *Config) Save(path string) error {
 		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])
 	}
 	b.WriteString("\n## users\n")
-	for _, k := range sortedKeys(c.Users) {
-		fmt.Fprintf(&b, " - %s: %s\n", k, c.Users[k])
+	for _, k := range sortedUsers(c.Users) {
+		u := c.Users[k]
+		if u.Admin {
+			fmt.Fprintf(&b, " - %s: %s (admin)\n", k, u.Hash)
+		} else {
+			fmt.Fprintf(&b, " - %s: %s\n", k, u.Hash)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -220,6 +231,29 @@ func (c *Config) Save(path string) error {
 	}
 	c.path = path
 	return nil
+}
+
+// parseUser splits a user bullet value into a hash and an admin flag. A trailing
+// "(admin)" marker (case-insensitive, any surrounding spacing) grants admin; the rest is
+// the bcrypt hash.
+func parseUser(val string) User {
+	u := User{}
+	rest := strings.TrimSpace(val)
+	if i := strings.LastIndex(strings.ToLower(rest), "(admin)"); i >= 0 && strings.TrimSpace(rest[i+len("(admin)"):]) == "" {
+		u.Admin = true
+		rest = strings.TrimSpace(rest[:i])
+	}
+	u.Hash = rest
+	return u
+}
+
+func sortedUsers(m map[string]User) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func splitKV(s string) (string, string) {

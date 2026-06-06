@@ -15,6 +15,7 @@ import (
 
 	"filefin/internal/meta"
 	"filefin/internal/model"
+	"filefin/internal/state"
 	"filefin/internal/transcode"
 )
 
@@ -116,6 +117,9 @@ func scanMediaFolder(m *model.Media) []string {
 		case strings.HasSuffix(lower, transcode.OptimizedExt):
 			// Derived direct-play copy of a source file, discovered live at playback
 			// time (transcode.OptimizedSibling), never a media file of its own.
+		case lower == state.FileName:
+			// Per-user watch state, app-written and read live at request time; not a
+			// catalog input, so the scan ignores it.
 		case base == "poster":
 			m.Poster = filepath.Join(m.Path, name)
 		case lower == "meta.md":
