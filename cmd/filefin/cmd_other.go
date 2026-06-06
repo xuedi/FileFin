@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 
 	"filefin/internal/cache"
 	"filefin/internal/config"
+	"filefin/internal/logging"
 	"filefin/internal/model"
 	"filefin/internal/optimize"
 	"filefin/internal/scanner"
@@ -65,6 +65,10 @@ func cmdServe(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	lg, closeLog := openLogger(cfg)
+	defer closeLog()
+	blog := lg.For(logging.Backend)
+
 	scan, err := scanner.Scan(cfg.DataDir)
 	if err != nil {
 		return err
@@ -79,10 +83,13 @@ func cmdServe(c *cli.Context) error {
 	}
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	enc := detectEncoder(cfg)
-	srv := server.New(cfg, store, enc)
+	srv := server.New(cfg, store, enc, lg)
 	defer srv.Close()
-	fmt.Printf("Serving on http://localhost%s (data: %s, %d media)\n", addr, cfg.DataDir, countMedia(scan))
-	fmt.Println(gpuStatusLine(cfg, enc))
+	blog.Info(fmt.Sprintf("serving on http://localhost%s", addr), logging.Fields{
+		"port": cfg.Port, "media": countMedia(scan), "data_dir": cfg.DataDir,
+		"gpu": enc.Kind == "vaapi", "encoder": enc.Kind, "device": enc.Device,
+	})
+	blog.Info(gpuStatusLine(cfg, enc))
 	if cfg.OptimizeEnabled {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -92,9 +99,9 @@ func cmdServe(c *cli.Context) error {
 			FFprobe: cfg.FFprobePath,
 			Encoder: enc,
 			Busy:    srv.TranscodeActive,
-			Log:     func(f string, a ...any) { log.Printf(f, a...) },
+			Logger:  lg,
 		}).Run(ctx)
-		fmt.Println("Optimize: background worker enabled (pre-transcoding to direct-play copies)")
+		blog.Info("optimize worker enabled (pre-transcoding to direct-play copies)")
 	}
 	return http.ListenAndServe(addr, srv.Handler())
 }
@@ -106,18 +113,21 @@ func cmdOptimize(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	lg, closeLog := openLogger(cfg)
+	defer closeLog()
 	enc := probeEncoder(cfg)
+	olog := lg.For(logging.Optimizer)
 	if enc.Kind == "vaapi" {
-		fmt.Printf("Optimizing with GPU (VAAPI, %s)\n", enc.Device)
+		olog.Info("optimizing with GPU (VAAPI)", logging.Fields{"device": enc.Device})
 	} else {
-		fmt.Println("Optimizing with software encoder (libx264)")
+		olog.Info("optimizing with software encoder (libx264)")
 	}
 	return optimize.NewWorker(optimize.Options{
 		DataDir: cfg.DataDir,
 		FFmpeg:  cfg.FFmpegPath,
 		FFprobe: cfg.FFprobePath,
 		Encoder: enc,
-		Log:     func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
+		Logger:  lg,
 	}).RunOnce(c.Context)
 }
 

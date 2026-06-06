@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"filefin/internal/logging"
 )
 
 const (
@@ -37,6 +39,9 @@ type Options struct {
 	HWAccel       string
 	HWAccelDevice string
 	Encoder       Encoder
+
+	// Logger receives frontend playback events (watching, seek); may be nil.
+	Logger *logging.Logger
 }
 
 // Manager runs and tracks on-the-fly HLS transcode sessions. Each session owns a
@@ -44,6 +49,7 @@ type Options struct {
 type Manager struct {
 	opts     Options
 	encoder  Encoder
+	log      *logging.Scoped
 	mu       sync.Mutex
 	sessions map[string]*session
 	stop     chan struct{}
@@ -52,7 +58,8 @@ type Manager struct {
 type session struct {
 	dir        string
 	inputPath  string
-	remux      bool // copy path: races through the file, never repositioned
+	title      string // display label for playback log events
+	remux      bool   // copy path: races through the file, never repositioned
 	duration   float64
 	startSeg   int // first segment the current encoder was launched at
 	cancel     context.CancelFunc
@@ -71,7 +78,13 @@ func NewManager(opts Options) *Manager {
 	if enc.Kind == "" {
 		enc = softwareEncoder
 	}
-	m := &Manager{opts: opts, encoder: enc, sessions: map[string]*session{}, stop: make(chan struct{})}
+	m := &Manager{
+		opts:     opts,
+		encoder:  enc,
+		log:      opts.Logger.For(logging.Frontend),
+		sessions: map[string]*session{},
+		stop:     make(chan struct{}),
+	}
 	go m.reap()
 	return m
 }
@@ -99,8 +112,8 @@ func (m *Manager) Close() {
 // Playlist ensures a session for key/inputPath exists and returns its VOD media
 // playlist. The playlist lists every segment up front (with #EXT-X-ENDLIST) so the
 // player shows the full seek bar before encoding finishes.
-func (m *Manager) Playlist(key, inputPath string) ([]byte, error) {
-	s, err := m.ensure(key, inputPath)
+func (m *Manager) Playlist(key, inputPath, title string) ([]byte, error) {
+	s, err := m.ensure(key, inputPath, title)
 	if err != nil {
 		return nil, err
 	}
@@ -206,9 +219,22 @@ func (m *Manager) maybeReposition(s *session, n int) {
 	s.cancel()
 	s.cancel = cancel
 	s.startSeg = target
+	pos := target * segmentSeconds
+	m.log.Info(fmt.Sprintf("seek in %s to %s", s.title, clock(pos)), logging.Fields{
+		"title": s.title, "position_s": pos, "to_seg": target,
+	})
 }
 
-func (m *Manager) ensure(key, inputPath string) (*session, error) {
+// clock formats whole seconds as H:MM:SS or M:SS.
+func clock(sec int) string {
+	h, m, s := sec/3600, (sec%3600)/60, sec%60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+func (m *Manager) ensure(key, inputPath, title string) (*session, error) {
 	m.mu.Lock()
 	if s := m.sessions[key]; s != nil {
 		s.lastAccess = time.Now()
@@ -237,7 +263,7 @@ func (m *Manager) ensure(key, inputPath string) (*session, error) {
 		return nil, err
 	}
 
-	s := &session{dir: dir, inputPath: inputPath, remux: remux, duration: streams.Duration, cancel: cancel, lastAccess: time.Now()}
+	s := &session{dir: dir, inputPath: inputPath, title: title, remux: remux, duration: streams.Duration, cancel: cancel, lastAccess: time.Now()}
 
 	m.mu.Lock()
 	// Another request may have created the session while we were probing.
@@ -250,6 +276,9 @@ func (m *Manager) ensure(key, inputPath string) (*session, error) {
 	}
 	m.sessions[key] = s
 	m.mu.Unlock()
+	m.log.Info("watching "+title, logging.Fields{
+		"title": title, "remux": remux, "encoder": m.encoder.Kind,
+	})
 	return s, nil
 }
 

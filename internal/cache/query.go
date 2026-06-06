@@ -194,6 +194,13 @@ func (s *Store) PlaybackPath(id string, idx int) (path string, needsTranscode bo
 	return src, transcode.NeedsTranscode(filepath.Ext(src)), nil
 }
 
+// Title returns a media item's title, or "" if unknown.
+func (s *Store) Title(id string) (string, error) {
+	var t string
+	err := s.db.QueryRow(`SELECT title FROM media WHERE id = ?`, id).Scan(&t)
+	return t, err
+}
+
 // PosterPath returns the poster path for a media item, or "" if none.
 func (s *Store) PosterPath(id string) (string, error) {
 	var p string

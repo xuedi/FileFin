@@ -89,6 +89,20 @@ canonical `(YYYY) Title/` layout and writes a `meta.md` for new media folders.
 Configuration lives in `~/.filefin.md` (created by `setup`): a hand-editable markdown file holding the
 data directory, server port, API keys, and user accounts (passwords are stored as bcrypt hashes).
 
+### Optional: logging
+
+The server logs meaningful events (startup, playback, imports, optimization) under a level and output:
+
+```markdown
+## logging
+ - level: info
+ - output: STDOUT
+```
+
+`level` is `error`, `info`, or `debug`. `info` prints one human line per event
+(`[2026-06-06 17:07:36] backend: serving on http://localhost:8080`); `debug` prints the same events as JSON
+enriched with telemetry (durations, codecs, GPU, ...). `output` is `STDOUT`, `STDERR`, or a file path.
+
 ### Optional: metadata enrichment
 
 If you add an [OMDb API](https://www.omdbapi.com) key to the config, `import` will fill `meta.md`

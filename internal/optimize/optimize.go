@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"filefin/internal/logging"
 	"filefin/internal/model"
 	"filefin/internal/scanner"
 	"filefin/internal/transcode"
@@ -61,13 +62,14 @@ type Options struct {
 	// Busy reports whether a live transcode is in progress; the worker yields while true
 	// so a viewer always gets priority. Nil means never busy.
 	Busy func() bool
-	// Log receives progress lines; nil discards them.
-	Log func(string, ...any)
+	// Logger receives optimizer events; may be nil.
+	Logger *logging.Logger
 }
 
 // Worker grinds the optimize backlog, one file at a time, with the configured encoder.
 type Worker struct {
 	opts Options
+	log  *logging.Scoped
 }
 
 // NewWorker constructs a Worker, defaulting tool paths.
@@ -78,17 +80,14 @@ func NewWorker(opts Options) *Worker {
 	if opts.FFprobe == "" {
 		opts.FFprobe = "ffprobe"
 	}
-	if opts.Log == nil {
-		opts.Log = func(string, ...any) {}
-	}
-	return &Worker{opts: opts}
+	return &Worker{opts: opts, log: opts.Logger.For(logging.Optimizer)}
 }
 
 // Run loops: process the backlog, then sleep and rescan for new work, until ctx ends.
 func (w *Worker) Run(ctx context.Context) {
 	for {
 		if err := w.RunOnce(ctx); err != nil && ctx.Err() == nil {
-			w.opts.Log("optimize pass: %v", err)
+			w.log.Error("optimize pass failed", logging.Fields{"error": err.Error()})
 		}
 		select {
 		case <-ctx.Done():
@@ -105,45 +104,57 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	work := WorkList(scan)
-	for _, c := range work {
+	for _, c := range WorkList(scan) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		w.waitWhileBusy(ctx)
-		switch done, err := w.processOne(ctx, c); {
-		case err != nil:
-			w.opts.Log("optimize %s: %v", filepath.Base(c.Source), err)
-		case done:
-			w.opts.Log("optimize: wrote %s", filepath.Base(c.Optimized))
-		}
+		_ = w.processOne(ctx, c)
 	}
 	return nil
 }
 
 // processOne probes the source and, if it genuinely needs re-encoding, transcodes it to
-// the optimized copy via a temp file and an atomic rename. It returns done=false for
-// remux-eligible sources, which are skipped (already cheap to serve on the fly).
-func (w *Worker) processOne(ctx context.Context, c Candidate) (done bool, err error) {
+// the optimized copy via a temp file and an atomic rename. Remux-eligible sources are
+// skipped silently (already cheap to serve, and they recur every pass).
+func (w *Worker) processOne(ctx context.Context, c Candidate) error {
+	film := strings.TrimSuffix(filepath.Base(c.Source), filepath.Ext(c.Source))
 	streams, err := transcode.Probe(ctx, w.opts.FFprobe, c.Source)
 	if err != nil {
-		return false, err
+		w.log.Error("probe failed for "+film, logging.Fields{"film": film, "error": err.Error()})
+		return err
 	}
 	if transcode.RemuxEligible(streams) {
-		return false, nil
+		return nil
 	}
+	srcInfo, _ := os.Stat(c.Source)
+	start := time.Now()
 	tmp := c.Optimized + ".tmp"
 	args := transcode.OptimizeArgs(w.opts.Encoder, c.Source, tmp)
 	out, err := exec.CommandContext(ctx, w.opts.FFmpeg, args...).CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tmp)
-		return false, fmt.Errorf("ffmpeg: %w: %s", err, lastLine(out))
+		w.log.Error("optimize failed for "+film, logging.Fields{"film": film, "error": lastLine(out)})
+		return fmt.Errorf("ffmpeg: %w: %s", err, lastLine(out))
 	}
 	if err := os.Rename(tmp, c.Optimized); err != nil {
 		_ = os.Remove(tmp)
-		return false, err
+		return err
 	}
-	return true, nil
+	outInfo, _ := os.Stat(c.Optimized)
+	w.log.Info(fmt.Sprintf("new optimized version of %s in %s", film, c.Optimized), logging.Fields{
+		"film": film, "path": c.Optimized, "took_ms": time.Since(start).Milliseconds(),
+		"encoder": w.opts.Encoder.Kind, "device": w.opts.Encoder.Device,
+		"src_codec": streams.VideoCodec, "src_bytes": fileSize(srcInfo), "out_bytes": fileSize(outInfo),
+	})
+	return nil
+}
+
+func fileSize(fi os.FileInfo) int64 {
+	if fi == nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // waitWhileBusy blocks until no live transcode is active or ctx is cancelled.

@@ -9,6 +9,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"filefin/internal/config"
+	"filefin/internal/logging"
 )
 
 func main() {
@@ -100,4 +101,16 @@ func loadConfig() (*config.Config, error) {
 		return nil, fmt.Errorf("could not load config at %s (run `setup` first?): %w", path, err)
 	}
 	return cfg, nil
+}
+
+// openLogger builds the app logger from config, returning a closer to defer. A bad
+// level/output falls back to an STDOUT info logger rather than failing the command.
+func openLogger(cfg *config.Config) (*logging.Logger, func()) {
+	lg, closer, err := logging.Open(cfg.LogLevel, cfg.LogOutput)
+	if err != nil {
+		lg = logging.New(logging.Info, os.Stdout)
+		lg.For(logging.Backend).Error("log setup failed, using stdout/info", logging.Fields{"error": err.Error()})
+		return lg, func() {}
+	}
+	return lg, func() { _ = closer.Close() }
 }

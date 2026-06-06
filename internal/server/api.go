@@ -2,12 +2,12 @@ package server
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"filefin/internal/logging"
 	"filefin/internal/transcode"
 )
 
@@ -122,9 +122,10 @@ func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	playlist, err := s.hls.Playlist(key, p)
+	title, _ := s.store.Title(r.PathValue("id"))
+	playlist, err := s.hls.Playlist(key, p, title)
 	if err != nil {
-		log.Printf("hls playlist %s: %v", p, err)
+		s.log.Error("transcode failed for "+title, logging.Fields{"path": p, "error": err.Error()})
 		http.Error(w, "transcode failed", http.StatusInternalServerError)
 		return
 	}
@@ -137,9 +138,10 @@ func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A not-yet-ready or reaped segment is routine (the client re-requests the
+	// playlist); a 503 is the whole signal, so it is not logged.
 	seg, err := s.hls.Segment(key, r.PathValue("seg"))
 	if err != nil {
-		log.Printf("hls segment %s/%s: %v", key, r.PathValue("seg"), err)
 		http.Error(w, "segment unavailable", http.StatusServiceUnavailable)
 		return
 	}

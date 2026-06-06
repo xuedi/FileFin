@@ -31,6 +31,9 @@ type Config struct {
 	HWAccelDevice    string // optional DRM render node override, e.g. /dev/dri/renderD128
 	OptimizeEnabled  bool   // background pre-transcode to direct-play copies (off by default)
 
+	LogLevel  string // error | info | debug
+	LogOutput string // STDOUT | STDERR | a file path
+
 	path string
 }
 
@@ -44,6 +47,8 @@ func New() *Config {
 		FFprobePath:      "ffprobe",
 		TranscodeEnabled: true,
 		HWAccel:          "auto",
+		LogLevel:         "info",
+		LogOutput:        "STDOUT",
 	}
 }
 
@@ -129,6 +134,17 @@ func Load(path string) (*Config, error) {
 					c.OptimizeEnabled = b
 				}
 			}
+		case "logging":
+			switch key {
+			case "level":
+				if val != "" {
+					c.LogLevel = val
+				}
+			case "output":
+				if val != "" {
+					c.LogOutput = val
+				}
+			}
 		case "apikeys":
 			if key != "" {
 				c.APIKeys[key] = val
@@ -168,6 +184,9 @@ func (c *Config) Save(path string) error {
 	}
 	b.WriteString("\n## optimize\n")
 	fmt.Fprintf(&b, " - enabled: %t\n", c.OptimizeEnabled)
+	b.WriteString("\n## logging\n")
+	fmt.Fprintf(&b, " - level: %s\n", c.LogLevel)
+	fmt.Fprintf(&b, " - output: %s\n", c.LogOutput)
 	b.WriteString("\n## apikeys\n")
 	for _, k := range sortedKeys(c.APIKeys) {
 		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])

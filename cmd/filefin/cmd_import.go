@@ -13,6 +13,7 @@ import (
 
 	"filefin/internal/config"
 	"filefin/internal/importer"
+	"filefin/internal/logging"
 	"filefin/internal/model"
 	"filefin/internal/omdb"
 )
@@ -103,6 +104,10 @@ func cmdImport(c *cli.Context) error {
 		fmt.Printf("Unchanged (same size), skipped: %s\n", res.TargetPath)
 	} else {
 		fmt.Printf("Imported: %s\n", res.TargetPath)
+		lg, closeLog := openLogger(cfg)
+		lg.For(logging.Import).Info(fmt.Sprintf("imported %s into %s", req.Title, category),
+			logging.Fields{"title": req.Title, "category": category, "path": res.TargetPath})
+		closeLog()
 	}
 
 	// Enrich the folder once: when it has no mediaEnriched flag yet (or --force),

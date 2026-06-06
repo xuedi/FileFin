@@ -1,13 +1,16 @@
 package optimize
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"filefin/internal/logging"
 	"filefin/internal/model"
 	"filefin/internal/transcode"
 )
@@ -80,7 +83,8 @@ func TestWorkerEndToEnd(t *testing.T) {
 		t.Fatalf("generate input: %v\n%s", err, out)
 	}
 
-	w := NewWorker(Options{DataDir: dir})
+	var logbuf bytes.Buffer
+	w := NewWorker(Options{DataDir: dir, Logger: logging.New(logging.Info, &logbuf)})
 	if err := w.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
@@ -88,6 +92,9 @@ func TestWorkerEndToEnd(t *testing.T) {
 	opt, fresh := transcode.OptimizedSibling(src)
 	if !fresh {
 		t.Fatalf("optimized copy missing or stale: %s", opt)
+	}
+	if !strings.Contains(logbuf.String(), "optimizer: new optimized version of") {
+		t.Errorf("missing optimizer event: %q", logbuf.String())
 	}
 	codec, err := exec.Command("ffprobe", "-v", "error",
 		"-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", opt).Output()

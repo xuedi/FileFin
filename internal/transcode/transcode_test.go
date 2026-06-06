@@ -1,6 +1,7 @@
 package transcode
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"filefin/internal/logging"
 )
 
 func TestNeedsTranscode(t *testing.T) {
@@ -301,15 +304,19 @@ func TestHLSEndToEnd(t *testing.T) {
 		t.Fatalf("generate test input: %v\n%s", err, out)
 	}
 
-	m := NewManager(Options{})
+	var logbuf bytes.Buffer
+	m := NewManager(Options{Logger: logging.New(logging.Info, &logbuf)})
 	defer m.Close()
 
-	pl, err := m.Playlist("k", in)
+	pl, err := m.Playlist("k", in, "Test Clip")
 	if err != nil {
 		t.Fatalf("Playlist: %v", err)
 	}
 	if !strings.Contains(string(pl), "#EXTM3U") || !strings.Contains(string(pl), "#EXT-X-ENDLIST") {
 		t.Fatalf("unexpected playlist:\n%s", pl)
+	}
+	if !strings.Contains(logbuf.String(), "frontend: watching Test Clip") {
+		t.Errorf("missing frontend watching event: %q", logbuf.String())
 	}
 
 	seg, err := m.Segment("k", "seg0.ts")
@@ -400,7 +407,7 @@ func TestVAAPIEncode(t *testing.T) {
 
 	m := NewManager(Options{Encoder: enc})
 	defer m.Close()
-	if _, err := m.Playlist("k", in); err != nil {
+	if _, err := m.Playlist("k", in, "VAAPI Clip"); err != nil {
 		t.Fatalf("Playlist: %v", err)
 	}
 	seg, err := m.Segment("k", "seg0.ts")

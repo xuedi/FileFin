@@ -9,6 +9,7 @@ import (
 
 	"filefin/internal/cache"
 	"filefin/internal/config"
+	"filefin/internal/logging"
 	"filefin/internal/transcode"
 	"filefin/web"
 )
@@ -19,19 +20,22 @@ type Server struct {
 	store    *cache.Store
 	sessions *sessionStore
 	hls      *transcode.Manager
+	log      *logging.Scoped
 }
 
 // New constructs a Server. enc is the video encoder transcode sessions use (detected
-// once at startup); the zero value falls back to software encoding.
-func New(cfg *config.Config, store *cache.Store, enc transcode.Encoder) *Server {
+// once at startup); the zero value falls back to software encoding. lg may be nil.
+func New(cfg *config.Config, store *cache.Store, enc transcode.Encoder, lg *logging.Logger) *Server {
 	return &Server{
 		cfg:      cfg,
 		store:    store,
 		sessions: newSessionStore(),
+		log:      lg.For(logging.Backend),
 		hls: transcode.NewManager(transcode.Options{
 			FFmpegPath:  cfg.FFmpegPath,
 			FFprobePath: cfg.FFprobePath,
 			Encoder:     enc,
+			Logger:      lg,
 		}),
 	}
 }

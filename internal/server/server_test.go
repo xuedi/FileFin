@@ -32,7 +32,7 @@ func testServer(t *testing.T) *Server {
 	cfg := config.New()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	cfg.Users["alice"] = string(hash)
-	return New(cfg, store, transcode.Encoder{})
+	return New(cfg, store, transcode.Encoder{}, nil)
 }
 
 func TestAuthRequired(t *testing.T) {

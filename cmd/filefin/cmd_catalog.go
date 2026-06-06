@@ -13,6 +13,7 @@ import (
 
 	"filefin/internal/config"
 	"filefin/internal/importer"
+	"filefin/internal/logging"
 	"filefin/internal/model"
 	"filefin/internal/progress"
 	"filefin/internal/transcode"
@@ -222,7 +223,7 @@ func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) er
 
 	prog := copyProgress()
 	tech := technicalProvider(cfg)
-	copied, skipped, failed := 0, 0, 0
+	copied, skipped, failed, imported := 0, 0, 0, 0
 	for i, p := range plans {
 		label := fmt.Sprintf("[%d/%d] %s / (%d) %s", i+1, len(plans), p.m.Category, p.m.Year, p.m.Title)
 		multi := len(p.m.Files) > 1
@@ -244,11 +245,19 @@ func planAndApply(c *cli.Context, items []importer.Media, cfg *config.Config) er
 		if prog != nil && !multi && stats.Copied == 0 {
 			fmt.Printf("%s  unchanged\n", label)
 		}
+		if stats.Copied > 0 {
+			imported++
+		}
 		copied += stats.Copied
 		skipped += stats.Skipped
 	}
 	fmt.Printf("Done: %d file(s) copied, %d unchanged, %d item(s) failed.\n", copied, skipped, failed)
 	fmt.Printf("Run `%s rebuild` to update the cache.\n", config.AppName)
+	// One summary event after the interactive output, so it never tangles with the bars.
+	lg, closeLog := openLogger(cfg)
+	defer closeLog()
+	lg.For(c.Command.Name).Info(fmt.Sprintf("imported %d of %d item(s) from %s", imported, len(plans), c.Command.Name),
+		logging.Fields{"imported": imported, "files_copied": copied, "skipped": skipped, "failed": failed})
 	return nil
 }
 
