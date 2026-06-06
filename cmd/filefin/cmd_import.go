@@ -84,6 +84,7 @@ func cmdImport(c *cli.Context) error {
 		Episode:    episode,
 		Move:       c.Bool("move"),
 		Force:      c.Bool("force"),
+		Progress:   copyProgress(),
 	}
 
 	if interactive {
@@ -98,7 +99,11 @@ func cmdImport(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Imported: %s\n", res.TargetPath)
+	if res.Skipped {
+		fmt.Printf("Unchanged (same size), skipped: %s\n", res.TargetPath)
+	} else {
+		fmt.Printf("Imported: %s\n", res.TargetPath)
+	}
 
 	// Create meta.md only for a new media folder; never overwrite an existing one
 	// (e.g. when adding another episode).
@@ -126,9 +131,10 @@ func enrichMeta(cfg *config.Config, req importer.Request, res *importer.Result, 
 				return
 			}
 			fmt.Println("Wrote meta.md from OMDb")
-			if movie.ImdbID != "" {
+			posterPath := filepath.Join(res.Folder, "poster.jpg")
+			if _, statErr := os.Stat(posterPath); movie.ImdbID != "" && statErr != nil {
 				if data, _, err := client.Poster(movie.ImdbID, 600); err == nil && len(data) > 0 {
-					if err := os.WriteFile(filepath.Join(res.Folder, "poster.jpg"), data, 0o644); err == nil {
+					if err := os.WriteFile(posterPath, data, 0o644); err == nil {
 						fmt.Println("Downloaded poster.jpg")
 					}
 				}

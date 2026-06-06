@@ -84,6 +84,11 @@ func cleanTitle(s string) string {
 	return strings.Trim(s, " -")
 }
 
+// ProgressFunc is called during a file copy with the bytes copied so far and the
+// total size (0 if unknown). It may be nil. Implementations must be cheap: it is
+// invoked on every write.
+type ProgressFunc func(name string, copied, total int64)
+
 // Request describes one import.
 type Request struct {
 	SourcePath string
@@ -95,6 +100,7 @@ type Request struct {
 	Episode    int
 	Move       bool
 	Force      bool
+	Progress   ProgressFunc
 }
 
 // Result reports what an import produced.
@@ -102,6 +108,7 @@ type Result struct {
 	Folder      string
 	TargetPath  string
 	MetaExisted bool
+	Skipped     bool // target already existed with the same size; the copy was skipped
 }
 
 // FolderName is the canonical media folder name.
@@ -148,32 +155,38 @@ func Execute(req Request) (*Result, error) {
 		return nil, err
 	}
 	target := filepath.Join(dir, TargetFileName(req.Year, req.Title, req.Season, req.Episode, ext))
-	if _, err := os.Stat(target); err == nil && !req.Force {
-		return nil, fmt.Errorf("target already exists: %s (use --force to overwrite)", target)
+	// Re-copy only when the file is new or its size changed; same size is treated as
+	// unchanged and skipped (a content hash would mean reading the whole source, which
+	// over a remote mount costs as much as copying). --force always re-copies.
+	skipped := false
+	if ti, statErr := os.Stat(target); statErr == nil && !req.Force {
+		skipped = ti.Size() == info.Size()
 	}
 
 	_, metaErr := os.Stat(filepath.Join(dir, "meta.md"))
-	if err := placeFile(req.SourcePath, target, req.Move); err != nil {
-		return nil, err
+	if !skipped {
+		if err := placeFile(req.SourcePath, target, req.Move, req.Progress); err != nil {
+			return nil, err
+		}
 	}
-	return &Result{Folder: dir, TargetPath: target, MetaExisted: metaErr == nil}, nil
+	return &Result{Folder: dir, TargetPath: target, MetaExisted: metaErr == nil, Skipped: skipped}, nil
 }
 
-func placeFile(src, dst string, move bool) error {
+func placeFile(src, dst string, move bool, prog ProgressFunc) error {
 	if move {
 		if err := os.Rename(src, dst); err == nil {
 			return nil
 		}
 		// Fall back to copy+remove across filesystems or read-only sources.
-		if err := copyFile(src, dst); err != nil {
+		if err := copyFile(src, dst, prog); err != nil {
 			return err
 		}
 		return os.Remove(src)
 	}
-	return copyFile(src, dst)
+	return copyFile(src, dst, prog)
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, prog ProgressFunc) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -184,7 +197,15 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	var w io.Writer = out
+	if prog != nil {
+		var total int64
+		if fi, err := in.Stat(); err == nil {
+			total = fi.Size()
+		}
+		w = &progressWriter{w: out, name: filepath.Base(dst), total: total, prog: prog}
+	}
+	if _, err := io.Copy(w, in); err != nil {
 		out.Close()
 		os.Remove(tmp)
 		return err
@@ -194,6 +215,22 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// progressWriter forwards writes to w while reporting cumulative bytes to prog.
+type progressWriter struct {
+	w      io.Writer
+	name   string
+	total  int64
+	copied int64
+	prog   ProgressFunc
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.copied += int64(n)
+	p.prog(p.name, p.copied, p.total)
+	return n, err
 }
 
 // MetaContent is the data used to render a media folder's meta.md.
@@ -267,37 +304,67 @@ func (m Media) TargetFolder(dataDir string) string {
 	return filepath.Join(dataDir, m.Category, FolderName(m.Year, m.Title))
 }
 
-// Apply copies the media's files into the canonical layout, writes meta.md, and
-// (when posters is true) copies poster.jpg/banner.jpg. It returns the folder.
-func (m Media) Apply(dataDir string, force, posters bool) (string, error) {
+// ApplyStats reports how many of a media's files were copied vs skipped as
+// unchanged, so callers can show meaningful progress on a reimport.
+type ApplyStats struct {
+	Copied  int
+	Skipped int
+}
+
+// Apply copies the media's files into the canonical layout, then writes meta.md and
+// (when posters is true) poster.jpg/banner.jpg. Sidecar files that already exist are
+// left untouched - for plex/jellyfin the metadata source is local and authoritative,
+// so there is no reason to recreate them. prog, if non-nil, receives per-file copy
+// progress. --force overrides every skip. It returns the folder and per-file stats.
+func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc) (string, ApplyStats, error) {
 	if len(m.Files) == 0 {
-		return "", errors.New("no media files")
+		return "", ApplyStats{}, errors.New("no media files")
 	}
 	var folder string
+	var stats ApplyStats
 	for _, f := range m.Files {
 		res, err := Execute(Request{
 			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
 			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Force: force,
+			Progress: prog,
 		})
 		if err != nil {
-			return "", err
+			return "", stats, err
 		}
 		folder = res.Folder
+		if res.Skipped {
+			stats.Skipped++
+		} else {
+			stats.Copied++
+		}
 	}
-	meta := m.Meta
-	meta.Title = m.Title
-	if err := WriteMeta(folder, meta); err != nil {
-		return "", err
+	if force || !fileExists(filepath.Join(folder, "meta.md")) {
+		meta := m.Meta
+		meta.Title = m.Title
+		if err := WriteMeta(folder, meta); err != nil {
+			return "", stats, err
+		}
 	}
 	if posters {
 		if m.PosterPath != "" {
-			_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
+			copyArtIfMissing(m.PosterPath, filepath.Join(folder, "poster.jpg"), force)
 		}
 		if m.BannerPath != "" {
-			_ = copyArt(m.BannerPath, filepath.Join(folder, "banner.jpg"))
+			copyArtIfMissing(m.BannerPath, filepath.Join(folder, "banner.jpg"), force)
 		}
 	}
-	return folder, nil
+	return folder, stats, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func copyArtIfMissing(src, dst string, force bool) {
+	if force || !fileExists(dst) {
+		_ = copyArt(src, dst)
+	}
 }
 
 func copyArt(src, dst string) error {

@@ -27,6 +27,38 @@ func TestParseName(t *testing.T) {
 	}
 }
 
+func TestExecuteProgress(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.avi")
+	payload := strings.Repeat("x", 100_000)
+	if err := os.WriteFile(src, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastCopied, lastTotal int64
+	calls := 0
+	_, err := Execute(Request{
+		SourcePath: src, DataDir: filepath.Join(dir, "data"), Category: "C",
+		Title: "Movie", Year: 2020,
+		Progress: func(name string, copied, total int64) {
+			calls++
+			lastCopied, lastTotal = copied, total
+			if name != "(2020) Movie.avi" {
+				t.Errorf("progress name = %q", name)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls == 0 {
+		t.Fatal("progress callback was never invoked")
+	}
+	if lastTotal != int64(len(payload)) || lastCopied != lastTotal {
+		t.Fatalf("final progress copied=%d total=%d, want both %d", lastCopied, lastTotal, len(payload))
+	}
+}
+
 func TestExecute(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "source.mp4")
@@ -120,7 +152,7 @@ func TestMediaApply(t *testing.T) {
 		PosterPath: poster,
 		Files:      []SourceFile{{Path: src}},
 	}
-	folder, err := m.Apply(data, false, true)
+	folder, _, err := m.Apply(data, false, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +172,70 @@ func TestMediaApply(t *testing.T) {
 	}
 }
 
+func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.avi")
+	os.WriteFile(src, []byte("ORIGINAL"), 0o644)
+	poster := filepath.Join(dir, "poster_src")
+	os.WriteFile(poster, []byte("ART"), 0o644)
+	data := filepath.Join(dir, "data")
+
+	m := Media{
+		Category:   "C",
+		Title:      "Movie",
+		Year:       2020,
+		Meta:       MetaContent{Description: "first"},
+		PosterPath: poster,
+		Files:      []SourceFile{{Path: src}},
+	}
+
+	folder, stats, err := m.Apply(data, false, true, nil)
+	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
+		t.Fatalf("first apply: stats=%+v err=%v", stats, err)
+	}
+
+	// Edit the already-imported sidecars; a reimport must not overwrite them, and the
+	// unchanged media file (same size) must be skipped.
+	mediaPath := filepath.Join(folder, "(2020) Movie.avi")
+	metaPath := filepath.Join(folder, "meta.md")
+	posterPath := filepath.Join(folder, "poster.jpg")
+	os.WriteFile(metaPath, []byte("HAND EDITED"), 0o644)
+	os.WriteFile(posterPath, []byte("HAND EDITED ART"), 0o644)
+
+	m.Meta = MetaContent{Description: "second"}
+	_, stats, err = m.Apply(data, false, true, nil)
+	if err != nil || stats.Copied != 0 || stats.Skipped != 1 {
+		t.Fatalf("reimport stats: %+v err=%v", stats, err)
+	}
+	if b, _ := os.ReadFile(metaPath); string(b) != "HAND EDITED" {
+		t.Fatalf("meta.md was overwritten: %q", b)
+	}
+	if b, _ := os.ReadFile(posterPath); string(b) != "HAND EDITED ART" {
+		t.Fatalf("poster.jpg was overwritten: %q", b)
+	}
+
+	// A changed source (different size) is re-copied on reimport.
+	os.WriteFile(src, []byte("A MUCH LONGER REPLACEMENT FILE"), 0o644)
+	_, stats, err = m.Apply(data, false, true, nil)
+	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
+		t.Fatalf("changed-file reimport stats: %+v err=%v", stats, err)
+	}
+	if b, _ := os.ReadFile(mediaPath); string(b) != "A MUCH LONGER REPLACEMENT FILE" {
+		t.Fatalf("changed media not re-copied: %q", b)
+	}
+
+	// --force overwrites sidecars too.
+	if _, _, err = m.Apply(data, true, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "second") {
+		t.Fatalf("force did not rewrite meta.md: %q", b)
+	}
+	if b, _ := os.ReadFile(posterPath); string(b) != "ART" {
+		t.Fatalf("force did not recopy poster: %q", b)
+	}
+}
+
 func TestMediaApplyEpisodes(t *testing.T) {
 	dir := t.TempDir()
 	mk := func(n string) string {
@@ -155,7 +251,7 @@ func TestMediaApplyEpisodes(t *testing.T) {
 			{Path: mk("e2.avi"), Season: 1, Episode: 2},
 		},
 	}
-	if _, err := m.Apply(data, false, false); err != nil {
+	if _, _, err := m.Apply(data, false, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	folder := filepath.Join(data, "Shows", "(2002) Firefly")

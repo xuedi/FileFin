@@ -10,7 +10,17 @@ import (
 
 	"filefin/internal/config"
 	"filefin/internal/importer"
+	"filefin/internal/progress"
 )
+
+// copyProgress returns a per-file copy callback that draws a live braille bar to
+// stderr, or nil when stderr is not a terminal (so logs and pipes stay clean).
+func copyProgress() importer.ProgressFunc {
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
+		return nil
+	}
+	return progress.NewReporter(os.Stderr).Track
+}
 
 // planAndApply is shared by the plex and jellyfin commands: it prints a
 // new/existing plan for the catalog, then (unless --dry-run) confirms and
@@ -43,32 +53,31 @@ func planAndApply(c *cli.Context, items []importer.Media, dataDir string) error 
 		fmt.Println("(dry run; nothing written)")
 		return nil
 	}
-	toApply := newCount
-	if c.Bool("force") {
-		toApply = len(plans)
-	}
-	if toApply == 0 {
+	if len(plans) == 0 {
 		fmt.Println("Nothing to import.")
 		return nil
 	}
-	if !c.Bool("yes") && !promptYesNo(fmt.Sprintf("Import %d item(s)?", toApply), false) {
+	// Every item is processed: existing media folders are revisited so changed files
+	// get re-copied, while unchanged files and present sidecars are skipped per-file.
+	if !c.Bool("yes") && !promptYesNo(fmt.Sprintf("Process %d item(s)? (unchanged files are skipped)", len(plans)), false) {
 		fmt.Println("Aborted.")
 		return nil
 	}
 
-	applied, failed := 0, 0
-	for _, p := range plans {
-		if p.exists && !c.Bool("force") {
-			continue
-		}
-		if _, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters")); err != nil {
-			fmt.Printf("  error: %s (%d): %v\n", p.m.Title, p.m.Year, err)
+	prog := copyProgress()
+	copied, skipped, failed := 0, 0, 0
+	for i, p := range plans {
+		fmt.Printf("[%d/%d] %s / (%d) %s\n", i+1, len(plans), p.m.Category, p.m.Year, p.m.Title)
+		_, stats, err := p.m.Apply(dataDir, c.Bool("force"), !c.Bool("no-posters"), prog)
+		if err != nil {
+			fmt.Printf("  error: %v\n", err)
 			failed++
 			continue
 		}
-		applied++
+		copied += stats.Copied
+		skipped += stats.Skipped
 	}
-	fmt.Printf("Imported %d item(s), %d failed.\n", applied, failed)
+	fmt.Printf("Done: %d file(s) copied, %d unchanged, %d item(s) failed.\n", copied, skipped, failed)
 	fmt.Printf("Run `%s rebuild` to update the cache.\n", config.AppName)
 	return nil
 }
