@@ -42,6 +42,7 @@ worked example of the per-media metadata file.
 - Go 1.24+
 - Node.js + npm (to build the web frontend)
 - `ffmpeg` and `ffprobe` (optional, only needed to transcode non-browser-native formats such as `.avi`/`.mkv`)
+- a VAAPI-capable GPU (optional; AMD or Intel, used automatically for hardware encoding when present)
 - [`just`](https://github.com/casey/just) (optional, for the task recipes below)
 
 ## Build
@@ -104,15 +105,25 @@ Pass `--no-fetch` to skip the lookup for a single import.
 
 Browser-native containers (`.mp4`, `.webm`, `.m4v`) are streamed directly. Everything else (`.avi`, `.mkv`,
 `.mov`, ...) is transcoded to HLS on the fly with `ffmpeg` so it plays in the browser. Sources that are
-already H.264 + AAC/MP3 are remuxed without re-encoding. The defaults expect `ffmpeg`/`ffprobe` on `PATH`;
-override the paths or turn transcoding off in the config:
+already H.264 + AAC/MP3 are remuxed without re-encoding, and seeking is fast even into not-yet-encoded
+regions (the encoder repositions to the seek target instead of grinding forward to it).
+
+When a VAAPI-capable GPU is available, encoding is offloaded to it automatically (probed once at startup;
+`serve` prints whether hardware acceleration is active). With no GPU it falls back to software (libx264).
+The defaults expect `ffmpeg`/`ffprobe` on `PATH`; override the paths, force software encoding, pin a
+specific render node, or turn transcoding off in the config:
 
 ```markdown
 ## transcode
  - ffmpeg: ffmpeg
  - ffprobe: ffprobe
  - enabled: true
+ - hwaccel: auto
+ - device: /dev/dri/renderD128
 ```
+
+`hwaccel` is `auto` (detect a GPU, the default) or `off` (force software). `device` is optional - when set,
+only that render node is used; otherwise the first working one is chosen.
 
 ## Status
 
@@ -126,11 +137,14 @@ FileFin is an early MVP. Working today:
 - direct-play streaming with byte-range support for browser-native containers
 - on-the-fly HLS transcoding (via `ffmpeg`) so non-native formats like `.avi`/`.mkv` play in the browser,
   with stream-copy remux when the source is already H.264 + AAC/MP3
+- fast seeking in transcoded streams: a far-forward seek repositions the encoder to the target rather
+  than waiting for a sequential encode to reach it
+- automatic GPU-accelerated encoding via VAAPI (AMD/Intel) when a compatible GPU is present, falling back
+  to software encoding otherwise
 
 Not yet implemented:
 
-- per-segment transcoding for instant far-forward seeking (a forward seek into a not-yet-transcoded
-  region currently waits for the encoder to reach it; backward/buffered seeking is fine)
+- hardware-accelerated decoding (decode stays in software; only encoding is offloaded to the GPU)
 - adaptive bitrate / multiple renditions, and subtitle delivery for transcoded streams
 - configurable naming scheme
 
