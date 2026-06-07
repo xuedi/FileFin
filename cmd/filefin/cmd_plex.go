@@ -14,6 +14,7 @@ import (
 	"filefin/internal/model"
 	"filefin/internal/omdb"
 	"filefin/internal/plex"
+	"filefin/internal/subtitle"
 )
 
 func cmdPlex(c *cli.Context) error {
@@ -126,7 +127,7 @@ func plexToMedia(it plex.Item, remaps []remap) importer.Media {
 			path := applyRemap(s.Path, remaps)
 			lang := s.Language
 			if lang == "" {
-				lang = importer.SubtitleLangFromName(path) // Plex rarely tags external subs
+				lang = subtitle.LangFromName(path) // Plex rarely tags external subs
 			}
 			sf.Subtitles = append(sf.Subtitles, importer.Subtitle{
 				Path:     path,

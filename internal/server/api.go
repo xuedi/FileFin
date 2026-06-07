@@ -11,6 +11,7 @@ import (
 	"filefin/internal/cache"
 	"filefin/internal/logging"
 	"filefin/internal/state"
+	"filefin/internal/subtitle"
 	"filefin/internal/transcode"
 )
 
@@ -306,6 +307,35 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
+}
+
+// handleSubtitle serves an external sidecar subtitle converted to WebVTT, so the
+// browser's native <track> renders it. The source stays SRT on disk; conversion is
+// streamed per request (cheap; no disk writes).
+func (s *Server) handleSubtitle(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		http.Error(w, "bad file index", http.StatusBadRequest)
+		return
+	}
+	k, err := strconv.Atoi(r.PathValue("k"))
+	if err != nil {
+		http.Error(w, "bad subtitle index", http.StatusBadRequest)
+		return
+	}
+	p, err := s.store.SubtitlePath(r.PathValue("id"), n, k)
+	if err != nil || p == "" {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	_ = subtitle.ToVTT(w, f) // best-effort: a mid-stream write error cannot be reported once headers are sent
 }
 
 // streamTarget resolves the media file for an HLS request and enforces the toggle and

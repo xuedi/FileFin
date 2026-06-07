@@ -78,6 +78,18 @@
       }
     }
 
+    // Subtitles are independent of the stream, so native <track>s work for both
+    // direct-play and HLS. Clear any from the previous file, then add this file's.
+    videoEl.querySelectorAll('track').forEach((t) => t.remove())
+    for (const sub of f?.subtitles ?? []) {
+      const track = document.createElement('track')
+      track.kind = 'subtitles'
+      track.srclang = sub.lang
+      track.label = sub.label || sub.lang
+      track.src = base + '/subtitle/' + sub.index
+      videoEl.appendChild(track)
+    }
+
     const onMeta = () => {
       if (seekTo > 0 && videoEl && videoEl.currentTime < seekTo) videoEl.currentTime = seekTo
     }
@@ -103,6 +115,7 @@
         videoEl.removeEventListener('timeupdate', onTime)
         videoEl.removeEventListener('pause', onPause)
         videoEl.removeEventListener('ended', onEnded)
+        videoEl.querySelectorAll('track').forEach((t) => t.remove())
       }
       if (hls) {
         hls.destroy()

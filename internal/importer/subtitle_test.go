@@ -8,40 +8,6 @@ import (
 	"testing"
 )
 
-func TestNormalizeLang(t *testing.T) {
-	cases := map[string]string{
-		"":        "en", // empty -> default
-		"EN":      "en",
-		" eng ":   "en",
-		"english": "en",
-		"zho":     "zh",
-		"ja":      "ja",
-		"klingon": "klingon", // unknown kept as-is, lowercased
-	}
-	for in, want := range cases {
-		if got := normalizeLang(in, "en"); got != want {
-			t.Errorf("normalizeLang(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestSubtitleLangFromName(t *testing.T) {
-	cases := map[string]string{
-		"Movie.srt":                  "",
-		"Movie.en.srt":               "en",
-		"Movie.eng.srt":              "eng",
-		"Movie.en.forced.srt":        "en",
-		"Movie.zh.ass":               "zh",
-		"Sparrow - 42.srt":           "", // a trailing number is not a language infix
-		"Some.Release.Name.x264.srt": "", // junk infix rejected
-	}
-	for in, want := range cases {
-		if got := SubtitleLangFromName(in); got != want {
-			t.Errorf("SubtitleLangFromName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestSubtitleTargetName(t *testing.T) {
 	cases := []struct {
 		video, lang, sext, want string

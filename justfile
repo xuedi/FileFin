@@ -16,6 +16,10 @@ build:
 run *args:
     go run ./cmd/{{app}} {{args}}
 
+# build the frontend + binary, then serve (uses the config at ~/.filefin.md)
+serve: web-build build
+    ./{{bindir}}/{{app}} serve
+
 # run the full test suite
 test:
     go test ./...

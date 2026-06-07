@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
 	mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
 	mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
+	mux.Handle("GET /api/media/{id}/file/{n}/subtitle/{k}", s.auth(s.handleSubtitle))
 	mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))
 	mux.Handle("GET /api/media/{id}/file/{n}/hls/{seg}", s.auth(s.handleHLSSegment))
 	mux.Handle("/", s.spa())

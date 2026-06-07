@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
+
+	"filefin/internal/subtitle"
 )
 
 // Subtitle is one external subtitle file to place beside its video. Ext is the
@@ -26,82 +27,12 @@ var subtitleExts = map[string]bool{
 	".idx": true, ".vtt": true, ".sup": true, ".smi": true,
 }
 
-// langAliases maps the common three-letter and full-name language tags onto the
-// two-letter form FileFin stores. Anything not listed is lowercased and kept.
-var langAliases = map[string]string{
-	"eng": "en", "english": "en",
-	"ger": "de", "deu": "de", "german": "de",
-	"fre": "fr", "fra": "fr", "french": "fr",
-	"spa": "es", "esp": "es", "spanish": "es",
-	"ita": "it", "italian": "it",
-	"jpn": "ja", "jap": "ja", "japanese": "ja",
-	"chi": "zh", "zho": "zh", "chinese": "zh",
-	"kor": "ko", "korean": "ko",
-	"rus": "ru", "russian": "ru",
-	"por": "pt", "portuguese": "pt",
-	"dut": "nl", "nld": "nl", "dutch": "nl",
-}
-
-// subQualifiers are trailing infix segments that follow the language tag rather
-// than being one ("Movie.en.forced.srt" -> language "en").
-var subQualifiers = map[string]bool{
-	"forced": true, "sdh": true, "cc": true, "hi": true, "default": true,
-}
-
-// normalizeLang lowercases and trims raw, maps a known alias to its two-letter
-// form, and falls back to def when raw is empty.
-func normalizeLang(raw, def string) string {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	if s == "" {
-		return def
-	}
-	if m, ok := langAliases[s]; ok {
-		return m
-	}
-	return s
-}
-
 // SubtitleTargetName derives a subtitle's canonical name from its video's target
 // name: the video base (with its own extension dropped) plus ".<lang><sext>", so
 // the subtitle inherits any " - SxE" / " - partN" suffix. sext includes the dot.
 func SubtitleTargetName(videoTargetName, lang, sext string) string {
 	base := strings.TrimSuffix(videoTargetName, filepath.Ext(videoTargetName))
 	return base + "." + lang + sext
-}
-
-// SubtitleLangFromName extracts a language tag from a subtitle file name of the
-// form "<base>.<lang>[.<qualifier>...].<ext>" (e.g. "Movie.en.forced.srt" -> "en").
-// It returns "" when there is no infix or the infix is not a plausible tag.
-func SubtitleLangFromName(name string) string {
-	name = filepath.Base(name)
-	name = strings.TrimSuffix(name, filepath.Ext(name)) // drop the subtitle extension
-	parts := strings.Split(name, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	for i := len(parts) - 1; i >= 1; i-- {
-		tok := strings.ToLower(parts[i])
-		if subQualifiers[tok] {
-			continue
-		}
-		if isLangToken(tok) {
-			return parts[i]
-		}
-		return ""
-	}
-	return ""
-}
-
-func isLangToken(s string) bool {
-	if l := len(s); l < 2 || l > 3 {
-		return false
-	}
-	for _, r := range s {
-		if !unicode.IsLetter(r) {
-			return false
-		}
-	}
-	return true
 }
 
 // FindSidecarSubtitles returns the external subtitle files sitting next to a video
@@ -131,7 +62,7 @@ func FindSidecarSubtitles(videoPath string) []Subtitle {
 		case stem == videoBase:
 			// no language infix
 		case strings.HasPrefix(stem, videoBase+"."):
-			if lang = SubtitleLangFromName(name); lang == "" {
+			if lang = subtitle.LangFromName(name); lang == "" {
 				continue // a non-language infix means this is not our sidecar
 			}
 		default:
@@ -165,7 +96,7 @@ func placeSubtitles(videoTarget, defaultLang, ffmpegPath string, subs []Subtitle
 		return SubtitleTargetName(videoTarget, lang, ext)
 	}
 	for _, s := range subs {
-		lang := normalizeLang(s.Language, defaultLang)
+		lang := subtitle.NormalizeLang(s.Language, defaultLang)
 		ext := strings.ToLower(s.Ext)
 		if ext == "" {
 			ext = strings.ToLower(filepath.Ext(s.Path))

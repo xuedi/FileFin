@@ -138,6 +138,10 @@ cannot be determined, it falls back to a configurable default:
 
 `import` also accepts `--sub-lang <tag>` to set the fallback for a single run.
 
+External `.srt` subtitles are shown in the player: the server converts them to WebVTT on the fly (the files
+stay `.srt` on disk) and offers each as a selectable track in the video controls, for both direct-play and
+transcoded titles. Tracks are off until you pick a language from the player's subtitle menu.
+
 ### Optional: transcoding
 
 Browser-native containers (`.mp4`, `.webm`, `.m4v`) are streamed directly. Everything else (`.avi`, `.mkv`,
@@ -194,11 +198,14 @@ FileFin is an early MVP. Working today:
   than waiting for a sequential encode to reach it
 - automatic GPU-accelerated encoding via VAAPI (AMD/Intel) when a compatible GPU is present, falling back
   to software encoding otherwise
+- external `.srt` subtitles displayed in the player (converted to WebVTT on the fly), for both direct-play
+  and transcoded titles
 
 Not yet implemented:
 
 - hardware-accelerated decoding (decode stays in software; only encoding is offloaded to the GPU)
-- adaptive bitrate / multiple renditions, and subtitle delivery for transcoded streams
+- adaptive bitrate / multiple renditions
+- subtitles beyond external `.srt` sidecars (embedded/muxed tracks, and `.ass`/`.vtt`/VobSub display)
 - configurable naming scheme
 
 ## License

@@ -3,6 +3,7 @@ package cache
 import (
 	"path/filepath"
 
+	"filefin/internal/subtitle"
 	"filefin/internal/transcode"
 )
 
@@ -25,14 +26,23 @@ type MediaSummary struct {
 	FolderPath string `json:"-"`
 }
 
+// SubtitleInfo describes one external subtitle track of a media file. The on-disk
+// path is never exposed; the client fetches the track by its Index.
+type SubtitleInfo struct {
+	Index int    `json:"index"`
+	Lang  string `json:"lang"`
+	Label string `json:"label"`
+}
+
 // FileInfo describes one playable file of a media item.
 type FileInfo struct {
-	Index     int    `json:"index"`
-	Name      string `json:"name"`
-	Season    int    `json:"season"`
-	Episode   int    `json:"episode"`
-	Transcode bool   `json:"transcode"` // true if the browser cannot direct-play it
-	Watched   bool   `json:"watched"`   // per-user, filled live from state.md by the server
+	Index     int            `json:"index"`
+	Name      string         `json:"name"`
+	Season    int            `json:"season"`
+	Episode   int            `json:"episode"`
+	Transcode bool           `json:"transcode"` // true if the browser cannot direct-play it
+	Watched   bool           `json:"watched"`   // per-user, filled live from state.md by the server
+	Subtitles []SubtitleInfo `json:"subtitles"`
 }
 
 // Pair is an ordered metadata key/value.
@@ -179,9 +189,32 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 				f.Transcode = false
 			}
 		}
+		f.Subtitles = []SubtitleInfo{}
 		d.Files = append(d.Files, f)
 	}
 	if err := files.Err(); err != nil {
+		return nil, err
+	}
+
+	srows, err := s.db.Query(`SELECT file_idx, idx, lang FROM subtitles WHERE media_id = ? ORDER BY file_idx, idx`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer srows.Close()
+	for srows.Next() {
+		var fileIdx, subIdx int
+		var lang string
+		if err := srows.Scan(&fileIdx, &subIdx, &lang); err != nil {
+			return nil, err
+		}
+		for i := range d.Files {
+			if d.Files[i].Index == fileIdx {
+				d.Files[i].Subtitles = append(d.Files[i].Subtitles, SubtitleInfo{Index: subIdx, Lang: lang, Label: subtitle.Label(lang)})
+				break
+			}
+		}
+	}
+	if err := srows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -230,6 +263,14 @@ func (s *Store) MediaDetail(id string) (*MediaDetail, error) {
 func (s *Store) FilePath(id string, idx int) (string, error) {
 	var p string
 	err := s.db.QueryRow(`SELECT path FROM media_files WHERE media_id = ? AND idx = ?`, id, idx).Scan(&p)
+	return p, err
+}
+
+// SubtitlePath returns the on-disk path of subtitle subIdx of media file fileIdx.
+func (s *Store) SubtitlePath(id string, fileIdx, subIdx int) (string, error) {
+	var p string
+	err := s.db.QueryRow(
+		`SELECT path FROM subtitles WHERE media_id = ? AND file_idx = ? AND idx = ?`, id, fileIdx, subIdx).Scan(&p)
 	return p, err
 }
 

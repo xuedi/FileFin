@@ -16,6 +16,7 @@ import (
 	"filefin/internal/meta"
 	"filefin/internal/model"
 	"filefin/internal/state"
+	"filefin/internal/subtitle"
 	"filefin/internal/transcode"
 )
 
@@ -105,6 +106,7 @@ func scanMediaFolder(m *model.Media) []string {
 		return []string{fmt.Sprintf("%s/%s: cannot read: %v", m.Category, m.Folder, err)}
 	}
 	var issues []string
+	var subNames []string // .srt sidecars, attached to their files once all are known
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -131,6 +133,8 @@ func scanMediaFolder(m *model.Media) []string {
 			}
 		case videoExts[ext]:
 			m.Files = append(m.Files, parseMediaFile(filepath.Join(m.Path, name), name, ext))
+		case ext == ".srt":
+			subNames = append(subNames, name)
 		}
 	}
 	if len(m.Files) == 0 {
@@ -146,7 +150,40 @@ func scanMediaFolder(m *model.Media) []string {
 		}
 		return a.Name < b.Name
 	})
+	attachSubtitles(m, subNames)
 	return issues
+}
+
+// defaultSubtitleLang is the language assigned to a sidecar with no language infix.
+// The importers already encode the configured default into the on-disk name, so this
+// only covers genuinely untagged files; "en" matches the config default.
+const defaultSubtitleLang = "en"
+
+// attachSubtitles matches each ".srt" sidecar to the media file whose base name it
+// shares and records it under that file, sorted for a deterministic rebuild.
+func attachSubtitles(m *model.Media, subNames []string) {
+	if len(subNames) == 0 {
+		return
+	}
+	for i := range m.Files {
+		fileBase := strings.TrimSuffix(m.Files[i].Name, filepath.Ext(m.Files[i].Name))
+		var found []model.Subtitle
+		for _, sn := range subNames {
+			if lang, ok := subtitle.Match(fileBase, sn); ok {
+				found = append(found, model.Subtitle{
+					Lang: subtitle.NormalizeLang(lang, defaultSubtitleLang),
+					Path: filepath.Join(m.Path, sn),
+				})
+			}
+		}
+		sort.Slice(found, func(a, b int) bool {
+			if found[a].Lang != found[b].Lang {
+				return found[a].Lang < found[b].Lang
+			}
+			return found[a].Path < found[b].Path
+		})
+		m.Files[i].Subtitles = found
+	}
 }
 
 func parseMediaFile(path, name, ext string) model.MediaFile {

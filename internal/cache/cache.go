@@ -40,6 +40,7 @@ DROP TABLE IF EXISTS media;
 DROP TABLE IF EXISTS media_files;
 DROP TABLE IF EXISTS media_meta;
 DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS subtitles;
 CREATE TABLE categories (name TEXT PRIMARY KEY, path TEXT);
 CREATE TABLE media (
   id TEXT PRIMARY KEY, category TEXT, folder TEXT, path TEXT,
@@ -49,10 +50,12 @@ CREATE TABLE media (
 CREATE TABLE media_files (media_id TEXT, idx INTEGER, path TEXT, name TEXT, season INTEGER, episode INTEGER, ext TEXT);
 CREATE TABLE media_meta (media_id TEXT, section TEXT, ord INTEGER, k TEXT, v TEXT);
 CREATE TABLE tags (media_id TEXT, tag TEXT);
+CREATE TABLE subtitles (media_id TEXT, file_idx INTEGER, idx INTEGER, lang TEXT, path TEXT);
 CREATE INDEX idx_media_category ON media(category);
 CREATE INDEX idx_files_media ON media_files(media_id);
 CREATE INDEX idx_meta_media ON media_meta(media_id);
 CREATE INDEX idx_tags_media ON tags(media_id);
+CREATE INDEX idx_subs_media ON subtitles(media_id);
 `
 
 // Rebuild wipes and repopulates the cache from a scan, in a single transaction.
@@ -89,6 +92,14 @@ func (s *Store) Rebuild(scan *model.Scan) error {
 					m.ID, i, f.Path, f.Name, f.Season, f.Episode, f.Ext,
 				); err != nil {
 					return err
+				}
+				for j, sub := range f.Subtitles {
+					if _, err := tx.Exec(
+						`INSERT INTO subtitles(media_id,file_idx,idx,lang,path) VALUES(?,?,?,?,?)`,
+						m.ID, i, j, sub.Lang, sub.Path,
+					); err != nil {
+						return err
+					}
 				}
 			}
 			if m.Meta != nil {

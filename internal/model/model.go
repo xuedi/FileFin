@@ -19,14 +19,22 @@ type Meta struct {
 	Tags        []string
 }
 
+// Subtitle is one external sidecar subtitle attached to a media file. Lang is the
+// normalised language tag; Path is the on-disk file.
+type Subtitle struct {
+	Lang string
+	Path string
+}
+
 // MediaFile is a single playable file inside a media folder. Season/Episode are
 // zero when the file is not part of a numbered series.
 type MediaFile struct {
-	Path    string
-	Name    string
-	Season  int
-	Episode int
-	Ext     string
+	Path      string
+	Name      string
+	Season    int
+	Episode   int
+	Ext       string
+	Subtitles []Subtitle
 }
 
 // Media is one media folder: a single film, a film series, or a multi-episode
