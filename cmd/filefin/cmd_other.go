@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -70,16 +73,13 @@ func cmdServe(c *cli.Context) error {
 	defer closeLog()
 	blog := lg.For(logging.Backend)
 
-	scan, err := scanner.Scan(cfg.DataDir)
-	if err != nil {
-		return err
-	}
 	store, err := cache.Open(cfg.CachePath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	if err := store.Rebuild(scan); err != nil {
+	media, err := reloadLibrary(cfg, store)
+	if err != nil {
 		return err
 	}
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -87,11 +87,16 @@ func cmdServe(c *cli.Context) error {
 	srv := server.New(cfg, store, enc, lg)
 	defer srv.Close()
 	blog.Info(fmt.Sprintf("serving on http://localhost%s", addr), logging.Fields{
-		"port": cfg.Port, "media": countMedia(scan), "data_dir": cfg.DataDir,
+		"port": cfg.Port, "media": media, "data_dir": cfg.DataDir,
 		"gpu": enc.Kind == "vaapi", "encoder": enc.Kind, "device": enc.Device,
 	})
 	blog.Info(gpuStatusLine(cfg, enc))
+
+	// reloadOptimizer nudges the optimizer to rescan immediately on reload, instead of
+	// waiting out its idle interval; buffered+non-blocking so a reload never blocks here.
+	var reloadOptimizer chan struct{}
 	if cfg.OptimizeEnabled {
+		reloadOptimizer = make(chan struct{}, 1)
 		// Clear locks left by a crashed run before any worker starts (serve owns the
 		// data dir at this point, so no live lock is removed).
 		if n, err := optimize.SweepStaleLocks(cfg.DataDir); err == nil && n > 0 {
@@ -109,12 +114,53 @@ func cmdServe(c *cli.Context) error {
 			MaxWorkers: workers,
 			TargetLoad: cfg.OptimizeTargetLoad,
 			Busy:       srv.TranscodeActive,
+			Trigger:    reloadOptimizer,
 			Logger:     lg,
 		}).Run(ctx)
 		blog.Info("optimize worker enabled (pre-transcoding to direct-play copies)",
 			logging.Fields{"max_workers": workers, "target_load": optimizeTargetLoad(cfg)})
 	}
-	return http.ListenAndServe(addr, srv.Handler())
+
+	// Serve in the background so the main goroutine can handle SIGHUP reloads. SIGINT/SIGTERM
+	// keep their default disposition (terminate), so systemd stop/restart is unchanged.
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- http.ListenAndServe(addr, srv.Handler()) }()
+
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	for {
+		select {
+		case err := <-serveErr:
+			return err
+		case <-hup:
+			media, err := reloadLibrary(cfg, store)
+			if err != nil {
+				blog.Error("library reload failed", logging.Fields{"error": err.Error()})
+				continue
+			}
+			blog.Info("library reloaded", logging.Fields{"media": media})
+			if reloadOptimizer != nil {
+				select {
+				case reloadOptimizer <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
+}
+
+// reloadLibrary re-parses the data directory and atomically rebuilds the cache from it,
+// returning the media count. It is called once at serve startup and again on every SIGHUP;
+// a failed rebuild rolls back, leaving the previous cache intact.
+func reloadLibrary(cfg *config.Config, store *cache.Store) (int, error) {
+	scan, err := scanner.Scan(cfg.DataDir)
+	if err != nil {
+		return 0, err
+	}
+	if err := store.Rebuild(scan); err != nil {
+		return 0, err
+	}
+	return countMedia(scan), nil
 }
 
 // cmdOptimize runs the optimize backlog once and exits - an explicit-writer entry point

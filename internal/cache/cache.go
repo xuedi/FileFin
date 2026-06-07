@@ -22,7 +22,9 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout lets a reader wait out the brief write lock a live Rebuild (reload) holds,
+	// instead of failing with SQLITE_BUSY.
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}

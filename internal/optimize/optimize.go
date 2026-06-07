@@ -99,6 +99,9 @@ type Options struct {
 	// Busy reports whether a live transcode is in progress; the worker yields while true
 	// so a viewer always gets priority. Nil means never busy.
 	Busy func() bool
+	// Trigger, when non-nil, breaks the idle wait between passes: a send makes Run rescan
+	// for new work immediately instead of waiting out idleRescan. Used by serve's reload.
+	Trigger <-chan struct{}
 	// Logger receives optimizer events; may be nil.
 	Logger *logging.Logger
 }
@@ -130,6 +133,7 @@ func (w *Worker) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-w.opts.Trigger:
 		case <-time.After(idleRescan):
 		}
 	}

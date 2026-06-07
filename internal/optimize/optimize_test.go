@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,24 @@ import (
 	"filefin/internal/model"
 	"filefin/internal/transcode"
 )
+
+// syncBuffer is a concurrency-safe io.Writer for capturing logs from a worker goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 // scanOf builds a one-category, one-media Scan over the given file paths.
 func scanOf(paths ...string) *model.Scan {
@@ -120,6 +139,47 @@ func TestProcessOneSkipsClaimed(t *testing.T) {
 	if _, err := os.Stat(opt); err == nil {
 		t.Error("optimized copy should not be produced for a claimed item")
 	}
+}
+
+// TestRunTriggerRescans verifies a send on Options.Trigger makes Run rescan immediately
+// instead of waiting out idleRescan (5 min): work added after startup is picked up at once.
+// The probe is wired to `false` so processing fails fast and logs a deterministic marker -
+// no ffmpeg needed; the test would time out (not pass) if the trigger were ignored.
+func TestRunTriggerRescans(t *testing.T) {
+	dir := t.TempDir()
+	trigger := make(chan struct{}, 1)
+	var logbuf syncBuffer
+	w := NewWorker(Options{
+		DataDir: dir, FFmpeg: "false", FFprobe: "false",
+		Trigger: trigger, Logger: logging.New(logging.Info, &logbuf),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { w.Run(ctx); close(done) }()
+
+	// Add work after the worker is running, then nudge it; without the trigger this file
+	// would not be looked at until idleRescan elapses.
+	folder := filepath.Join(dir, "cat", "(1966) Django")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(folder, "(1966) Django.avi")
+	if err := os.WriteFile(src, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trigger <- struct{}{}
+
+	deadline := time.After(3 * time.Second)
+	for !strings.Contains(logbuf.String(), "probe failed") {
+		select {
+		case <-deadline:
+			t.Fatalf("trigger did not cause a rescan within 3s; log=%q", logbuf.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
 }
 
 // TestWorkerEndToEnd is gated on ffmpeg: it optimizes a generated non-native clip and
