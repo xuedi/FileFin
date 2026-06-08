@@ -14,11 +14,6 @@ go.work.sum
 /web/dist/*
 !/web/dist/.gitkeep
 
-# Local runtime media (the filesystem is the source of truth). Keep the empty
-# directory tracked so it exists on a fresh clone.
-/data/*
-!/data/.gitkeep
-
 # Disposable cache index
 *.sqlite
 *.sqlite-*

@@ -57,9 +57,6 @@ func Apply(s UserState, refs []string, fileIndex int, position, duration float64
 	if fileIndex < 0 || fileIndex >= len(refs) {
 		return s
 	}
-	if s.Extra == nil {
-		s.Extra = map[string]string{}
-	}
 	last := len(refs) - 1
 	crossed := duration > 0 && position/duration >= WatchedThreshold
 

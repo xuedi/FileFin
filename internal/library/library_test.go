@@ -1,0 +1,161 @@
+package library
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestValidName(t *testing.T) {
+	good := []string{"Movies", "TV Shows", "kids-stuff", "a.b"}
+	for _, n := range good {
+		if err := ValidName(n); err != nil {
+			t.Errorf("ValidName(%q) = %v, want nil", n, err)
+		}
+	}
+	bad := []string{"", ".", "..", "a/b", "with\x00nul", "ctrl\tchar"}
+	for _, n := range bad {
+		if err := ValidName(n); err == nil {
+			t.Errorf("ValidName(%q) = nil, want error", n)
+		}
+	}
+}
+
+func TestCreateListRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	cat, err := Create(dir, "", "Movies", "Films", 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if cat.Alias != "Films" || cat.ID != 1 || !cat.Empty {
+		t.Fatalf("unexpected category: %+v", cat)
+	}
+
+	// Blank alias defaults to the folder name.
+	if _, err := Create(dir, "", "Shows", "  ", 2); err != nil {
+		t.Fatalf("create shows: %v", err)
+	}
+
+	cats, err := List(dir)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(cats) != 2 {
+		t.Fatalf("got %d categories, want 2: %+v", len(cats), cats)
+	}
+	// Sorted by name: Movies, Shows. Ids are read back from config.json.
+	if cats[0].Name != "Movies" || cats[0].Alias != "Films" || cats[0].ID != 1 {
+		t.Errorf("cats[0] = %+v", cats[0])
+	}
+	if cats[1].Name != "Shows" || cats[1].Alias != "Shows" || cats[1].ID != 2 {
+		t.Errorf("cats[1] = %+v, want alias defaulting to folder name", cats[1])
+	}
+
+	// SetAlias updates the alias and other-media flag but keeps the id.
+	if err := SetAlias(dir, "Movies", "Cinema", true); err != nil {
+		t.Fatalf("set alias: %v", err)
+	}
+	cats, _ = List(dir)
+	if cats[0].Alias != "Cinema" || cats[0].ID != 1 || !cats[0].OtherMedia {
+		t.Errorf("after SetAlias cats[0] = %+v", cats[0])
+	}
+}
+
+func TestSubCategoryNesting(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "Films", 1); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := Create(dir, "Movies", "Action", "Action films", 2)
+	if err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+	if sub.Name != "Movies/Action" || sub.Parent != "Movies" || sub.Leaf != "Action" {
+		t.Fatalf("unexpected sub category: %+v", sub)
+	}
+	cats, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cats) != 2 {
+		t.Fatalf("got %d categories, want 2: %+v", len(cats), cats)
+	}
+	// A parent with a sub-category is not empty (cannot be deleted before its children).
+	if cats[0].Name != "Movies" || cats[0].Empty {
+		t.Errorf("parent should be non-empty: %+v", cats[0])
+	}
+	if cats[1].Name != "Movies/Action" || cats[1].Parent != "Movies" {
+		t.Errorf("sub category = %+v", cats[1])
+	}
+	if err := Delete(dir, "Movies"); err == nil {
+		t.Fatal("expected error deleting a parent with a sub-category")
+	}
+	if err := Delete(dir, "Movies/Action"); err != nil {
+		t.Fatalf("delete leaf sub-category: %v", err)
+	}
+}
+
+func TestCreateRejectsDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(dir, "", "Movies", "", 1); err == nil {
+		t.Fatal("expected error creating duplicate category")
+	}
+}
+
+func TestEmptyDetectionIgnoresConfig(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	cats, _ := List(dir)
+	if !cats[0].Empty {
+		t.Fatal("category with only config.json should be empty")
+	}
+
+	// Add real content -> no longer empty.
+	if err := os.WriteFile(filepath.Join(dir, "Movies", "film.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cats, _ = List(dir)
+	if cats[0].Empty {
+		t.Fatal("category with content should not be empty")
+	}
+}
+
+func TestDelete(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := Delete(dir, "Movies"); err != nil {
+		t.Fatalf("delete empty: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Movies")); !os.IsNotExist(err) {
+		t.Fatal("folder should be gone after delete")
+	}
+
+	// Non-empty folder must not be deletable.
+	if _, err := Create(dir, "", "Shows", "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Shows", "ep.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Delete(dir, "Shows"); err == nil {
+		t.Fatal("expected error deleting non-empty category")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Shows")); err != nil {
+		t.Fatal("non-empty folder should still exist after refused delete")
+	}
+}
+
+func TestDeleteMissing(t *testing.T) {
+	dir := t.TempDir()
+	if err := Delete(dir, "Nope"); err == nil {
+		t.Fatal("expected error deleting missing category")
+	}
+}

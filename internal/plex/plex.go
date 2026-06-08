@@ -1,5 +1,5 @@
 // Package plex reads a Plex library database (read-only) and turns it into a
-// catalog of items that map onto FileFin's "(YYYY) Title/" layout. It opens the
+// catalog of items that map onto FileFin's media-folder layout. It opens the
 // database read-only and never writes to it or to the Plex media/metadata.
 package plex
 
@@ -13,6 +13,13 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+)
+
+// metadata_type values used by Plex: 1 movie, 2 show, 4 episode.
+const (
+	typeMovie   = 1
+	typeShow    = 2
+	typeEpisode = 4
 )
 
 // SourceFile is one media file to copy, with its season/episode (0 for movies)
@@ -50,6 +57,13 @@ type Item struct {
 	Actors        []string
 	PosterPath    string // resolved absolute path in the Plex metadata bundle, or ""
 	Files         []SourceFile
+}
+
+// Section is one Plex library, used by the check step before any staging.
+type Section struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind"` // "movie" | "show"
+	Count int    `json:"count"`
 }
 
 // DB is an open read-only handle to a Plex library database.
@@ -92,6 +106,127 @@ func Open(dbPath, metadataDir string) (*DB, error) {
 // Close closes the database.
 func (d *DB) Close() error { return d.db.Close() }
 
+// Sections returns the movie and show libraries with a cheap item count each, for
+// the check step. The count is the number of top-level items (movies, or shows)
+// the section holds.
+func (d *DB) Sections() ([]Section, error) {
+	rows, err := d.db.Query(`SELECT ls.name, ls.section_type,
+		(SELECT COUNT(*) FROM metadata_items mi
+		   WHERE mi.library_section_id = ls.id
+		     AND mi.metadata_type IN (?, ?) AND mi.deleted_at IS NULL)
+		FROM library_sections ls
+		WHERE ls.section_type IN (?, ?)
+		ORDER BY ls.name`, typeMovie, typeShow, typeMovie, typeShow)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Section
+	for rows.Next() {
+		var name string
+		var stype, count int
+		if err := rows.Scan(&name, &stype, &count); err != nil {
+			return nil, err
+		}
+		kind := "movie"
+		if stype == typeShow {
+			kind = "show"
+		}
+		out = append(out, Section{Name: name, Kind: kind, Count: count})
+	}
+	return out, rows.Err()
+}
+
+// SampleFiles returns up to n media-file paths spread across the given sections
+// (and, for shows, across different show folders), so the path resolver stats a
+// representative set rather than many files from one directory. The spread is
+// achieved by taking one file per top-level item and round-robining across
+// sections.
+func (d *DB) SampleFiles(sections []string, n int) ([]string, error) {
+	if n <= 0 || len(sections) == 0 {
+		return nil, nil
+	}
+	perSection := make(map[string][]string, len(sections))
+	for _, sec := range sections {
+		files, err := d.sectionSampleFiles(sec, n)
+		if err != nil {
+			return nil, err
+		}
+		perSection[sec] = files
+	}
+	// Round-robin across sections so the sample is spread, not drawn from one library.
+	var out []string
+	for i := 0; len(out) < n; i++ {
+		progressed := false
+		for _, sec := range sections {
+			files := perSection[sec]
+			if i < len(files) {
+				out = append(out, files[i])
+				progressed = true
+				if len(out) >= n {
+					return out, nil
+				}
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out, nil
+}
+
+// sectionSampleFiles returns one representative file per top-level item in a
+// section (one per movie, one per show), deduplicated by parent directory so the
+// sample spreads across folders. It caps work with a generous LIMIT.
+func (d *DB) sectionSampleFiles(section string, want int) ([]string, error) {
+	const cap = 500
+	// One file per movie, and one file per show (the first episode found), so a
+	// show contributes a single folder probe rather than many sibling episodes.
+	q := `SELECT mp.file FROM metadata_items mi
+		JOIN library_sections ls ON ls.id = mi.library_section_id
+		JOIN media_items m ON m.metadata_item_id = mi.id
+		JOIN media_parts mp ON mp.media_item_id = m.id
+		WHERE ls.name = ? AND mi.metadata_type = ? AND mi.deleted_at IS NULL AND mp.deleted_at IS NULL
+		GROUP BY mi.id
+		UNION
+		SELECT mp.file FROM metadata_items show
+		JOIN library_sections ls ON ls.id = show.library_section_id
+		JOIN metadata_items season ON season.parent_id = show.id
+		JOIN metadata_items ep ON ep.parent_id = season.id
+		JOIN media_items m ON m.metadata_item_id = ep.id
+		JOIN media_parts mp ON mp.media_item_id = m.id
+		WHERE ls.name = ? AND show.metadata_type = ? AND ep.metadata_type = ?
+		  AND show.deleted_at IS NULL AND ep.deleted_at IS NULL AND mp.deleted_at IS NULL
+		GROUP BY show.id
+		LIMIT ?`
+	rows, err := d.db.Query(q, section, typeMovie, section, typeShow, typeEpisode, cap)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seenDir := map[string]bool{}
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		dir := filepath.Dir(f)
+		if seenDir[dir] {
+			continue
+		}
+		seenDir[dir] = true
+		out = append(out, f)
+		if len(out) >= want {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
 // Items returns all movies and shows, optionally limited to one section by name.
 func (d *DB) Items(section string) ([]Item, error) {
 	movies, err := d.query(false, section)
@@ -113,9 +248,9 @@ const itemCols = `mi.id, ls.name, COALESCE(mi.title,''), mi.year,
 	COALESCE(mi.hash,''), COALESCE(mi.user_thumb_url,'')`
 
 func (d *DB) query(shows bool, section string) ([]Item, error) {
-	mtype, typeDir := 1, "Movies"
+	mtype, typeDir := typeMovie, "Movies"
 	if shows {
-		mtype, typeDir = 2, "TV Shows"
+		mtype, typeDir = typeShow, "TV Shows"
 	}
 	q := `SELECT ` + itemCols + `
 		FROM metadata_items mi JOIN library_sections ls ON ls.id = mi.library_section_id

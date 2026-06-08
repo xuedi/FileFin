@@ -1,253 +1,277 @@
-// Package importer copies an external media file into the data directory in the
-// canonical "(YYYY) Title/" layout. It writes only inside the data directory;
-// the source is read-only.
+// Package importer turns a staged import row into media on disk: it copies the
+// source file into the canonical layout and writes the folder's meta.json. It writes
+// only inside the data directory; the source is read-only. The package depends only
+// on the data it is handed, never on how a row was produced.
 package importer
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
-	"filefin/internal/meta"
-	"filefin/internal/model"
+	"filefin/internal/ffprobe"
+	"filefin/internal/omdb"
+	"filefin/internal/plex"
+	"filefin/internal/state"
 )
 
-// Parsed is the best-effort identification of a media file from its name.
-type Parsed struct {
-	Title   string
-	Year    int
-	Season  int
-	Episode int
-	Ext     string
+// Meta is a media folder's metadata, serialized to meta.json. The app edits it
+// through the GUI, so structured JSON is cleaner than markdown. It carries the OMDb
+// field set plus a ffprobe-derived technical block.
+type Meta struct {
+	Title       string             `json:"title"`
+	Year        int                `json:"year"`
+	Description string             `json:"description,omitempty"`
+	Plot        string             `json:"plot,omitempty"`
+	Metadata    map[string]string  `json:"metadata,omitempty"`
+	Ratings     map[string]string  `json:"ratings,omitempty"`
+	Actors      []string           `json:"actors,omitempty"`
+	Tags        []string           `json:"tags,omitempty"`
+	Technical   *ffprobe.Technical `json:"technical,omitempty"`
+	// Enriched is true once the enrichment agent has filled this folder from OMDb. A
+	// freshly imported folder carries stub metadata with Enriched false; the scan
+	// queues those, and the agent flips it true after a successful lookup.
+	Enriched bool `json:"enriched,omitempty"`
+	// State is the per-user playback state, keyed by username. It is written by the
+	// playback-state handlers through the same per-folder lock as the rest of Meta;
+	// a folder nobody has touched carries no state key (omitempty).
+	State map[string]state.UserState `json:"state,omitempty"`
 }
 
-var (
-	reYearParen = regexp.MustCompile(`\((19\d{2}|20\d{2})\)`)
-	reYearBare  = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	reEpX       = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{1,2})\b`)
-	reEpSE      = regexp.MustCompile(`(?i)\bS(\d{1,2})E(\d{1,2})\b`)
-	reJunk      = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k|x264|x265|h\.?264|h\.?265|hevc|bluray|blu-ray|brrip|bdrip|web-?dl|webrip|hdtv|dvdrip|aac|ac3|dts|hdr|remux|proper|repack|extended|unrated|imax)\b`)
-	reSpaces    = regexp.MustCompile(`\s+`)
-)
-
-// ParseName extracts title, year, and (if present) season/episode from a file
-// name. It handles both prefix-year names ("(1962) Lawrence of Arabia.avi") and
-// suffix-year release names ("The.Matrix.1999.1080p.mkv"). isShow enables the
-// looser, ambiguous episode schemes (bare trailing numbers like "Beck 04") that
-// would otherwise be mistaken for part of a movie title; explicit markers
-// (SxE, NxNN, "Season N Episode M", E-markers) are always recognised.
-func ParseName(name string, isShow bool) Parsed {
-	base := name[:len(name)-len(filepath.Ext(name))]
-	p := Parsed{Ext: strings.ToLower(filepath.Ext(name))}
-	p.Season, p.Episode = parseSeasonEpisode(base, isShow)
-
-	var titlePart string
-	switch {
-	case reYearParen.FindStringSubmatchIndex(base) != nil:
-		loc := reYearParen.FindStringSubmatchIndex(base)
-		p.Year, _ = strconv.Atoi(base[loc[2]:loc[3]])
-		if loc[0] <= 2 { // year at the front: prefix style, title follows
-			titlePart = base[loc[1]:]
-		} else {
-			titlePart = base[:loc[0]]
-		}
-	case reYearBare.FindStringIndex(base) != nil:
-		loc := reYearBare.FindStringIndex(base)
-		p.Year, _ = strconv.Atoi(base[loc[0]:loc[1]])
-		if loc[0] == 0 {
-			titlePart = base[loc[1]:]
-		} else {
-			titlePart = base[:loc[0]]
-		}
-	default:
-		titlePart = base
-	}
-
-	p.Title = cleanTitle(titlePart)
-	if isShow {
-		// Drop a trailing bare episode number ("Reply 1988 - 17" -> "Reply 1988")
-		// only for shows, where it was just parsed as the episode. Years and part
-		// markers are left intact (reBareEp caps at three digits; detectPart wins).
-		if _, _, isPart := detectPart(p.Title); !isPart {
-			p.Title = strings.Trim(reBareEp.ReplaceAllString(p.Title, ""), " -")
-		}
-	}
-	return p
-}
-
-func cleanTitle(s string) string {
-	s = strings.NewReplacer(".", " ", "_", " ").Replace(s)
-	s = reEpX.ReplaceAllString(s, " ")
-	s = reEpSE.ReplaceAllString(s, " ")
-	s = reSeasonEp.ReplaceAllString(s, " ")
-	s = reEpWord.ReplaceAllString(s, " ")
-	s = reEpE.ReplaceAllString(s, " ")
-	s = reJunk.ReplaceAllString(s, " ")
-	s = reSpaces.ReplaceAllString(s, " ")
-	return strings.Trim(s, " -")
-}
-
-// ProgressFunc is called during a file copy with the bytes copied so far and the
-// total size (0 if unknown). It may be nil. Implementations must be cheap: it is
-// invoked on every write.
-type ProgressFunc func(name string, copied, total int64)
-
-// Request describes one import.
-type Request struct {
-	SourcePath string
-	DataDir    string
-	Category   string
-	Title      string
-	Year       int
-	Season     int
-	Episode    int
-	// Part numbers one file of a multi-file item (a multi-disc movie, or an
-	// episode split across files) so the parts do not collide on one target
-	// name. 0 means the item is a single file. A part is not a TV episode: it
-	// is appended as " - partN", distinct from the " - SxE" episode marker.
-	Part     int
-	Move     bool
-	Force    bool
-	Progress ProgressFunc
-	// Label is what the progress bar shows for this copy. Empty falls back to the
-	// target file name; the batch importers set it to the "[i/N] category / title"
-	// line so each copy renders on a single, self-describing line.
-	Label string
-	// Subtitles are external subtitle files placed beside the video under the same
-	// base name (see SubtitleTargetName). Carrying them costs nothing when empty.
-	Subtitles []Subtitle
-	// SubtitleLanguage is the fallback language tag for a subtitle whose own
-	// language is unknown. FFmpegPath, when set, enables ASS/SSA -> SRT conversion.
-	SubtitleLanguage string
-	FFmpegPath       string
-}
-
-// Result reports what an import produced.
-type Result struct {
-	Folder      string
-	TargetPath  string
-	MetaExisted bool
-	Skipped     bool // target already existed with the same size; the copy was skipped
-}
-
-// sanitizeComponent makes a title safe to use as a single path component:
-// path separators in the title (e.g. "Little Forest: Summer/Autumn") would
-// otherwise be read as directory boundaries and break the copy. Replace them
-// with a hyphen so the name stays one human-readable folder/file.
-func sanitizeComponent(s string) string {
-	return strings.NewReplacer("/", "-", "\\", "-").Replace(s)
-}
-
-// FolderName is the canonical media folder name.
-func FolderName(year int, title string) string {
-	return fmt.Sprintf("(%d) %s", year, sanitizeComponent(title))
-}
-
-// TargetFileName is the canonical media file name, with a season/episode suffix
-// when this is part of a numbered series and a part suffix when one item spans
-// several files (a multi-disc movie or a split episode).
-func TargetFileName(year int, title string, season, episode, part int, ext string) string {
-	base := fmt.Sprintf("(%d) %s", year, sanitizeComponent(title))
-	if season > 0 || episode > 0 {
-		base += fmt.Sprintf(" - %dx%d", season, episode)
-	}
-	if part > 0 {
-		base += fmt.Sprintf(" - part%d", part)
-	}
-	return base + ext
-}
-
-// Execute performs the import: it creates the category and media folders, copies
-// (or moves) the file in under its canonical name, and writes a meta.md stub if
-// the folder has none. It never writes outside DataDir.
-func Execute(req Request) (*Result, error) {
-	req.Title = strings.TrimSpace(req.Title)
-	req.Category = strings.TrimSpace(req.Category)
-	if req.Title == "" {
-		return nil, fmt.Errorf("title is required")
-	}
-	if req.Year <= 0 {
-		return nil, fmt.Errorf("year is required")
-	}
-	if req.Category == "" {
-		return nil, fmt.Errorf("category is required")
-	}
-	info, err := os.Stat(req.SourcePath)
+// WriteMeta writes meta.json into folder, overwriting any existing file.
+func WriteMeta(folder string, m Meta) error {
+	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("source %q is a directory", req.SourcePath)
-	}
-
-	ext := strings.ToLower(filepath.Ext(req.SourcePath))
-	dir := filepath.Join(req.DataDir, req.Category, FolderName(req.Year, req.Title))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	target := filepath.Join(dir, TargetFileName(req.Year, req.Title, req.Season, req.Episode, req.Part, ext))
-	// Re-copy only when the file is new or its size changed; same size is treated as
-	// unchanged and skipped (a content hash would mean reading the whole source, which
-	// over a remote mount costs as much as copying). --force always re-copies.
-	skipped := false
-	if ti, statErr := os.Stat(target); statErr == nil && !req.Force {
-		skipped = ti.Size() == info.Size()
-	}
-
-	_, metaErr := os.Stat(filepath.Join(dir, "meta.md"))
-	if !skipped {
-		label := req.Label
-		if label == "" {
-			label = filepath.Base(target)
-		}
-		if err := placeFile(req.SourcePath, target, req.Move, req.Progress, label); err != nil {
-			return nil, err
-		}
-	}
-	// External subtitles are placed (or refreshed) regardless of whether the video
-	// itself was skipped, since a sidecar may be new on a reimport. Best-effort: a
-	// subtitle failure never fails the item.
-	placeSubtitles(target, req.SubtitleLanguage, req.FFmpegPath, req.Subtitles, req.Force)
-	return &Result{Folder: dir, TargetPath: target, MetaExisted: metaErr == nil, Skipped: skipped}, nil
+	return os.WriteFile(filepath.Join(folder, "meta.json"), data, 0o644)
 }
 
-func placeFile(src, dst string, move bool, prog ProgressFunc, label string) error {
-	if move {
-		if err := os.Rename(src, dst); err == nil {
-			return nil
-		}
-		// Fall back to copy+remove across filesystems or read-only sources.
-		if err := copyFile(src, dst, prog, label); err != nil {
-			return err
-		}
-		return os.Remove(src)
+// ReadMeta parses a media folder's meta.json. A cache rebuild uses it to recover the
+// title/year/description it once wrote.
+func ReadMeta(folder string) (Meta, error) {
+	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
+	if err != nil {
+		return Meta{}, err
 	}
-	return copyFile(src, dst, prog, label)
+	var m Meta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return Meta{}, err
+	}
+	return m, nil
 }
 
-func copyFile(src, dst string, prog ProgressFunc, label string) error {
+// StubMeta is the minimal metadata used when no OMDb enrichment is available.
+func StubMeta(title string, year int) Meta {
+	m := Meta{Title: title, Year: year}
+	if year > 0 {
+		m.Metadata = map[string]string{"release": strconv.Itoa(year)}
+	}
+	return m
+}
+
+// MetaFromOMDb maps an OMDb result into a Meta. The caller's title/year always win
+// over OMDb's so the file matches its folder name. "N/A" values are dropped, genres
+// are lowercased into tags.
+func MetaFromOMDb(mv *omdb.Movie, title string, year int) Meta {
+	m := Meta{Title: title, Year: year, Description: clean(mv.Plot), Enriched: true}
+
+	md := map[string]string{}
+	add := func(k, v string) {
+		if v := clean(v); v != "" {
+			md[k] = v
+		}
+	}
+	release := clean(mv.Released)
+	if release == "" && year > 0 {
+		release = strconv.Itoa(year)
+	}
+	add("release", release)
+	add("runtime", strings.TrimSuffix(clean(mv.Runtime), " min"))
+	add("language", mv.Language)
+	add("origin", mv.Country)
+	add("directedBy", mv.Director)
+	add("writtenBy", mv.Writer)
+	add("contentRating", mv.Rated)
+	add("awards", mv.Awards)
+	add("boxOffice", mv.BoxOffice)
+	add("imdbID", mv.ImdbID)
+	if len(md) > 0 {
+		m.Metadata = md
+	}
+
+	rt := map[string]string{}
+	rate := func(k, v string) {
+		if v := clean(v); v != "" {
+			rt[k] = v
+		}
+	}
+	rate("imdb", imdbRatingWithVotes(mv))
+	rate("rottenTomatoes", mv.RatingBySource("Rotten Tomatoes"))
+	rate("metacritic", metacritic(mv))
+	if len(rt) > 0 {
+		m.Ratings = rt
+	}
+
+	for _, a := range splitList(mv.Actors) {
+		m.Actors = append(m.Actors, a)
+	}
+	for _, g := range splitList(mv.Genre) {
+		m.Tags = append(m.Tags, strings.ToLower(g))
+	}
+	return m
+}
+
+// MetaFromPlex maps a Plex item into a Meta from Plex's own fields. It is left
+// unenriched on purpose: Plex's metadata is the starting point, and the OMDb
+// enricher later fills any gaps additively (never overwriting these values). The
+// caller's title/year are applied by the importer so the file matches its folder.
+func MetaFromPlex(item plex.Item) Meta {
+	m := Meta{Title: item.Title, Year: item.Year, Description: strings.TrimSpace(item.Summary)}
+
+	md := map[string]string{}
+	add := func(k, v string) {
+		if v = strings.TrimSpace(v); v != "" {
+			md[k] = v
+		}
+	}
+	release := item.Release
+	if release == "" && item.Year > 0 {
+		release = strconv.Itoa(item.Year)
+	}
+	add("release", release)
+	if item.Runtime > 0 {
+		add("runtime", strconv.Itoa(item.Runtime))
+	}
+	add("directedBy", strings.Join(item.Directors, ", "))
+	add("writtenBy", strings.Join(item.Writers, ", "))
+	add("contentRating", item.ContentRating)
+	if len(md) > 0 {
+		m.Metadata = md
+	}
+	if r := strings.TrimSpace(item.Rating); r != "" {
+		m.Ratings = map[string]string{"plex": r}
+	}
+	m.Actors = append(m.Actors, item.Actors...)
+	for _, g := range item.Genres {
+		m.Tags = append(m.Tags, strings.ToLower(g))
+	}
+	return m
+}
+
+// MergeMeta returns base with any fields it is missing filled in from add. It is
+// purely additive: every value already present in base is kept, so enrichment only
+// fills gaps and never overwrites metadata an import (e.g. Plex) already provided.
+// Title/year and the ffprobe technical block always come from base.
+func MergeMeta(base, add Meta) Meta {
+	out := base
+	if out.Description == "" {
+		out.Description = add.Description
+	}
+	if out.Plot == "" {
+		out.Plot = add.Plot
+	}
+	out.Metadata = mergeStringMap(out.Metadata, add.Metadata)
+	out.Ratings = mergeStringMap(out.Ratings, add.Ratings)
+	if len(out.Actors) == 0 {
+		out.Actors = add.Actors
+	}
+	if len(out.Tags) == 0 {
+		out.Tags = add.Tags
+	}
+	if out.Technical == nil {
+		out.Technical = add.Technical
+	}
+	// State is owned by base and carried through unchanged: an OMDb enrich never
+	// contributes state, and out := base already preserves it, so a future add that
+	// happened to carry state can never clobber base's.
+	return out
+}
+
+// mergeStringMap fills keys missing (or blank) in base from add, keeping base's
+// existing values. A nil base is created only when add has something to contribute.
+func mergeStringMap(base, add map[string]string) map[string]string {
+	for k, v := range add {
+		if v == "" {
+			continue
+		}
+		if cur, ok := base[k]; !ok || cur == "" {
+			if base == nil {
+				base = map[string]string{}
+			}
+			base[k] = v
+		}
+	}
+	return base
+}
+
+func imdbRatingWithVotes(m *omdb.Movie) string {
+	rating := clean(m.ImdbRating)
+	if rating == "" {
+		return ""
+	}
+	if votes := clean(m.ImdbVotes); votes != "" {
+		return fmt.Sprintf("%s (%s votes)", rating, votes)
+	}
+	return rating
+}
+
+func metacritic(m *omdb.Movie) string {
+	if v := m.RatingBySource("Metacritic"); v != "" {
+		return v
+	}
+	if v := clean(m.Metascore); v != "" {
+		return v + "/100"
+	}
+	return ""
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = clean(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// clean drops OMDb's "N/A" sentinel and trims whitespace.
+func clean(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "N/A" {
+		return ""
+	}
+	return s
+}
+
+// CopyFile copies src to dst via a ".part" temp file plus an atomic rename, so a
+// partial copy never leaves a usable-looking file. progress, if non-nil, is called
+// on every write with the bytes copied so far and the total size.
+func CopyFile(src, dst string, progress func(copied, total int64)) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+
+	var total int64
+	if fi, err := in.Stat(); err == nil {
+		total = fi.Size()
+	}
+
 	tmp := dst + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
 	var w io.Writer = out
-	if prog != nil {
-		var total int64
-		if fi, err := in.Stat(); err == nil {
-			total = fi.Size()
-		}
-		w = &progressWriter{w: out, name: label, total: total, prog: prog}
+	if progress != nil {
+		w = &progressWriter{w: out, total: total, progress: progress}
 	}
 	if _, err := io.Copy(w, in); err != nil {
 		out.Close()
@@ -261,228 +285,16 @@ func copyFile(src, dst string, prog ProgressFunc, label string) error {
 	return os.Rename(tmp, dst)
 }
 
-// progressWriter forwards writes to w while reporting cumulative bytes to prog.
 type progressWriter struct {
-	w      io.Writer
-	name   string
-	total  int64
-	copied int64
-	prog   ProgressFunc
+	w        io.Writer
+	total    int64
+	copied   int64
+	progress func(copied, total int64)
 }
 
 func (p *progressWriter) Write(b []byte) (int, error) {
 	n, err := p.w.Write(b)
 	p.copied += int64(n)
-	p.prog(p.name, p.copied, p.total)
+	p.progress(p.copied, p.total)
 	return n, err
-}
-
-// MetaContent is the data used to render a media folder's meta.md.
-type MetaContent struct {
-	Title       string
-	Description string
-	Plot        string
-	Metadata    []model.KV
-	Ratings     []model.KV
-	Technical   []model.KV
-	Actors      []string
-	Tags        []string
-}
-
-// TechnicalFunc derives the `## technical` facts for a media folder from its
-// copied media files. It is built in the cmd layer (it shells out to ffprobe);
-// the importer appends the mediaEnriched flag itself so the flag is guaranteed.
-type TechnicalFunc func(mediaPaths []string) []model.KV
-
-// AlreadyEnriched reports whether folder's meta.md carries a truthy mediaEnriched
-// flag in its `## technical` section. A missing file or flag means not enriched.
-func AlreadyEnriched(folder string) bool {
-	m, err := meta.ParseFile(filepath.Join(folder, "meta.md"))
-	if err != nil {
-		return false
-	}
-	for _, kv := range m.Technical {
-		if kv.Key == "mediaEnriched" {
-			b, _ := strconv.ParseBool(kv.Value)
-			return b
-		}
-	}
-	return false
-}
-
-// StubMeta is the minimal meta.md content used when no enrichment is available.
-func StubMeta(title string, year int) MetaContent {
-	return MetaContent{
-		Title:    title,
-		Metadata: []model.KV{{Key: "release", Value: strconv.Itoa(year)}},
-	}
-}
-
-// WriteMeta renders meta.md into folder, overwriting any existing file. Callers
-// decide whether to call it (e.g. skip when meta.md already exists).
-func WriteMeta(folder string, m MetaContent) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n", m.Title)
-	b.WriteString("## description\n")
-	if m.Description != "" {
-		b.WriteString(m.Description + "\n")
-	}
-	b.WriteString("\n## plot\n")
-	if m.Plot != "" {
-		b.WriteString(m.Plot + "\n")
-	}
-	b.WriteString("\n## metadata\n")
-	for _, kv := range m.Metadata {
-		fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
-	}
-	if len(m.Ratings) > 0 {
-		b.WriteString("\n## ratings\n")
-		for _, kv := range m.Ratings {
-			fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
-		}
-	}
-	b.WriteString("\n## actors\n")
-	for _, a := range m.Actors {
-		fmt.Fprintf(&b, " - %s\n", a)
-	}
-	b.WriteString("\n## tags\n")
-	for _, t := range m.Tags {
-		fmt.Fprintf(&b, " - %s\n", t)
-	}
-	if len(m.Technical) > 0 {
-		b.WriteString("\n## technical\n")
-		for _, kv := range m.Technical {
-			fmt.Fprintf(&b, " - %s: %s\n", kv.Key, kv.Value)
-		}
-	}
-	return os.WriteFile(filepath.Join(folder, "meta.md"), []byte(b.String()), 0o644)
-}
-
-// SourceFile is one media file to import, with season/episode (0 for a movie)
-// and any external subtitle sidecars that belong to it.
-type SourceFile struct {
-	Path      string
-	Season    int
-	Episode   int
-	Subtitles []Subtitle
-}
-
-// Media is one media folder to import, assembled by a source-specific importer
-// (e.g. plex, jellyfin) and applied with Apply.
-type Media struct {
-	Category   string
-	Title      string
-	Year       int
-	IsShow     bool
-	Meta       MetaContent
-	PosterPath string // absolute source path to a poster image, or ""
-	Files      []SourceFile
-	// SubtitleLanguage is the fallback subtitle language; FFmpegPath, when set,
-	// enables ASS/SSA -> SRT conversion. Both flow into each file's Request.
-	SubtitleLanguage string
-	FFmpegPath       string
-}
-
-// TargetFolder is where this media will be written under dataDir.
-func (m Media) TargetFolder(dataDir string) string {
-	return filepath.Join(dataDir, m.Category, FolderName(m.Year, m.Title))
-}
-
-// ApplyStats reports how many of a media's files were copied vs skipped as
-// unchanged, so callers can show meaningful progress on a reimport.
-type ApplyStats struct {
-	Copied  int
-	Skipped int
-}
-
-// Apply copies the media's files into the canonical layout, then - once per media
-// folder - enriches it: it writes meta.md (with a `## technical` section and the
-// mediaEnriched flag) and, when posters is true, poster.jpg. Enrichment
-// runs only when the folder is not yet enriched (or force is set); an already
-// enriched folder keeps its hand-edited sidecars. Media files are copied
-// independently of enrichment, so a changed file is still re-copied. tech, if
-// non-nil, supplies the technical facts. prog, if non-nil, receives per-file copy
-// progress; itemIndex/itemTotal position this media in the batch so the progress
-// label reads "[i/N] category / title" for a single file, or "[j/M] ..." numbered
-// within a multi-file folder. It returns the folder and per-file stats.
-func (m Media) Apply(dataDir string, force, posters bool, prog ProgressFunc, tech TechnicalFunc, itemIndex, itemTotal int) (string, ApplyStats, error) {
-	if len(m.Files) == 0 {
-		return "", ApplyStats{}, errors.New("no media files")
-	}
-	var folder string
-	var targets []string
-	var stats ApplyStats
-	// Files that resolve to the same (season, episode) slot would collide on one
-	// target name; number them as parts so each survives. A multi-disc movie's
-	// files share slot (0,0); a split episode shares its real SxE slot. Order the
-	// files first so parts are numbered by their on-disk marker (CD1 < CD2 < CD10),
-	// not by the order the source happened to list them in.
-	files := append([]SourceFile(nil), m.Files...)
-	sortFiles(files)
-	slotTotal := map[[2]int]int{}
-	for _, f := range files {
-		slotTotal[[2]int{f.Season, f.Episode}]++
-	}
-	slotSeen := map[[2]int]int{}
-	for fi, f := range files {
-		index, total := itemIndex, itemTotal
-		if len(files) > 1 {
-			index, total = fi+1, len(files)
-		}
-		slot := [2]int{f.Season, f.Episode}
-		part := 0
-		if slotTotal[slot] > 1 {
-			slotSeen[slot]++
-			part = slotSeen[slot]
-		}
-		label := fmt.Sprintf("[%d/%d] %s / (%d) %s", index, total, m.Category, m.Year, m.Title)
-		res, err := Execute(Request{
-			SourcePath: f.Path, DataDir: dataDir, Category: m.Category,
-			Title: m.Title, Year: m.Year, Season: f.Season, Episode: f.Episode, Part: part,
-			Force: force, Progress: prog, Label: label,
-			Subtitles: f.Subtitles, SubtitleLanguage: m.SubtitleLanguage, FFmpegPath: m.FFmpegPath,
-		})
-		if err != nil {
-			return "", stats, err
-		}
-		folder = res.Folder
-		targets = append(targets, res.TargetPath)
-		if res.Skipped {
-			stats.Skipped++
-		} else {
-			stats.Copied++
-		}
-	}
-	if force || !AlreadyEnriched(folder) {
-		mc := m.Meta
-		mc.Title = m.Title
-		if tech != nil {
-			mc.Technical = tech(targets)
-		}
-		mc.Technical = append(mc.Technical, model.KV{Key: "mediaEnriched", Value: "true"})
-		if err := WriteMeta(folder, mc); err != nil {
-			return "", stats, err
-		}
-		if posters && m.PosterPath != "" {
-			_ = copyArt(m.PosterPath, filepath.Join(folder, "poster.jpg"))
-		}
-	}
-	return folder, stats, nil
-}
-
-func copyArt(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }

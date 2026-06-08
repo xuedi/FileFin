@@ -1,62 +1,36 @@
-# Task runner for this project. Run `just` to list recipes.
-# All routine dev actions live here so they can be allowed once as `just` commands.
+# Task runner.
 
 app := "filefin"
-bindir := "bin"
 
-# show all recipes
-default:
-    @just --list
+clean:
+    rm -f /home/xuedi/.filefin.json
 
-# build the single binary into ./bin
+# build everything: the Svelte frontend bundle and the single binary that embeds it
 build:
-    go build -o {{bindir}}/{{app}} ./cmd/{{app}}
+    cd web && npm install && npm run build
+    go build -o bin/{{app}} ./cmd/{{app}}
 
-# run the app, passing a subcommand (e.g. `just run serve`)
-run *args:
-    go run ./cmd/{{app}} {{args}}
+# build, then run the server
+run: build
+    ./bin/{{app}}
 
-# build the frontend + binary, then serve (uses the config at ~/.filefin.md)
-serve: web-build build
-    ./{{bindir}}/{{app}} serve
-
-# run the full test suite
-test:
+# format, vet, and test
+check:
+    gofmt -w .
+    go vet ./...
     go test ./...
 
-# run a subset (e.g. `just test-one ./internal/scanner` or `just test-one -run TestParse ./...`)
-test-one *args:
-    go test {{args}}
+# mount backspace's Plex home (DB + Metadata) and media root read-only, for manual
+# Plex-import testing through the GUI. backspace is strictly read-only; this never writes.
+plex-mount:
+    mkdir -p /tmp/filefin-plex/lib /tmp/filefin-plex/data
+    mountpoint -q /tmp/filefin-plex/lib || sshfs -o ro,reconnect "backspace:/var/lib/plex/Plex Media Server" /tmp/filefin-plex/lib
+    mountpoint -q /tmp/filefin-plex/data || sshfs -o ro,reconnect backspace:/mnt/data/plex /tmp/filefin-plex/data
+    @echo "DB path:      /tmp/filefin-plex/lib/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    @echo "metadata-dir: /tmp/filefin-plex/lib/Metadata"
+    @echo "media base:   /tmp/filefin-plex/data"
 
-# report suspicious constructs
-vet:
-    go vet ./...
-
-# format all Go code
-fmt:
-    gofmt -w .
-
-# lint (golangci-lint if installed, otherwise go vet)
-lint:
-    #!/usr/bin/env sh
-    if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run; else echo "golangci-lint not found; running go vet"; go vet ./...; fi
-
-# tidy module dependencies
-tidy:
-    go mod tidy
-
-# full pre-commit gate: format, vet, test
-check: fmt vet test
-
-# install + build the Svelte frontend (expects ./web)
-web-build:
-    cd web && npm install && npm run build
-
-# run the Svelte dev server
-web-dev:
-    cd web && npm run dev
-
-# remove build output and the local cache db
-clean:
-    rm -rf {{bindir}}
-    rm -f *.sqlite *.sqlite-* *.db
+# unmount the read-only backspace Plex mounts
+plex-unmount:
+    -fusermount -u /tmp/filefin-plex/data
+    -fusermount -u /tmp/filefin-plex/lib

@@ -1,6 +1,6 @@
-// Package subtitle holds the shared subtitle helpers: language-tag parsing reused
-// by the importers, sidecar recognition for the scanner, and SRT->WebVTT conversion
-// for the server. It depends on nothing else in the project.
+// Package subtitle holds subtitle helpers: sidecar recognition for the media folder
+// scan, language labelling, and SRT->WebVTT conversion for the server. It depends on
+// nothing else in the project.
 package subtitle
 
 import (
@@ -10,22 +10,6 @@ import (
 	"strings"
 	"unicode"
 )
-
-// langAliases maps the common three-letter and full-name language tags onto the
-// two-letter form FileFin stores. Anything not listed is lowercased and kept.
-var langAliases = map[string]string{
-	"eng": "en", "english": "en",
-	"ger": "de", "deu": "de", "german": "de",
-	"fre": "fr", "fra": "fr", "french": "fr",
-	"spa": "es", "esp": "es", "spanish": "es",
-	"ita": "it", "italian": "it",
-	"jpn": "ja", "jap": "ja", "japanese": "ja",
-	"chi": "zh", "zho": "zh", "chinese": "zh",
-	"kor": "ko", "korean": "ko",
-	"rus": "ru", "russian": "ru",
-	"por": "pt", "portuguese": "pt",
-	"dut": "nl", "nld": "nl", "dutch": "nl",
-}
 
 // langLabels are display names for the two-letter tags FileFin stores. Unknown tags
 // fall back to the tag itself (see Label).
@@ -39,6 +23,22 @@ var langLabels = map[string]string{
 // than being one ("Movie.en.forced.srt" -> language "en").
 var subQualifiers = map[string]bool{
 	"forced": true, "sdh": true, "cc": true, "hi": true, "default": true,
+}
+
+// langAliases maps three-letter and full-word language tags to the two-letter tags
+// FileFin stores, so a sidecar's "eng"/"english" infix normalises to "en".
+var langAliases = map[string]string{
+	"eng": "en", "english": "en",
+	"ger": "de", "deu": "de", "german": "de",
+	"fre": "fr", "fra": "fr", "french": "fr",
+	"spa": "es", "esp": "es", "spanish": "es",
+	"ita": "it", "italian": "it",
+	"jpn": "ja", "jap": "ja", "japanese": "ja",
+	"chi": "zh", "zho": "zh", "chinese": "zh",
+	"kor": "ko", "korean": "ko",
+	"rus": "ru", "russian": "ru",
+	"por": "pt", "portuguese": "pt",
+	"dut": "nl", "nld": "nl", "dutch": "nl",
 }
 
 // NormalizeLang lowercases and trims raw, maps a known alias to its two-letter
@@ -181,4 +181,26 @@ func isNumericLine(line string) bool {
 		}
 	}
 	return true
+}
+
+// Sidecars scans a media folder for ".srt" files belonging to the video whose base
+// name (extension stripped) is videoBase, returning them sorted by file name. Each
+// result carries its detected language tag ("" when none) and a display label. Used to
+// surface external subtitle tracks for playback; best-effort, so a read error yields
+// no sidecars.
+func Sidecars(entries []string, videoBase string) []Sidecar {
+	var out []Sidecar
+	for _, name := range entries {
+		if lang, ok := Match(videoBase, name); ok {
+			out = append(out, Sidecar{Name: name, Lang: lang, Label: Label(lang)})
+		}
+	}
+	return out
+}
+
+// Sidecar is one discovered external subtitle file for a media file.
+type Sidecar struct {
+	Name  string // file name within the media folder
+	Lang  string // two-letter language tag, "" when none
+	Label string // display label
 }

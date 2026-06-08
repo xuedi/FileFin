@@ -24,14 +24,15 @@ const (
 	Debug
 )
 
-// Event categories.
+// Event categories. More are added as features land (a frontend, additional import
+// producers); only the ones the rewrite actually emits today live here.
 const (
 	Backend   = "backend"
 	Frontend  = "frontend"
 	Import    = "import"
-	Plex      = "plex"
-	Jellyfin  = "jellyfin"
 	Optimizer = "optimizer"
+	Enrich    = "enrich"
+	Thumbnail = "thumbnail"
 )
 
 // Fields is structured context attached to an event, rendered only at debug level.
@@ -62,10 +63,11 @@ func (l Level) String() string {
 	}
 }
 
-// Logger writes events to one destination under a configured level.
+// Logger writes events to one destination under a configured level. Both the level
+// and the output can be changed live (the GUI edits them).
 type Logger struct {
-	level Level
 	mu    sync.Mutex
+	level Level
 	w     io.Writer
 	pid   int
 }
@@ -75,30 +77,60 @@ func New(level Level, w io.Writer) *Logger {
 	return &Logger{level: level, w: w, pid: os.Getpid()}
 }
 
+// SetLevel changes the threshold/format live. Nil-safe.
+func (l *Logger) SetLevel(level Level) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.level = level
+	l.mu.Unlock()
+}
+
+// SetOutput swaps the destination live. The caller owns closing the previous output.
+// Nil-safe.
+func (l *Logger) SetOutput(w io.Writer) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.w = w
+	l.mu.Unlock()
+}
+
 type nopCloser struct{}
 
 func (nopCloser) Close() error { return nil }
 
-// Open builds a Logger from config strings, resolving output to STDOUT, STDERR, or a
-// file path (created/appended). The returned Closer closes a file output; std streams
-// get a no-op.
-func Open(level, output string) (*Logger, io.Closer, error) {
-	lvl, err := ParseLevel(level)
-	if err != nil {
-		return nil, nil, err
-	}
+// ResolveOutput maps a config output string to a writer plus a Closer (a file output
+// is created/appended; std streams get a no-op closer).
+func ResolveOutput(output string) (io.Writer, io.Closer, error) {
 	switch strings.ToUpper(strings.TrimSpace(output)) {
 	case "", "STDOUT":
-		return New(lvl, os.Stdout), nopCloser{}, nil
+		return os.Stdout, nopCloser{}, nil
 	case "STDERR":
-		return New(lvl, os.Stderr), nopCloser{}, nil
+		return os.Stderr, nopCloser{}, nil
 	default:
 		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			return nil, nil, err
 		}
-		return New(lvl, f), f, nil
+		return f, f, nil
 	}
+}
+
+// Open builds a Logger from config strings, resolving output to STDOUT, STDERR, or a
+// file path. The returned Closer closes a file output; std streams get a no-op.
+func Open(level, output string) (*Logger, io.Closer, error) {
+	lvl, err := ParseLevel(level)
+	if err != nil {
+		return nil, nil, err
+	}
+	w, closer, err := ResolveOutput(output)
+	if err != nil {
+		return nil, nil, err
+	}
+	return New(lvl, w), closer, nil
 }
 
 // Scoped binds a Logger to one category so callers do not repeat it.
@@ -114,8 +146,7 @@ func (l *Logger) For(category string) *Scoped { return &Scoped{l: l, cat: catego
 func (s *Scoped) Info(msg string, f ...Fields) { s.emit(Info, msg, f) }
 
 // Debug records an event visible only at debug level. Use it for high-frequency or
-// mechanical detail (e.g. the optimizer scaling its worker pool) that would be noise
-// at info.
+// mechanical detail that would be noise at info.
 func (s *Scoped) Debug(msg string, f ...Fields) { s.emit(Debug, msg, f) }
 
 // Error records an event visible at every level.
@@ -133,12 +164,12 @@ func (s *Scoped) emit(ev Level, msg string, f []Fields) {
 }
 
 func (l *Logger) emit(ev Level, cat, msg string, f Fields) {
-	if l.level == Error && ev != Error {
-		return
-	}
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.level == Error && ev != Error {
+		return
+	}
 	if l.level == Debug {
 		l.writeJSON(now, ev, cat, msg, f)
 		return

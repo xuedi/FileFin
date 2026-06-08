@@ -1,5 +1,6 @@
-// Package omdb is a small client for the OMDb API (https://www.omdbapi.com),
-// used to enrich imported media with metadata and a poster.
+// Package omdb is a small client for the OMDb API (https://www.omdbapi.com), used to
+// enrich imported media with metadata and a poster. Enrichment is best-effort: with
+// no API key configured the importer simply skips it.
 package omdb
 
 import (
@@ -13,8 +14,8 @@ import (
 	"time"
 )
 
-// Movie is the subset of OMDb fields used for enrichment. Absent values come
-// back as the string "N/A".
+// Movie is the subset of OMDb fields used for enrichment. Absent values come back as
+// the string "N/A".
 type Movie struct {
 	Title        string   `json:"Title"`
 	Year         string   `json:"Year"`
@@ -42,15 +43,14 @@ type Movie struct {
 	Error        string   `json:"Error"`
 }
 
-// Rating is one source's rating in OMDb's Ratings array (e.g. "Rotten Tomatoes",
-// "Metacritic", "Internet Movie Database").
+// Rating is one source's rating in OMDb's Ratings array.
 type Rating struct {
 	Source string `json:"Source"`
 	Value  string `json:"Value"`
 }
 
-// RatingBySource returns the value for a named source in the Ratings array, or ""
-// if absent. The match is case-insensitive and tolerant of OMDb's "N/A".
+// RatingBySource returns the value for a named source, or "" if absent. The match is
+// case-insensitive and tolerant of OMDb's "N/A".
 func (m *Movie) RatingBySource(source string) string {
 	for _, r := range m.Ratings {
 		if strings.EqualFold(strings.TrimSpace(r.Source), source) {
@@ -106,8 +106,8 @@ func (c *Client) Lookup(title string, year int) (*Movie, error) {
 	return &m, nil
 }
 
-// Poster downloads the poster image for an imdb id at the requested height.
-// It returns the image bytes and the content type.
+// Poster downloads the poster image for an imdb id at the requested height. It
+// returns the image bytes and the content type.
 func (c *Client) Poster(imdbID string, height int) ([]byte, string, error) {
 	q := url.Values{}
 	q.Set("i", imdbID)
@@ -129,4 +129,16 @@ func (c *Client) Poster(imdbID string, height int) ([]byte, string, error) {
 		return nil, "", err
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// PosterExt maps a poster content type to a file extension, defaulting to .jpg.
+func PosterExt(contentType string) string {
+	switch {
+	case strings.Contains(contentType, "png"):
+		return ".png"
+	case strings.Contains(contentType, "gif"):
+		return ".gif"
+	default:
+		return ".jpg"
+	}
 }

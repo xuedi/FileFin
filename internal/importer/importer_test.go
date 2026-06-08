@@ -1,627 +1,130 @@
 package importer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"filefin/internal/meta"
-	"filefin/internal/model"
+	"filefin/internal/ffprobe"
+	"filefin/internal/omdb"
 )
 
-func TestParseName(t *testing.T) {
-	cases := []struct {
-		name string
-		want Parsed
-	}{
-		{"(1962) Lawrence of Arabia.avi", Parsed{Title: "Lawrence of Arabia", Year: 1962, Ext: ".avi"}},
-		{"(2002) Firefly - 1x1.mkv", Parsed{Title: "Firefly", Year: 2002, Season: 1, Episode: 1, Ext: ".mkv"}},
-		{"The.Matrix.1999.1080p.BluRay.x264.mkv", Parsed{Title: "The Matrix", Year: 1999, Ext: ".mkv"}},
-		{"(1968) 2001 A Space Odyssey Part 1.avi", Parsed{Title: "2001 A Space Odyssey Part 1", Year: 1968, Ext: ".avi"}},
-		{"Some Random Movie.mp4", Parsed{Title: "Some Random Movie", Ext: ".mp4"}},
-		{"Show S03E07 The Episode.mp4", Parsed{Title: "Show The Episode", Season: 3, Episode: 7, Ext: ".mp4"}},
+func TestMetaFromOMDb(t *testing.T) {
+	mv := &omdb.Movie{
+		Title: "Blade Runner", Released: "25 Jun 1982", Runtime: "117 min",
+		Language: "English", Country: "United States, United Kingdom", Director: "Ridley Scott",
+		Rated: "R", BoxOffice: "N/A", ImdbID: "tt0083658", ImdbRating: "8.1", ImdbVotes: "835,123",
+		Genre: "Sci-Fi, Thriller", Actors: "Harrison Ford, Rutger Hauer",
+		Ratings: []omdb.Rating{{Source: "Rotten Tomatoes", Value: "89%"}, {Source: "Metacritic", Value: "84/100"}},
+		Plot:    "A blade runner hunts replicants.",
 	}
-	for _, c := range cases {
-		got := ParseName(c.name, false)
-		if got != c.want {
-			t.Errorf("ParseName(%q)\n got: %+v\nwant: %+v", c.name, got, c.want)
-		}
+	// The caller's title/year win over OMDb.
+	m := MetaFromOMDb(mv, "Blade Runner", 1982)
+	if m.Title != "Blade Runner" || m.Year != 1982 {
+		t.Fatalf("title/year: %+v", m)
 	}
-}
-
-func TestParseNameEpisodeSchemes(t *testing.T) {
-	cases := []struct {
-		name            string
-		isShow          bool
-		season, episode int
-	}{
-		// Explicit markers: parsed regardless of isShow.
-		{"(2002) Firefly - 1x05.mkv", false, 1, 5},
-		{"Show - s1e5.mkv", false, 1, 5},
-		{"Babylon 5 - S04E22.mkv", false, 4, 22},
-		{"Stand Alone Complex - 02x03.mkv", false, 2, 3},
-		{"Star Trek TNG - Season 1 Episode 14.mkv", false, 1, 14},
-		{"Star Trek TNG - Episode 01 & 02.mkv", false, 1, 1}, // multi-ep: first wins
-		{"Arang - E16.121004.HDTV.mkv", false, 1, 16},        // trailing date ignored
-		{"Empress Chun Chu - E50.mkv", false, 1, 50},
-		// Bare trailing numbers: only when the item is a show.
-		{"Reply 1988 - 17.mkv", true, 1, 17},
-		{"Beck 04.mkv", true, 1, 4},
-		{"Amachan - 090.mkv", true, 1, 90},
-		{"Maison Ikkoku - 64.mkv", true, 1, 64},
-		{"Shogun - 4.mkv", true, 1, 4},
-		{"Beck 04.mkv", false, 0, 0}, // same file, not a show: no episode
-		// Movie negatives: never an episode.
-		{"Blade 2.mkv", false, 0, 0},
-		{"Blade Runner 2049.mkv", true, 0, 0}, // four-digit year, not episode 2049
-		{"2046 Disk 1.avi", true, 0, 0},       // a disc part marker, not episode 1
-		{"God of Gamblers CD1.avi", true, 0, 0},
+	if m.Metadata["directedBy"] != "Ridley Scott" || m.Metadata["contentRating"] != "R" {
+		t.Fatalf("metadata: %+v", m.Metadata)
 	}
-	for _, c := range cases {
-		got := ParseName(c.name, c.isShow)
-		if got.Season != c.season || got.Episode != c.episode {
-			t.Errorf("ParseName(%q, show=%v) = S%dE%d, want S%dE%d",
-				c.name, c.isShow, got.Season, got.Episode, c.season, c.episode)
-		}
+	if _, ok := m.Metadata["boxOffice"]; ok {
+		t.Fatalf("N/A boxOffice should be dropped: %+v", m.Metadata)
+	}
+	if m.Ratings["imdb"] != "8.1 (835,123 votes)" || m.Ratings["rottenTomatoes"] != "89%" || m.Ratings["metacritic"] != "84/100" {
+		t.Fatalf("ratings: %+v", m.Ratings)
+	}
+	if len(m.Tags) != 2 || m.Tags[0] != "sci-fi" {
+		t.Fatalf("tags: %+v", m.Tags)
+	}
+	if len(m.Actors) != 2 {
+		t.Fatalf("actors: %+v", m.Actors)
 	}
 }
 
-func TestParseNameBareEpisodeTitle(t *testing.T) {
-	// A show's trailing episode number is dropped from the title.
-	if got := ParseName("Beck 04.mkv", true); got.Title != "Beck" {
-		t.Errorf("title = %q, want %q", got.Title, "Beck")
-	}
-	// A movie keeps its trailing number.
-	if got := ParseName("Blade 2.mkv", false); got.Title != "Blade 2" {
-		t.Errorf("title = %q, want %q", got.Title, "Blade 2")
-	}
-}
-
-func TestDetectPart(t *testing.T) {
-	cases := []struct {
-		name  string
-		num   int
-		ok    bool
-		strip string
-	}{
-		{"God of Gamblers CD1", 1, true, "God of Gamblers"},
-		{"God of Gamblers cd2", 2, true, "God of Gamblers"},
-		{"God of Gamblers CD 1", 1, true, "God of Gamblers"},
-		{"God of Gamblers CD_1", 1, true, "God of Gamblers"},
-		{"Suzhou River Disc 1", 1, true, "Suzhou River"},
-		{"Suzhou River Disk1", 1, true, "Suzhou River"},
-		{"Dirty Ho Part 1", 1, true, "Dirty Ho"},
-		{"Tie Xi Qu - Rust - pt1", 1, true, "Tie Xi Qu - Rust"},
-		{"Tie Xi Qu - Rust - pt.1", 1, true, "Tie Xi Qu - Rust"},
-		{"Yellow Earth (1)", 1, true, "Yellow Earth"},
-		{"Yellow Earth (1 of 2)", 1, true, "Yellow Earth"},
-		{"Yellow Earth (1/2)", 1, true, "Yellow Earth"},
-		{"Yellow Earth [1]", 1, true, "Yellow Earth"},
-		{"2046 Disk 1", 1, true, "2046"}, // marker stripped, title (a year) survives
-		{"God of Gamblers CD10", 10, true, "God of Gamblers"},
-		// Negatives: bare numbers are not markers (need sibling context).
-		{"Blade 2", 0, false, "Blade 2"},
-		{"Blade Runner 2049", 0, false, "Blade Runner 2049"},
-		{"Some Movie", 0, false, "Some Movie"},
-	}
-	for _, c := range cases {
-		strip, num, ok := detectPart(c.name)
-		if ok != c.ok || num != c.num || strip != c.strip {
-			t.Errorf("detectPart(%q) = (%q, %d, %v), want (%q, %d, %v)",
-				c.name, strip, num, ok, c.strip, c.num, c.ok)
-		}
-	}
-}
-
-func TestSortFilesPartOrder(t *testing.T) {
-	// CD2 must precede CD10 (numeric, not lexical).
-	files := []SourceFile{
-		{Path: "/m/God of Gamblers CD10.avi"},
-		{Path: "/m/God of Gamblers CD1.avi"},
-		{Path: "/m/God of Gamblers CD2.avi"},
-	}
-	sortFiles(files)
-	want := []string{
-		"/m/God of Gamblers CD1.avi",
-		"/m/God of Gamblers CD2.avi",
-		"/m/God of Gamblers CD10.avi",
-	}
-	for i, f := range files {
-		if f.Path != want[i] {
-			t.Fatalf("sortFiles order[%d] = %q, want %q", i, f.Path, want[i])
-		}
-	}
-}
-
-func TestExecuteProgress(t *testing.T) {
+func TestWriteMeta(t *testing.T) {
 	dir := t.TempDir()
-	src := filepath.Join(dir, "movie.avi")
-	payload := strings.Repeat("x", 100_000)
-	if err := os.WriteFile(src, []byte(payload), 0o644); err != nil {
+	m := StubMeta("The Matrix", 1999)
+	m.Technical = &ffprobe.Technical{Duration: 8160, Container: "matroska", VideoCodec: "h264"}
+	if err := WriteMeta(dir, m); err != nil {
 		t.Fatal(err)
 	}
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Meta
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "The Matrix" || got.Year != 1999 || got.Metadata["release"] != "1999" {
+		t.Fatalf("meta: %+v", got)
+	}
+	if got.Technical == nil || got.Technical.VideoCodec != "h264" {
+		t.Fatalf("technical: %+v", got.Technical)
+	}
+}
 
+func TestCopyFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	want := []byte("hello world, this is a media file")
+	if err := os.WriteFile(src, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "out", "dst.bin")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var lastCopied, lastTotal int64
-	calls := 0
-	_, err := Execute(Request{
-		SourcePath: src, DataDir: filepath.Join(dir, "data"), Category: "C",
-		Title: "Movie", Year: 2020,
-		Progress: func(name string, copied, total int64) {
-			calls++
-			lastCopied, lastTotal = copied, total
-			if name != "(2020) Movie.avi" {
-				t.Errorf("progress name = %q", name)
-			}
-		},
-	})
-	if err != nil {
+	if err := CopyFile(src, dst, func(copied, total int64) { lastCopied, lastTotal = copied, total }); err != nil {
 		t.Fatal(err)
 	}
-	if calls == 0 {
-		t.Fatal("progress callback was never invoked")
+	got, err := os.ReadFile(dst)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("copied content mismatch: %q %v", got, err)
 	}
-	if lastTotal != int64(len(payload)) || lastCopied != lastTotal {
-		t.Fatalf("final progress copied=%d total=%d, want both %d", lastCopied, lastTotal, len(payload))
+	if lastCopied != int64(len(want)) || lastTotal != int64(len(want)) {
+		t.Fatalf("progress: copied %d total %d, want %d", lastCopied, lastTotal, len(want))
+	}
+	// No .part left behind.
+	if _, err := os.Stat(dst + ".part"); !os.IsNotExist(err) {
+		t.Fatal(".part file should be gone")
 	}
 }
 
-func TestExecute(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "source.mp4")
-	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
+func TestMergeMetaIsAdditive(t *testing.T) {
+	base := Meta{
+		Title: "Alpha", Year: 2001, Description: "plex summary",
+		Metadata: map[string]string{"release": "2001", "directedBy": "Jane"},
+		Ratings:  map[string]string{"plex": "8.0"},
+		Actors:   []string{"Jane", "Joe"},
 	}
-	data := filepath.Join(dir, "data")
+	add := Meta{
+		Title: "Alpha", Year: 2001, Description: "omdb plot",
+		Metadata: map[string]string{"release": "2001-06-25", "language": "English"},
+		Ratings:  map[string]string{"imdb": "8.1", "plex": "9.9"},
+		Actors:   []string{"Someone Else"},
+		Tags:     []string{"drama"},
+	}
+	got := MergeMeta(base, add)
 
-	res, err := Execute(Request{
-		SourcePath: src, DataDir: data, Category: "Films - English",
-		Title: "The Matrix", Year: 1999,
-	})
-	if err != nil {
-		t.Fatal(err)
+	// Existing values win; only gaps are filled.
+	if got.Description != "plex summary" {
+		t.Fatalf("description overwritten: %q", got.Description)
 	}
-	want := filepath.Join(data, "Films - English", "(1999) The Matrix", "(1999) The Matrix.mp4")
-	if res.TargetPath != want {
-		t.Fatalf("target: got %q want %q", res.TargetPath, want)
+	if got.Metadata["release"] != "2001" {
+		t.Fatalf("release overwritten: %q", got.Metadata["release"])
 	}
-	if b, _ := os.ReadFile(want); string(b) != "payload" {
-		t.Fatalf("copied content: %q", b)
+	if got.Metadata["directedBy"] != "Jane" || got.Metadata["language"] != "English" {
+		t.Fatalf("metadata merge wrong: %+v", got.Metadata)
 	}
-	if res.MetaExisted {
-		t.Fatal("meta.md should not have existed yet")
+	if got.Ratings["plex"] != "8.0" || got.Ratings["imdb"] != "8.1" {
+		t.Fatalf("ratings merge wrong: %+v", got.Ratings)
 	}
-	// Source must be untouched (copy, not move).
-	if _, err := os.Stat(src); err != nil {
-		t.Fatalf("source was removed: %v", err)
+	if len(got.Actors) != 2 || got.Actors[0] != "Jane" {
+		t.Fatalf("actors should be kept, not replaced: %+v", got.Actors)
 	}
-
-	// Writing the stub produces a parseable meta.md.
-	if err := WriteMeta(res.Folder, StubMeta("The Matrix", 1999)); err != nil {
-		t.Fatal(err)
-	}
-	meta, err := os.ReadFile(filepath.Join(res.Folder, "meta.md"))
-	if err != nil || !strings.Contains(string(meta), "release: 1999") {
-		t.Fatalf("meta stub: %q err=%v", meta, err)
-	}
-}
-
-func TestExecuteEpisodeNamingAndKeepsMeta(t *testing.T) {
-	dir := t.TempDir()
-	mk := func(name string) string {
-		p := filepath.Join(dir, name)
-		os.WriteFile(p, []byte("x"), 0o644)
-		return p
-	}
-	data := filepath.Join(dir, "data")
-
-	// First episode: folder is new, no meta yet.
-	r1, err := Execute(Request{SourcePath: mk("e1.mp4"), DataDir: data, Category: "Shows", Title: "Firefly", Year: 2002, Season: 1, Episode: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(r1.TargetPath) != "(2002) Firefly - 1x1.mp4" {
-		t.Fatalf("episode name: %s", r1.TargetPath)
-	}
-	if r1.MetaExisted {
-		t.Fatal("first import: meta should not exist yet")
-	}
-	if err := WriteMeta(r1.Folder, StubMeta("Firefly", 2002)); err != nil {
-		t.Fatal(err)
-	}
-
-	// Second episode lands in the same folder and reports meta as already present.
-	r2, err := Execute(Request{SourcePath: mk("e2.mp4"), DataDir: data, Category: "Shows", Title: "Firefly", Year: 2002, Season: 1, Episode: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r2.Folder != r1.Folder {
-		t.Fatalf("episodes split across folders: %s vs %s", r1.Folder, r2.Folder)
-	}
-	if !r2.MetaExisted {
-		t.Fatal("second import should see existing meta.md")
-	}
-}
-
-func TestMediaApply(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "blade.avi")
-	os.WriteFile(src, []byte("MOVIE"), 0o644)
-	poster := filepath.Join(dir, "poster_src")
-	os.WriteFile(poster, []byte("JPEGDATA"), 0o644)
-	data := filepath.Join(dir, "data")
-
-	m := Media{
-		Category:   "x_Cyberpunk",
-		Title:      "Blade Runner",
-		Year:       1982,
-		Meta:       MetaContent{Description: "A blade runner.", Tags: []string{"sci-fi"}},
-		PosterPath: poster,
-		Files:      []SourceFile{{Path: src}},
-	}
-	folder, _, err := m.Apply(data, false, true, nil, nil, 1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b, err := os.ReadFile(filepath.Join(folder, "(1982) Blade Runner.avi")); err != nil || string(b) != "MOVIE" {
-		t.Fatalf("media: %q err=%v", b, err)
-	}
-	if b, err := os.ReadFile(filepath.Join(folder, "poster.jpg")); err != nil || string(b) != "JPEGDATA" {
-		t.Fatalf("poster: %q err=%v", b, err)
-	}
-	meta, err := os.ReadFile(filepath.Join(folder, "meta.md"))
-	if err != nil || !strings.Contains(string(meta), "A blade runner.") || !strings.Contains(string(meta), "sci-fi") {
-		t.Fatalf("meta: %q err=%v", meta, err)
-	}
-	// Title is taken from Media.Title even if Meta.Title is unset.
-	if !strings.Contains(string(meta), "# Blade Runner") {
-		t.Fatalf("meta title: %q", meta)
-	}
-}
-
-func TestReimportSkipsUnchangedAndSidecars(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "movie.avi")
-	os.WriteFile(src, []byte("ORIGINAL"), 0o644)
-	poster := filepath.Join(dir, "poster_src")
-	os.WriteFile(poster, []byte("ART"), 0o644)
-	data := filepath.Join(dir, "data")
-
-	m := Media{
-		Category:   "C",
-		Title:      "Movie",
-		Year:       2020,
-		Meta:       MetaContent{Description: "first"},
-		PosterPath: poster,
-		Files:      []SourceFile{{Path: src}},
-	}
-
-	folder, stats, err := m.Apply(data, false, true, nil, nil, 1, 1)
-	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
-		t.Fatalf("first apply: stats=%+v err=%v", stats, err)
-	}
-
-	// Edit the already-enriched sidecars; a reimport must not overwrite them, and the
-	// unchanged media file (same size) must be skipped. The hand edit keeps the
-	// mediaEnriched flag so the folder still reads as enriched.
-	mediaPath := filepath.Join(folder, "(2020) Movie.avi")
-	metaPath := filepath.Join(folder, "meta.md")
-	posterPath := filepath.Join(folder, "poster.jpg")
-	os.WriteFile(metaPath, []byte("# Movie\nHAND EDITED\n\n## technical\n - mediaEnriched: true\n"), 0o644)
-	os.WriteFile(posterPath, []byte("HAND EDITED ART"), 0o644)
-
-	m.Meta = MetaContent{Description: "second"}
-	_, stats, err = m.Apply(data, false, true, nil, nil, 1, 1)
-	if err != nil || stats.Copied != 0 || stats.Skipped != 1 {
-		t.Fatalf("reimport stats: %+v err=%v", stats, err)
-	}
-	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "HAND EDITED") {
-		t.Fatalf("meta.md was overwritten: %q", b)
-	}
-	if b, _ := os.ReadFile(posterPath); string(b) != "HAND EDITED ART" {
-		t.Fatalf("poster.jpg was overwritten: %q", b)
-	}
-
-	// A changed source (different size) is re-copied on reimport.
-	os.WriteFile(src, []byte("A MUCH LONGER REPLACEMENT FILE"), 0o644)
-	_, stats, err = m.Apply(data, false, true, nil, nil, 1, 1)
-	if err != nil || stats.Copied != 1 || stats.Skipped != 0 {
-		t.Fatalf("changed-file reimport stats: %+v err=%v", stats, err)
-	}
-	if b, _ := os.ReadFile(mediaPath); string(b) != "A MUCH LONGER REPLACEMENT FILE" {
-		t.Fatalf("changed media not re-copied: %q", b)
-	}
-
-	// --force overwrites sidecars too.
-	if _, _, err = m.Apply(data, true, true, nil, nil, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "second") {
-		t.Fatalf("force did not rewrite meta.md: %q", b)
-	}
-	if b, _ := os.ReadFile(posterPath); string(b) != "ART" {
-		t.Fatalf("force did not recopy poster: %q", b)
-	}
-}
-
-func TestMediaApplyEpisodes(t *testing.T) {
-	dir := t.TempDir()
-	mk := func(n string) string {
-		p := filepath.Join(dir, n)
-		os.WriteFile(p, []byte("x"), 0o644)
-		return p
-	}
-	data := filepath.Join(dir, "data")
-	m := Media{
-		Category: "Shows", Title: "Firefly", Year: 2002, IsShow: true,
-		Files: []SourceFile{
-			{Path: mk("e1.avi"), Season: 1, Episode: 1},
-			{Path: mk("e2.avi"), Season: 1, Episode: 2},
-		},
-	}
-	if _, _, err := m.Apply(data, false, false, nil, nil, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	folder := filepath.Join(data, "Shows", "(2002) Firefly")
-	for _, name := range []string{"(2002) Firefly - 1x1.avi", "(2002) Firefly - 1x2.avi", "meta.md"} {
-		if _, err := os.Stat(filepath.Join(folder, name)); err != nil {
-			t.Fatalf("missing %s: %v", name, err)
-		}
-	}
-}
-
-func TestMediaApplyMultiPart(t *testing.T) {
-	dir := t.TempDir()
-	mk := func(n string) string {
-		p := filepath.Join(dir, n)
-		os.WriteFile(p, []byte("x"), 0o644)
-		return p
-	}
-	data := filepath.Join(dir, "data")
-
-	// A two-disc movie: both files share slot (0,0) and must become parts, not
-	// collide on one name.
-	movie := Media{
-		Category: "Films", Title: "Two Discs", Year: 2010,
-		Files: []SourceFile{{Path: mk("cd1.avi")}, {Path: mk("cd2.avi")}},
-	}
-	if _, _, err := movie.Apply(data, false, false, nil, nil, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	mf := filepath.Join(data, "Films", "(2010) Two Discs")
-	for _, name := range []string{"(2010) Two Discs - part1.avi", "(2010) Two Discs - part2.avi"} {
-		if _, err := os.Stat(filepath.Join(mf, name)); err != nil {
-			t.Fatalf("missing %s: %v", name, err)
-		}
-	}
-
-	// A split episode: two files share slot (1,1); the episode marker stays and a
-	// part suffix is appended. A neighbouring single-file episode keeps no suffix.
-	show := Media{
-		Category: "Shows", Title: "Split", Year: 2011, IsShow: true,
-		Files: []SourceFile{
-			{Path: mk("e1a.avi"), Season: 1, Episode: 1},
-			{Path: mk("e1b.avi"), Season: 1, Episode: 1},
-			{Path: mk("e2.avi"), Season: 1, Episode: 2},
-		},
-	}
-	if _, _, err := show.Apply(data, false, false, nil, nil, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	sf := filepath.Join(data, "Shows", "(2011) Split")
-	for _, name := range []string{
-		"(2011) Split - 1x1 - part1.avi",
-		"(2011) Split - 1x1 - part2.avi",
-		"(2011) Split - 1x2.avi",
-	} {
-		if _, err := os.Stat(filepath.Join(sf, name)); err != nil {
-			t.Fatalf("missing %s: %v", name, err)
-		}
-	}
-}
-
-func TestWriteMetaTechnicalRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	mc := MetaContent{
-		Title: "Movie",
-		Technical: []model.KV{
-			{Key: "container", Value: "matroska"},
-			{Key: "videoCodec", Value: "h264, hevc"},
-			{Key: "mediaEnriched", Value: "true"},
-		},
-	}
-	if err := WriteMeta(dir, mc); err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := meta.ParseFile(filepath.Join(dir, "meta.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{"container": "matroska", "videoCodec": "h264, hevc", "mediaEnriched": "true"}
-	got := map[string]string{}
-	for _, kv := range parsed.Technical {
-		got[kv.Key] = kv.Value
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("technical[%q] = %q, want %q (parsed: %+v)", k, got[k], v, parsed.Technical)
-		}
-	}
-}
-
-func TestWriteMetaRatingsRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	mc := MetaContent{
-		Title:    "Movie",
-		Metadata: []model.KV{{Key: "release", Value: "1999"}},
-		Ratings: []model.KV{
-			{Key: "imdb", Value: "8.1 (835,123 votes)"},
-			{Key: "rottenTomatoes", Value: "89%"},
-			{Key: "metacritic", Value: "84/100"},
-		},
-	}
-	if err := WriteMeta(dir, mc); err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := meta.ParseFile(filepath.Join(dir, "meta.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(parsed.Ratings) != 3 || parsed.Ratings[0].Key != "imdb" || parsed.Ratings[0].Value != "8.1 (835,123 votes)" {
-		t.Fatalf("ratings round-trip: %+v", parsed.Ratings)
-	}
-	if parsed.Ratings[1].Value != "89%" || parsed.Ratings[2].Value != "84/100" {
-		t.Fatalf("ratings round-trip: %+v", parsed.Ratings)
-	}
-}
-
-func TestWriteMetaNoRatingsSection(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteMeta(dir, StubMeta("Movie", 2020)); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, "meta.md"))
-	if strings.Contains(string(b), "## ratings") {
-		t.Fatalf("empty Ratings should omit the section:\n%s", b)
-	}
-}
-
-func TestWriteMetaNoTechnicalSection(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteMeta(dir, StubMeta("Movie", 2020)); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, "meta.md"))
-	if strings.Contains(string(b), "## technical") {
-		t.Fatalf("empty Technical should omit the section:\n%s", b)
-	}
-}
-
-func TestAlreadyEnriched(t *testing.T) {
-	dir := t.TempDir()
-	if AlreadyEnriched(dir) {
-		t.Error("missing meta.md should not read as enriched")
-	}
-	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## metadata\n - release: 2020\n"), 0o644)
-	if AlreadyEnriched(dir) {
-		t.Error("meta.md without the flag should not read as enriched")
-	}
-	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## technical\n - mediaEnriched: true\n"), 0o644)
-	if !AlreadyEnriched(dir) {
-		t.Error("mediaEnriched: true should read as enriched")
-	}
-	os.WriteFile(filepath.Join(dir, "meta.md"), []byte("# X\n\n## technical\n - mediaEnriched: false\n"), 0o644)
-	if AlreadyEnriched(dir) {
-		t.Error("mediaEnriched: false should not read as enriched")
-	}
-}
-
-func TestApplyEnrichmentFlag(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "movie.avi")
-	os.WriteFile(src, []byte("MOVIE"), 0o644)
-	data := filepath.Join(dir, "data")
-
-	m := Media{
-		Category: "C", Title: "Movie", Year: 2020,
-		Meta:  MetaContent{Description: "first"},
-		Files: []SourceFile{{Path: src}},
-	}
-	// A technical func that records a marker key; the importer appends mediaEnriched.
-	tech := func(paths []string) []model.KV {
-		return []model.KV{{Key: "container", Value: "avi"}}
-	}
-
-	folder, _, err := m.Apply(data, false, false, nil, tech, 1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	metaPath := filepath.Join(folder, "meta.md")
-	b, _ := os.ReadFile(metaPath)
-	if !strings.Contains(string(b), "container: avi") || !strings.Contains(string(b), "mediaEnriched: true") {
-		t.Fatalf("first apply missing technical/flag:\n%s", b)
-	}
-	if !AlreadyEnriched(folder) {
-		t.Fatal("folder should read as enriched after first apply")
-	}
-
-	// Second apply must not re-enrich (the tech func would panic if called).
-	panicTech := func(paths []string) []model.KV { panic("must not re-enrich") }
-	os.WriteFile(metaPath, []byte("# Movie\nHAND\n\n## technical\n - mediaEnriched: true\n"), 0o644)
-	if _, _, err := m.Apply(data, false, false, nil, panicTech, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "HAND") {
-		t.Fatalf("enriched folder was re-enriched:\n%s", b)
-	}
-
-	// --force re-enriches.
-	if _, _, err := m.Apply(data, true, false, nil, tech, 1, 1); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(metaPath); !strings.Contains(string(b), "container: avi") {
-		t.Fatalf("--force did not re-enrich:\n%s", b)
-	}
-}
-
-func TestApplyProgressLabels(t *testing.T) {
-	dir := t.TempDir()
-	data := filepath.Join(dir, "data")
-	mk := func(n string) string {
-		p := filepath.Join(dir, n)
-		os.WriteFile(p, []byte("payload-"+n), 0o644)
-		return p
-	}
-
-	// A single-file folder uses the item position "[i/N]".
-	var labels []string
-	capture := func(name string, copied, total int64) {
-		if total > 0 && copied >= total {
-			labels = append(labels, name)
-		}
-	}
-	single := Media{
-		Category: "western", Title: "Django", Year: 1966,
-		Files: []SourceFile{{Path: mk("d.avi")}},
-	}
-	if _, _, err := single.Apply(data, false, false, capture, nil, 3, 6); err != nil {
-		t.Fatal(err)
-	}
-	if len(labels) != 1 || labels[0] != "[3/6] western / (1966) Django" {
-		t.Fatalf("single-file label = %v", labels)
-	}
-
-	// A multi-file folder numbers its files "[j/M]" regardless of item position.
-	labels = nil
-	show := Media{
-		Category: "Show - Startrek", Title: "TNG", Year: 1987, IsShow: true,
-		Files: []SourceFile{
-			{Path: mk("e1.avi"), Season: 1, Episode: 1},
-			{Path: mk("e2.avi"), Season: 1, Episode: 2},
-			{Path: mk("e3.avi"), Season: 1, Episode: 3},
-		},
-	}
-	if _, _, err := show.Apply(data, false, false, capture, nil, 1, 2); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"[1/3] Show - Startrek / (1987) TNG",
-		"[2/3] Show - Startrek / (1987) TNG",
-		"[3/3] Show - Startrek / (1987) TNG",
-	}
-	if strings.Join(labels, "|") != strings.Join(want, "|") {
-		t.Fatalf("multi-file labels = %v, want %v", labels, want)
-	}
-}
-
-func TestExecuteRequiresFields(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "s.mp4")
-	os.WriteFile(src, []byte("x"), 0o644)
-	if _, err := Execute(Request{SourcePath: src, DataDir: dir, Title: "X", Year: 1999}); err == nil {
-		t.Fatal("expected error for missing category")
-	}
-	if _, err := Execute(Request{SourcePath: src, DataDir: dir, Category: "C", Title: "X"}); err == nil {
-		t.Fatal("expected error for missing year")
+	if len(got.Tags) != 1 || got.Tags[0] != "drama" {
+		t.Fatalf("missing tags should be filled: %+v", got.Tags)
 	}
 }

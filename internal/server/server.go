@@ -1,150 +1,291 @@
-// Package server is the authenticated HTTP layer: it serves the read API,
-// streams media from disk, and serves the embedded Svelte frontend.
+// Package server is the whole runtime: it boots in install mode when no config
+// exists, serves the embedded Svelte frontend plus a small JSON API, and rebinds to
+// the configured port once the user completes setup.
 package server
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
-	"filefin/internal/cache"
 	"filefin/internal/config"
+	"filefin/internal/importer"
 	"filefin/internal/logging"
-	"filefin/internal/state"
 	"filefin/internal/transcode"
 	"filefin/web"
 )
 
-// Server holds the dependencies for the HTTP handlers.
+// Server holds the live state shared across rebinds. cfg is nil in install mode.
 type Server struct {
+	mu       sync.RWMutex
 	cfg      *config.Config
-	store    *cache.Store
 	sessions *sessionStore
-	hls      *transcode.Manager
-	stateMgr *state.Manager
-	log      *logging.Scoped
+	reload   chan struct{}
+
+	db *sql.DB // lazily opened SQLite cache pool (nil until an admin page is entered)
+
+	// metaMgr serializes meta.json writes (rich metadata + per-user playback state)
+	// across the importer, the enricher, and the playback-state handlers, so no
+	// concurrent write can drop a section.
+	metaMgr *importer.Manager
+	// hls is the on-the-fly transcode session manager, lazily built on first playback
+	// and discarded when transcoding settings change so the new paths take effect.
+	hls *transcode.Manager
+
+	// lg is the live structured logger; logCloser closes a file output on swap. Both
+	// are guarded by mu. lg is nil-safe so callers never guard.
+	lg        *logging.Logger
+	logCloser io.Closer
+
+	// progress holds live copy byte counts for in-flight imports, keyed by import id.
+	// It is fresher than the periodic DB mirror and read by the Progress endpoint.
+	progMu      sync.Mutex
+	progress    map[int64]progressEntry
+	pollerStart sync.Once
+
+	// optimizer orchestration. reconfigOpt nudges the supervisor to re-read the mode and
+	// relaunch its agents; optPercent holds live encode percents (fresher than the DB
+	// mirror) keyed by optimize-task id.
+	optimizeStart sync.Once
+	reconfigOpt   chan struct{}
+	optMu         sync.Mutex
+	optPercent    map[int64]int
+
+	// enrichStart guards the single OMDb enrichment agent goroutine.
+	enrichStart sync.Once
+
+	// thumbnailStart guards the single thumbnail agent goroutine.
+	thumbnailStart sync.Once
+
+	// plexMu/jellyfinMu each guard a single in-flight library staging job's live
+	// progress (one job at a time per source, like the optimizer percent map). The
+	// frontend polls them.
+	plexMu      sync.Mutex
+	plexJob     stagingJobState
+	jellyfinMu  sync.Mutex
+	jellyfinJob stagingJobState
 }
 
-// userKey identifies the authenticated username stored in a request's context.
-type ctxKey int
-
-const userKey ctxKey = iota
-
-// userFrom returns the authenticated username for a request, set by auth.
-func userFrom(r *http.Request) string {
-	u, _ := r.Context().Value(userKey).(string)
-	return u
-}
-
-// New constructs a Server. enc is the video encoder transcode sessions use (detected
-// once at startup); the zero value falls back to software encoding. lg may be nil.
-func New(cfg *config.Config, store *cache.Store, enc transcode.Encoder, lg *logging.Logger) *Server {
+func New() *Server {
 	return &Server{
-		cfg:      cfg,
-		store:    store,
-		sessions: newSessionStore(),
-		stateMgr: state.NewManager(),
-		log:      lg.For(logging.Backend),
-		hls: transcode.NewManager(transcode.Options{
-			FFmpegPath:  cfg.FFmpegPath,
-			FFprobePath: cfg.FFprobePath,
-			Encoder:     enc,
-			Logger:      lg,
-		}),
+		sessions:    newSessionStore(),
+		reload:      make(chan struct{}, 1),
+		progress:    map[int64]progressEntry{},
+		metaMgr:     importer.NewManager(),
+		reconfigOpt: make(chan struct{}, 1),
+		optPercent:  map[int64]int{},
 	}
 }
 
-// Close releases server-held resources (active transcode sessions).
-func (s *Server) Close() { s.hls.Close() }
+// logger returns the live logger under lock (nil-safe for callers).
+func (s *Server) logger() *logging.Logger {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lg
+}
 
-// TranscodeActive reports whether any live transcode session is running, so the
-// background optimizer can yield to a viewer.
-func (s *Server) TranscodeActive() bool { return s.hls.ActiveSessions() > 0 }
+// configureLogger builds or live-reconfigures the logger from cfg (nil => defaults of
+// info/STDOUT). A bad output keeps the current destination and only applies the level,
+// so a typo in Settings never silences the app.
+func (s *Server) configureLogger(cfg *config.Config) {
+	level, output := "", ""
+	if cfg != nil {
+		level, output = cfg.LogLevel, cfg.LogOutput
+	}
+	lvl, err := logging.ParseLevel(level)
+	if err != nil {
+		lvl = logging.Info
+	}
+	w, closer, outErr := logging.ResolveOutput(output)
+	if outErr != nil {
+		s.mu.Lock()
+		if s.lg == nil {
+			lg, c, _ := logging.Open("", "") // stdout/info bootstrap
+			s.lg, s.logCloser = lg, c
+		}
+		s.lg.SetLevel(lvl)
+		s.mu.Unlock()
+		s.logger().For(logging.Backend).Error("log output unavailable, keeping current destination",
+			logging.Fields{"output": output, "error": outErr.Error()})
+		return
+	}
+	s.mu.Lock()
+	old := s.logCloser
+	if s.lg == nil {
+		s.lg = logging.New(lvl, w)
+	} else {
+		s.lg.SetLevel(lvl)
+		s.lg.SetOutput(w)
+	}
+	s.logCloser = closer
+	s.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+}
 
-// Handler builds the HTTP routes.
-func (s *Server) Handler() http.Handler {
+// Run serves until the process is stopped. After install (or any config change) the
+// reload signal makes it shut the current listener and rebind with the new config,
+// which is how the chosen port takes effect without a restart.
+func Run() error {
+	s := New()
+	s.startPoller()
+	for {
+		var cfg *config.Config
+		if config.Exists() {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			cfg = c
+		}
+		s.mu.Lock()
+		s.cfg = cfg
+		s.mu.Unlock()
+		s.configureLogger(cfg)
+		s.startOptimizer()
+		s.startEnrichAgent()
+		s.startThumbnailAgent()
+		s.signalReconfigOpt()
+
+		port := config.DefaultPort
+		mode := "install"
+		if cfg != nil {
+			port, mode = cfg.Port, "app"
+		}
+		srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: s.handler()}
+		errCh := make(chan error, 1)
+		go func() { errCh <- srv.ListenAndServe() }()
+		s.logger().For(logging.Backend).Info(
+			fmt.Sprintf("serving on http://localhost:%d", port),
+			logging.Fields{"port": port, "mode": mode})
+
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+		case <-s.reload:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = srv.Shutdown(ctx)
+			cancel()
+		}
+	}
+}
+
+// handler builds the routes for the current mode. Install routes are always present;
+// authenticated app routes only once a config exists.
+func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/login", s.handleLogin)
-	mux.HandleFunc("POST /api/logout", s.handleLogout)
-	mux.Handle("GET /api/me", s.auth(s.handleMe))
-	mux.Handle("GET /api/admin/summary", s.adminOnly(s.handleAdminSummary))
-	mux.Handle("GET /api/admin/optimizer", s.adminOnly(s.handleAdminOptimizer))
-	mux.Handle("GET /api/admin/users", s.adminOnly(s.handleAdminUsers))
-	mux.Handle("GET /api/continue", s.auth(s.handleContinue))
-	mux.Handle("GET /api/favorites", s.auth(s.handleFavorites))
-	mux.Handle("GET /api/completed", s.auth(s.handleCompleted))
-	mux.Handle("POST /api/media/{id}/favorite", s.auth(s.handleFavorite))
-	mux.Handle("DELETE /api/media/{id}/progress", s.auth(s.handleClearProgress))
-	mux.Handle("DELETE /api/media/{id}/watched", s.auth(s.handleClearWatched))
-	mux.Handle("GET /api/categories", s.auth(s.handleCategories))
-	mux.Handle("GET /api/categories/{cat}/media", s.auth(s.handleCategoryMedia))
-	mux.Handle("GET /api/media/{id}", s.auth(s.handleMedia))
-	mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
-	mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
-	mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
-	mux.Handle("GET /api/media/{id}/file/{n}/subtitle/{k}", s.auth(s.handleSubtitle))
-	mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))
-	mux.Handle("GET /api/media/{id}/file/{n}/hls/{seg}", s.auth(s.handleHLSSegment))
+	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("POST /api/install", s.handleInstall)
+	mux.HandleFunc("GET /api/install/browse", s.handleBrowse)
+
+	s.mu.RLock()
+	installed := s.cfg != nil
+	s.mu.RUnlock()
+	if installed {
+		mux.HandleFunc("POST /api/login", s.handleLogin)
+		mux.HandleFunc("POST /api/logout", s.handleLogout)
+		mux.Handle("GET /api/me", s.auth(s.handleMe))
+		mux.Handle("GET /api/categories", s.auth(s.handleListCategories))
+
+		// End-user library, detail, status, and playback.
+		mux.Handle("GET /api/home", s.auth(s.handleHome))
+		mux.Handle("GET /api/category/{id}/media", s.auth(s.handleCategoryMedia))
+		mux.Handle("GET /api/media/{id}", s.auth(s.handleMediaDetail))
+		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
+		mux.Handle("POST /api/media/{id}/favorite", s.auth(s.handleFavorite))
+		mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
+		mux.Handle("DELETE /api/media/{id}/progress", s.auth(s.handleClearProgress))
+		mux.Handle("DELETE /api/media/{id}/watched", s.auth(s.handleClearWatched))
+		mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
+		mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))
+		mux.Handle("GET /api/media/{id}/file/{n}/hls/{seg}", s.auth(s.handleHLSSegment))
+		mux.Handle("GET /api/media/{id}/file/{n}/sub/{k}", s.auth(s.handleSubtitle))
+		mux.Handle("GET /api/admin/categories", s.admin(s.handleListCategories))
+		mux.Handle("POST /api/admin/categories", s.admin(s.handleCreateCategory))
+		mux.Handle("PUT /api/admin/categories/{name}", s.admin(s.handleSetAlias))
+		mux.Handle("DELETE /api/admin/categories/{name}", s.admin(s.handleDeleteCategory))
+		mux.Handle("GET /api/admin/browse", s.admin(s.handleAdminBrowse))
+		mux.Handle("GET /api/admin/summary", s.admin(s.handleSummary))
+		mux.Handle("GET /api/admin/users", s.admin(s.handleListUsers))
+		mux.Handle("POST /api/admin/users", s.admin(s.handleCreateUser))
+		mux.Handle("PUT /api/admin/users/{id}", s.admin(s.handleUpdateUser))
+		mux.Handle("POST /api/admin/import/upload/begin", s.admin(s.handleUploadBegin))
+		mux.Handle("POST /api/admin/import/upload/file", s.admin(s.handleUploadFile))
+		mux.Handle("POST /api/admin/import/upload/assess", s.admin(s.handleUploadAssess))
+		mux.Handle("GET /api/admin/settings", s.admin(s.handleGetSettings))
+		mux.Handle("POST /api/admin/settings/format", s.admin(s.handleSetFormat))
+		mux.Handle("POST /api/admin/settings/import-folder", s.admin(s.handleSetImportFolder))
+		mux.Handle("POST /api/admin/settings/omdb-key", s.admin(s.handleSetOMDBKey))
+		mux.Handle("POST /api/admin/settings/logging", s.admin(s.handleSetLogging))
+		mux.Handle("POST /api/admin/settings/transcoding", s.admin(s.handleSetTranscoding))
+		mux.Handle("POST /api/admin/settings/subtitle-language", s.admin(s.handleSetSubtitleLanguage))
+		mux.Handle("POST /api/admin/settings/optimizer", s.admin(s.handleSetOptimizer))
+		mux.Handle("GET /api/admin/optimize/active", s.admin(s.handleActiveOptimize))
+		mux.Handle("POST /api/admin/optimize/scan", s.admin(s.handleOptimizeScan))
+		mux.Handle("GET /api/admin/enrich/active", s.admin(s.handleActiveEnrich))
+		mux.Handle("POST /api/admin/enrich/scan", s.admin(s.handleEnrichScan))
+		mux.Handle("GET /api/admin/thumbnail/active", s.admin(s.handleActiveThumbnail))
+		mux.Handle("POST /api/admin/thumbnail/scan", s.admin(s.handleThumbnailScan))
+		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
+		mux.Handle("POST /api/admin/import/assess", s.admin(s.handleAssess))
+		mux.Handle("GET /api/admin/import/plex/default", s.admin(s.handlePlexDefault))
+		mux.Handle("POST /api/admin/import/plex/check", s.admin(s.handlePlexCheck))
+		mux.Handle("POST /api/admin/import/plex/resolve", s.admin(s.handlePlexResolve))
+		mux.Handle("POST /api/admin/import/plex/prepare", s.admin(s.handlePlexPrepare))
+		mux.Handle("GET /api/admin/import/plex/progress", s.admin(s.handlePlexProgress))
+		mux.Handle("POST /api/admin/import/jellyfin/prepare", s.admin(s.handleJellyfinPrepare))
+		mux.Handle("GET /api/admin/import/jellyfin/progress", s.admin(s.handleJellyfinProgress))
+		mux.Handle("POST /api/admin/import/start", s.admin(s.handleStartImport))
+		mux.Handle("GET /api/admin/imports", s.admin(s.handleListImports))
+		mux.Handle("GET /api/admin/imports/active", s.admin(s.handleActiveImports))
+		mux.Handle("PUT /api/admin/imports/{id}", s.admin(s.handleUpdateImport))
+		mux.Handle("DELETE /api/admin/imports/{id}", s.admin(s.handleDeleteImport))
+	}
 	mux.Handle("/", s.spa())
 	return mux
 }
 
-// auth guards a handler, requiring a valid session cookie.
-func (s *Server) auth(next http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		var user string
-		if err == nil {
-			user, _ = s.sessions.user(c.Value)
-		}
-		if err != nil || user == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
-	})
-}
-
-// adminOnly guards a handler so only an authenticated admin reaches it: a logged-out
-// caller gets 401, a logged-in non-admin gets 403.
-func (s *Server) adminOnly(next http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		var user string
-		if err == nil {
-			user, _ = s.sessions.user(c.Value)
-		}
-		if err != nil || user == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if !s.cfg.Users[user].Admin {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
-	})
-}
-
 // spa serves the embedded frontend, falling back to index.html for client routes.
 func (s *Server) spa() http.Handler {
-	sub, _ := fs.Sub(web.Dist, "dist")
+	sub, err := fs.Sub(web.Dist, "dist")
+	if err != nil {
+		panic(err)
+	}
 	fileServer := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p != "" {
-			if _, err := fs.Stat(sub, p); err == nil {
-				fileServer.ServeHTTP(w, r)
-				return
-			}
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if name == "" {
+			name = "index.html"
 		}
-		index, err := fs.ReadFile(sub, "index.html")
+		if f, err := sub.Open(name); err == nil {
+			_ = f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		data, err := fs.ReadFile(sub, "index.html")
 		if err != nil {
-			http.Error(w, "frontend not built (run: just web-build)", http.StatusInternalServerError)
+			http.Error(w, "frontend not built", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(index)
+		_, _ = w.Write(data)
 	})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
 }

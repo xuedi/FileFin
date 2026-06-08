@@ -1,285 +1,168 @@
-// Package config reads and writes the single durable app config at ~/.<app>.md.
-// The file is hand-editable markdown; user accounts live here as bcrypt hashes.
+// Package config is the single piece of persistent app state: a JSON file at
+// ~/.filefin.json holding the server port and user accounts. It is written only by
+// the server (via the GUI), so it does not need to be hand-editable.
 package config
 
 import (
-	"bufio"
-	"fmt"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
 )
 
-// AppName is the binary name and the config-file stem (~/.filefin.md).
-const AppName = "filefin"
+// DefaultPort is used before any config exists (install mode).
+const DefaultPort = 8080
 
-// User is one account: a bcrypt password hash and whether the account is an admin.
+// User is one account. The map key in Config.Users is the username (an email). Hash is
+// a bcrypt hash of the password. ID is minted by the SQLite cache (the disposable
+// mirror) and written back here, so the config stays the source of truth. Alias is a
+// free-editable display name; Blocked temporarily bars login; CreatedAt/LastLoginAt are
+// unix seconds (LastLoginAt 0 = never).
 type User struct {
-	Hash  string
-	Admin bool
+	ID          int64  `json:"id,omitempty"`
+	Hash        string `json:"hash"`
+	Alias       string `json:"alias,omitempty"`
+	Admin       bool   `json:"admin,omitempty"`
+	Blocked     bool   `json:"blocked,omitempty"`
+	CreatedAt   int64  `json:"createdAt,omitempty"`
+	LastLoginAt int64  `json:"lastLoginAt,omitempty"`
 }
 
-// Config is the durable application state. It is the only thing the app persists
-// outside the filesystem data directory and the disposable cache.
-type Config struct {
-	DataDir   string
-	CachePath string
-	Port      int
-	APIKeys   map[string]string
-	Users     map[string]User // username -> account
-
-	FFmpegPath         string
-	FFprobePath        string
-	TranscodeEnabled   bool
-	HWAccel            string // "auto" (detect GPU) | "off" (force software)
-	HWAccelDevice      string // optional DRM render node override, e.g. /dev/dri/renderD128
-	OptimizeEnabled    bool   // background pre-transcode to direct-play copies (off by default)
-	OptimizeMaxWorkers int    // ceiling on concurrent optimize encodes; 0 = auto (CPU count)
-	OptimizeTargetLoad int    // CPU busy %% under which CPU workers may be added; 0 = default (80)
-
-	LogLevel  string // error | info | debug
-	LogOutput string // STDOUT | STDERR | a file path
-
-	SubtitleLanguage string // fallback language tag for external subtitles with no detectable language
-
-	path string
-}
-
-// New returns a Config with defaults applied.
-func New() *Config {
-	return &Config{
-		Port:             8080,
-		APIKeys:          map[string]string{},
-		Users:            map[string]User{},
-		FFmpegPath:       "ffmpeg",
-		FFprobePath:      "ffprobe",
-		TranscodeEnabled: true,
-		HWAccel:          "auto",
-		LogLevel:         "info",
-		LogOutput:        "STDOUT",
-		SubtitleLanguage: "en",
+// ActiveAdmins counts accounts that are admin and not blocked, i.e. those that can
+// currently reach the admin area. User management uses it to refuse any change that
+// would leave an installation with no usable admin.
+func (c *Config) ActiveAdmins() int {
+	n := 0
+	for _, u := range c.Users {
+		if u.Admin && !u.Blocked {
+			n++
+		}
 	}
+	return n
 }
 
-// DefaultPath is ~/.<app>.md.
-func DefaultPath() (string, error) {
+// Config is the whole persisted state. The cache is always a local SQLite file (see
+// internal/db), so there is no database backend to configure here.
+type Config struct {
+	Port         int             `json:"port"`
+	Users        map[string]User `json:"users"`
+	DataDir      string          `json:"dataDir"`
+	MediaFormat  string          `json:"mediaFormat"`  // "" until permanently chosen in Settings
+	ImportFolder string          `json:"importFolder"` // server path media is imported from
+	OMDBKey      string          `json:"omdbKey"`      // OMDb API key; "" skips metadata enrichment
+	LogLevel     string          `json:"logLevel"`     // error|info|debug; "" => info
+	LogOutput    string          `json:"logOutput"`    // STDOUT|STDERR|file path; "" => STDOUT
+
+	FFmpegPath       string `json:"ffmpegPath"`       // "" => "ffmpeg" on PATH
+	FFprobePath      string `json:"ffprobePath"`      // "" => "ffprobe" on PATH
+	TranscodeEnabled *bool  `json:"transcodeEnabled"` // nil => enabled (the default)
+	SubtitleLanguage string `json:"subtitleLanguage"` // preferred sidecar language; "" => "en"
+	OptimizeMode     string `json:"optimizeMode"`     // none|cpu|gpu|all; "" => none (off)
+}
+
+// Optimizer modes drive which background pre-transcode agents run.
+const (
+	OptimizeNone = "none" // off (the default)
+	OptimizeCPU  = "cpu"  // elastic software workers only
+	OptimizeGPU  = "gpu"  // one always-on worker on the best encoder
+	OptimizeAll  = "all"  // always-on worker plus elastic CPU workers
+)
+
+// ValidOptimizeMode is the set of accepted optimizer modes.
+var ValidOptimizeMode = map[string]bool{
+	OptimizeNone: true, OptimizeCPU: true, OptimizeGPU: true, OptimizeAll: true,
+}
+
+// OptimizeModeOr returns the configured optimizer mode, defaulting to none when unset.
+func (c *Config) OptimizeModeOr() string {
+	if c.OptimizeMode == "" {
+		return OptimizeNone
+	}
+	return c.OptimizeMode
+}
+
+// TranscodeOn reports whether on-the-fly transcoding is enabled (the default when
+// unset, so an upgraded config without the field keeps playing non-native files).
+func (c *Config) TranscodeOn() bool {
+	return c.TranscodeEnabled == nil || *c.TranscodeEnabled
+}
+
+// FFmpeg returns the configured ffmpeg path or the PATH default.
+func (c *Config) FFmpeg() string {
+	if c.FFmpegPath == "" {
+		return "ffmpeg"
+	}
+	return c.FFmpegPath
+}
+
+// FFprobe returns the configured ffprobe path or the PATH default.
+func (c *Config) FFprobe() string {
+	if c.FFprobePath == "" {
+		return "ffprobe"
+	}
+	return c.FFprobePath
+}
+
+// SubLang returns the preferred sidecar subtitle language or the "en" default.
+func (c *Config) SubLang() string {
+	if c.SubtitleLanguage == "" {
+		return "en"
+	}
+	return c.SubtitleLanguage
+}
+
+// Path is ~/.filefin.json.
+func Path() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "."+AppName+".md"), nil
+	return filepath.Join(home, ".filefin.json"), nil
 }
 
-// DefaultCachePath is the per-user cache location for the disposable SQLite index.
-func DefaultCachePath() (string, error) {
-	dir, err := os.UserCacheDir()
+// Exists reports whether a config file is present.
+func Exists() bool {
+	p, err := Path()
 	if err != nil {
-		return "", err
+		return false
 	}
-	return filepath.Join(dir, AppName, "cache.sqlite"), nil
+	_, err = os.Stat(p)
+	return err == nil
 }
 
-// Path reports where this config was loaded from or last saved to.
-func (c *Config) Path() string { return c.path }
-
-// Load parses a config markdown file.
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+// Load reads and parses the config.
+func Load() (*Config, error) {
+	p, err := Path()
 	if err != nil {
 		return nil, err
 	}
-	c := New()
-	c.path = path
-	section := ""
-	sc := bufio.NewScanner(strings.NewReader(string(data)))
-	for sc.Scan() {
-		trimmed := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(trimmed, "## ") {
-			section = strings.ToLower(strings.TrimSpace(trimmed[3:]))
-			continue
-		}
-		if !strings.HasPrefix(trimmed, "-") {
-			continue
-		}
-		key, val := splitKV(strings.TrimSpace(trimmed[1:]))
-		switch section {
-		case "data":
-			switch key {
-			case "dir":
-				c.DataDir = val
-			case "cache":
-				c.CachePath = val
-			}
-		case "server":
-			if key == "port" {
-				if p, err := strconv.Atoi(val); err == nil {
-					c.Port = p
-				}
-			}
-		case "transcode":
-			switch key {
-			case "ffmpeg":
-				if val != "" {
-					c.FFmpegPath = val
-				}
-			case "ffprobe":
-				if val != "" {
-					c.FFprobePath = val
-				}
-			case "enabled":
-				if b, err := strconv.ParseBool(val); err == nil {
-					c.TranscodeEnabled = b
-				}
-			case "hwaccel":
-				if val != "" {
-					c.HWAccel = val
-				}
-			case "device":
-				c.HWAccelDevice = val
-			}
-		case "optimize":
-			switch key {
-			case "enabled":
-				if b, err := strconv.ParseBool(val); err == nil {
-					c.OptimizeEnabled = b
-				}
-			case "maxWorkers":
-				if n, err := strconv.Atoi(val); err == nil && n >= 0 {
-					c.OptimizeMaxWorkers = n
-				}
-			case "targetLoad":
-				if n, err := strconv.Atoi(val); err == nil && n >= 0 {
-					c.OptimizeTargetLoad = n
-				}
-			}
-		case "logging":
-			switch key {
-			case "level":
-				if val != "" {
-					c.LogLevel = val
-				}
-			case "output":
-				if val != "" {
-					c.LogOutput = val
-				}
-			}
-		case "subtitles":
-			if key == "defaultLanguage" {
-				if v := strings.ToLower(strings.TrimSpace(val)); v != "" {
-					c.SubtitleLanguage = v
-				}
-			}
-		case "apikeys":
-			if key != "" {
-				c.APIKeys[key] = val
-			}
-		case "users":
-			if key != "" {
-				c.Users[key] = parseUser(val)
-			}
-		}
-	}
-	if err := sc.Err(); err != nil {
+	data, err := os.ReadFile(p)
+	if err != nil {
 		return nil, err
 	}
-	return c, nil
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	if c.Users == nil {
+		c.Users = map[string]User{}
+	}
+	return &c, nil
 }
 
-// Save writes the config in the hand-editable markdown format. Keys are sorted so
-// the output is stable across runs.
-func (c *Config) Save(path string) error {
-	if path == "" {
-		path = c.path
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "# %s config\n\n", AppName)
-	b.WriteString("## data\n")
-	fmt.Fprintf(&b, " - dir: %s\n", c.DataDir)
-	fmt.Fprintf(&b, " - cache: %s\n", c.CachePath)
-	b.WriteString("\n## server\n")
-	fmt.Fprintf(&b, " - port: %d\n", c.Port)
-	b.WriteString("\n## transcode\n")
-	fmt.Fprintf(&b, " - ffmpeg: %s\n", c.FFmpegPath)
-	fmt.Fprintf(&b, " - ffprobe: %s\n", c.FFprobePath)
-	fmt.Fprintf(&b, " - enabled: %t\n", c.TranscodeEnabled)
-	fmt.Fprintf(&b, " - hwaccel: %s\n", c.HWAccel)
-	if c.HWAccelDevice != "" {
-		fmt.Fprintf(&b, " - device: %s\n", c.HWAccelDevice)
-	}
-	b.WriteString("\n## optimize\n")
-	fmt.Fprintf(&b, " - enabled: %t\n", c.OptimizeEnabled)
-	if c.OptimizeMaxWorkers > 0 {
-		fmt.Fprintf(&b, " - maxWorkers: %d\n", c.OptimizeMaxWorkers)
-	}
-	if c.OptimizeTargetLoad > 0 {
-		fmt.Fprintf(&b, " - targetLoad: %d\n", c.OptimizeTargetLoad)
-	}
-	b.WriteString("\n## logging\n")
-	fmt.Fprintf(&b, " - level: %s\n", c.LogLevel)
-	fmt.Fprintf(&b, " - output: %s\n", c.LogOutput)
-	b.WriteString("\n## subtitles\n")
-	fmt.Fprintf(&b, " - defaultLanguage: %s\n", c.SubtitleLanguage)
-	b.WriteString("\n## apikeys\n")
-	for _, k := range sortedKeys(c.APIKeys) {
-		fmt.Fprintf(&b, " - %s: %s\n", k, c.APIKeys[k])
-	}
-	b.WriteString("\n## users\n")
-	for _, k := range sortedUsers(c.Users) {
-		u := c.Users[k]
-		if u.Admin {
-			fmt.Fprintf(&b, " - %s: %s (admin)\n", k, u.Hash)
-		} else {
-			fmt.Fprintf(&b, " - %s: %s\n", k, u.Hash)
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// Save writes the config atomically (temp file + rename) with mode 0600, since it
+// holds password hashes.
+func Save(c *Config) error {
+	p, err := Path()
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
 		return err
 	}
-	c.path = path
-	return nil
-}
-
-// parseUser splits a user bullet value into a hash and an admin flag. A trailing
-// "(admin)" marker (case-insensitive, any surrounding spacing) grants admin; the rest is
-// the bcrypt hash.
-func parseUser(val string) User {
-	u := User{}
-	rest := strings.TrimSpace(val)
-	if i := strings.LastIndex(strings.ToLower(rest), "(admin)"); i >= 0 && strings.TrimSpace(rest[i+len("(admin)"):]) == "" {
-		u.Admin = true
-		rest = strings.TrimSpace(rest[:i])
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
 	}
-	u.Hash = rest
-	return u
-}
-
-func sortedUsers(m map[string]User) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func splitKV(s string) (string, string) {
-	idx := strings.Index(s, ":")
-	if idx < 0 {
-		return strings.TrimSpace(s), ""
-	}
-	return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx+1:])
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return os.Rename(tmp, p)
 }

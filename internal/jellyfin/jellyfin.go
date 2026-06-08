@@ -1,8 +1,13 @@
-// Package jellyfin imports a Jellyfin/Kodi media library that uses the NFO
-// metadata format: per-item .nfo XML files plus poster/fanart image sidecars.
-// This is the documented, version-stable on-disk format Jellyfin reads and
-// writes (https://jellyfin.org/docs/general/server/metadata/nfo/). It reads the
-// library tree and never modifies it.
+// Package jellyfin reads a Jellyfin/Kodi media library that uses the NFO metadata
+// format: per-item .nfo XML files plus poster/fanart image sidecars. This is the
+// documented, version-stable on-disk format Jellyfin reads and writes
+// (https://jellyfin.org/docs/general/server/metadata/nfo/). It only reads the library
+// tree and never modifies it.
+//
+// The scanner is source-neutral, mirroring the Plex source: it returns Items that the
+// import front stage turns into preCheck rows (importer.MetaFromJellyfin shapes the
+// metadata, the server attaches sidecar subtitles), so this package depends on nothing
+// in the importer and carries no import cycle.
 package jellyfin
 
 import (
@@ -13,8 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"filefin/internal/importer"
-	"filefin/internal/model"
+	"filefin/internal/recognize"
 )
 
 var videoExts = map[string]bool{
@@ -31,39 +35,80 @@ var (
 	reSeason = regexp.MustCompile(`(?i)^(season\b|specials$|s\d+$)`)
 )
 
-// Scan walks a Jellyfin library directory and returns one importer.Media per
-// movie or show, all assigned to the given category.
-func Scan(root, category string) ([]importer.Media, error) {
+// Item is one movie or show discovered in the library. Files are its video files (one
+// for a movie, many for a show or an in-folder multi-part movie); Season/Episode are
+// set on show files. PosterPath is the absolute path of the chosen poster image, ""
+// when none was found.
+type Item struct {
+	Title      string
+	Year       int
+	IsShow     bool
+	PosterPath string
+	Files      []File
+	Details    Details
+}
+
+// File is one video file of an Item, with the season/episode it was recognised as
+// (both 0 for a movie).
+type File struct {
+	Path    string
+	Season  int
+	Episode int
+}
+
+// Details is the source-neutral metadata extracted from an NFO, shaped into a Meta by
+// importer.MetaFromJellyfin.
+type Details struct {
+	Description   string
+	Release       string // the NFO "premiered" date, possibly empty
+	Runtime       int
+	Directors     []string
+	Writers       []string
+	Rating        string
+	ContentRating string
+	Studio        string
+	UniqueIDs     []UniqueID
+	Actors        []string // each "Name" or "Name (Role)"
+	Genres        []string
+}
+
+// UniqueID is one external id from an NFO (imdb, tmdb, ...).
+type UniqueID struct {
+	Type  string
+	Value string
+}
+
+// Scan walks a Jellyfin library directory and returns one Item per movie or show. A
+// read error on the root is returned; per-entry read errors are skipped.
+func Scan(root string) ([]Item, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	var out []importer.Media
+	var out []Item
 	var loose []string
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		if e.IsDir() {
-			if m, ok := scanDir(filepath.Join(root, e.Name()), category); ok {
+			if m, ok := scanDir(filepath.Join(root, e.Name())); ok {
 				out = append(out, m)
 			}
 			continue
 		}
-		// A loose movie file directly under root; grouped after the walk so a
-		// multi-disc movie's parts land in one folder.
 		if videoExts[strings.ToLower(filepath.Ext(e.Name()))] {
 			loose = append(loose, e.Name())
 		}
 	}
-	return append(out, scanLooseMovies(root, loose, category)...), nil
+	return append(out, scanLooseMovies(root, loose)...), nil
 }
 
-func scanDir(dir, category string) (importer.Media, bool) {
+func scanDir(dir string) (Item, bool) {
 	if isShowDir(dir) {
-		return scanShow(dir, category)
+		return scanShow(dir)
 	}
-	return scanMovieDir(dir, category)
+	return scanMovieDir(dir)
 }
 
 func isShowDir(dir string) bool {
@@ -82,10 +127,10 @@ func isShowDir(dir string) bool {
 	return false
 }
 
-func scanMovieDir(dir, category string) (importer.Media, bool) {
+func scanMovieDir(dir string) (Item, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return importer.Media{}, false
+		return Item{}, false
 	}
 	var videos []string
 	for _, e := range entries {
@@ -94,7 +139,7 @@ func scanMovieDir(dir, category string) (importer.Media, bool) {
 		}
 	}
 	if len(videos) == 0 {
-		return importer.Media{}, false
+		return Item{}, false
 	}
 	folderTitle, folderYear := parseFolderName(filepath.Base(dir))
 
@@ -105,75 +150,50 @@ func scanMovieDir(dir, category string) (importer.Media, bool) {
 	}
 
 	title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, folderTitle, folderYear)
-	m := importer.Media{
-		Category:   category,
+	m := Item{
 		Title:      title,
 		Year:       year,
-		Meta:       metaFromDetails(nfo.detailsNFO, year),
+		Details:    toDetails(nfo.detailsNFO),
 		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
 	}
 	for _, v := range videos {
-		path := filepath.Join(dir, v)
-		m.Files = append(m.Files, importer.SourceFile{Path: path, Subtitles: importer.FindSidecarSubtitles(path)})
+		m.Files = append(m.Files, File{Path: filepath.Join(dir, v)})
 	}
 	return m, true
 }
 
-// scanLooseMovies turns loose video files directly under root into one Media each,
-// grouping a multi-disc movie's parts (same name modulo a "CD1"/"Part 2" marker)
-// into a single folder. First-seen order is preserved.
-func scanLooseMovies(dir string, videos []string, category string) []importer.Media {
-	type key struct {
-		title string
-		year  int
-	}
-	var order []key
-	groups := map[key][]string{}
+// scanLooseMovies turns each loose video file directly under root into its own movie
+// Item. Multi-disc grouping of loose files (the old DetectPart behaviour) is not ported
+// yet, since the new recognise package has no part detector; foldered multi-part movies
+// are still grouped by scanMovieDir.
+func scanLooseMovies(dir string, videos []string) []Item {
+	var out []Item
 	for _, v := range videos {
-		base := stripExt(v)
-		if stripped, _, ok := importer.DetectPart(base); ok {
-			base = stripped
-		}
-		title, year := parseFolderName(base)
-		k := key{title, year}
-		if _, seen := groups[k]; !seen {
-			order = append(order, k)
-		}
-		groups[k] = append(groups[k], v)
-	}
-	var out []importer.Media
-	for _, k := range order {
-		vs := groups[k]
+		title, year := parseFolderName(stripExt(v))
 		var nfo movieNFO
-		readNFO(filepath.Join(dir, stripExt(vs[0])+".nfo"), &nfo)
-		title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, k.title, k.year)
-		m := importer.Media{
-			Category: category,
-			Title:    title,
-			Year:     year,
-			Meta:     metaFromDetails(nfo.detailsNFO, year),
-		}
-		for _, v := range vs {
-			path := filepath.Join(dir, v)
-			m.Files = append(m.Files, importer.SourceFile{Path: path, Subtitles: importer.FindSidecarSubtitles(path)})
-		}
-		out = append(out, m)
+		readNFO(filepath.Join(dir, stripExt(v)+".nfo"), &nfo)
+		title, year = resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, title, year)
+		out = append(out, Item{
+			Title:   title,
+			Year:    year,
+			Details: toDetails(nfo.detailsNFO),
+			Files:   []File{{Path: filepath.Join(dir, v)}},
+		})
 	}
 	return out
 }
 
-func scanShow(dir, category string) (importer.Media, bool) {
+func scanShow(dir string) (Item, bool) {
 	folderTitle, folderYear := parseFolderName(filepath.Base(dir))
 	var nfo tvshowNFO
 	readNFO(filepath.Join(dir, "tvshow.nfo"), &nfo)
 	title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, folderTitle, folderYear)
 
-	m := importer.Media{
-		Category:   category,
+	m := Item{
 		Title:      title,
 		Year:       year,
 		IsShow:     true,
-		Meta:       metaFromDetails(nfo.detailsNFO, year),
+		Details:    toDetails(nfo.detailsNFO),
 		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
 	}
 	// Collect episode files anywhere under the show directory.
@@ -185,23 +205,23 @@ func scanShow(dir, category string) (importer.Media, bool) {
 			return nil
 		}
 		s, e := episodeNumbers(path)
-		m.Files = append(m.Files, importer.SourceFile{Path: path, Season: s, Episode: e, Subtitles: importer.FindSidecarSubtitles(path)})
+		m.Files = append(m.Files, File{Path: path, Season: s, Episode: e})
 		return nil
 	})
 	if len(m.Files) == 0 {
-		return importer.Media{}, false
+		return Item{}, false
 	}
 	return m, true
 }
 
-// episodeNumbers reads season/episode from a sibling episode NFO, falling back
-// to parsing the filename (S01E02 / 1x02).
+// episodeNumbers reads season/episode from a sibling episode NFO, falling back to
+// parsing the filename (S01E02 / 1x02 / bare trailing number).
 func episodeNumbers(videoPath string) (int, int) {
 	var ep episodeNFO
 	if readNFO(stripExt(videoPath)+".nfo", &ep) && (ep.Season > 0 || ep.Episode > 0) {
 		return ep.Season, ep.Episode
 	}
-	p := importer.ParseName(filepath.Base(videoPath), true)
+	p := recognize.ParseName(filepath.Base(videoPath), true)
 	return p.Season, p.Episode
 }
 
@@ -269,33 +289,23 @@ func readNFO(path string, v any) bool {
 	return xml.Unmarshal(data, v) == nil
 }
 
-func metaFromDetails(d detailsNFO, year int) importer.MetaContent {
-	mc := importer.MetaContent{Description: firstNonEmpty(d.Plot, d.Outline)}
-	add := func(k, v string) {
-		if v = strings.TrimSpace(v); v != "" {
-			mc.Metadata = append(mc.Metadata, model.KV{Key: k, Value: v})
-		}
+// toDetails maps the raw NFO fields into the source-neutral Details.
+func toDetails(d detailsNFO) Details {
+	out := Details{
+		Description:   strings.TrimSpace(firstNonEmpty(d.Plot, d.Outline)),
+		Release:       strings.TrimSpace(d.Premiered),
+		Runtime:       d.Runtime,
+		Directors:     trimList(d.Directors),
+		Writers:       trimList(d.Credits),
+		Rating:        bestRating(d),
+		ContentRating: strings.TrimSpace(d.MPAA),
 	}
-	release := strings.TrimSpace(d.Premiered)
-	if release == "" && year > 0 {
-		release = strconv.Itoa(year)
-	}
-	add("release", release)
-	if d.Runtime > 0 {
-		add("runtime", strconv.Itoa(d.Runtime))
-	}
-	add("directedBy", strings.Join(d.Directors, ", "))
-	add("writtenBy", strings.Join(d.Credits, ", "))
-	if r := bestRating(d); r != "" {
-		add("rating", r)
-	}
-	add("contentRating", d.MPAA)
 	if len(d.Studios) > 0 {
-		add("studio", d.Studios[0])
+		out.Studio = strings.TrimSpace(d.Studios[0])
 	}
 	for _, u := range d.UniqueIDs {
 		if t := strings.TrimSpace(u.Type); t != "" {
-			add(t+"Id", strings.TrimSpace(u.Value))
+			out.UniqueIDs = append(out.UniqueIDs, UniqueID{Type: t, Value: strings.TrimSpace(u.Value)})
 		}
 	}
 	for _, a := range d.Actors {
@@ -306,14 +316,14 @@ func metaFromDetails(d detailsNFO, year int) importer.MetaContent {
 		if role := strings.TrimSpace(a.Role); role != "" {
 			name += " (" + role + ")"
 		}
-		mc.Actors = append(mc.Actors, name)
+		out.Actors = append(out.Actors, name)
 	}
 	for _, g := range d.Genres {
 		if g = strings.TrimSpace(g); g != "" {
-			mc.Tags = append(mc.Tags, strings.ToLower(g))
+			out.Genres = append(out.Genres, g)
 		}
 	}
-	return mc
+	return out
 }
 
 func bestRating(d detailsNFO) string {
@@ -331,8 +341,8 @@ func bestRating(d detailsNFO) string {
 	return ""
 }
 
-// resolveTitleYear prefers NFO data, then the premiered date's year, then the
-// folder name.
+// resolveTitleYear prefers NFO data, then the premiered date's year, then the folder
+// name.
 func resolveTitleYear(nfoTitle string, nfoYear int, premiered, folderTitle string, folderYear int) (string, int) {
 	title := strings.TrimSpace(nfoTitle)
 	if title == "" {
@@ -350,8 +360,8 @@ func resolveTitleYear(nfoTitle string, nfoYear int, premiered, folderTitle strin
 	return title, year
 }
 
-// parseFolderName extracts a title and year from a folder/file name that
-// contains a "(YYYY)" anywhere (e.g. "The Matrix (1999)" or "(1999) The Matrix").
+// parseFolderName extracts a title and year from a folder/file name that contains a
+// "(YYYY)" anywhere (e.g. "The Matrix (1999)" or "(1999) The Matrix").
 func parseFolderName(name string) (string, int) {
 	year := 0
 	if m := reYear.FindStringSubmatch(name); m != nil {
@@ -398,4 +408,14 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func trimList(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

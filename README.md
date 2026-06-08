@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.1.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.5.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -19,33 +19,35 @@ only for fast browsing and search - delete the index any time and `rebuild` reco
 filesystem with no data loss. The server exposes an authenticated API and a small web UI, and streams
 files directly with HTTP byte-range support. The only state FileFin keeps outside your media folder is a
 single config file in your home directory. FileFin never modifies your existing media during normal
-operation; only `setup`, the explicit import commands, the optional optimizer, and per-user watch-state
-tracking (a small `state.md` per folder) ever write to the data directory.
+operation; only first-run setup, importing, the optional optimizer, and per-user watch-state tracking
+(kept in each item's `meta.json`) ever write to the data directory.
 
 ## Filesystem layout
 
 ```
 <data-dir>/
-├── Films - English/                       # a category (free-form label)
+├── Films - English/                       # a category: any folder with a config.json
+│   ├── config.json                          # marks this folder as a category
 │   └── (1980) The Gods Must Be Crazy/      # a media folder: "(YYYY) Title"
 │       ├── (1980) The Gods Must Be Crazy.avi
 │       ├── poster.jpg                       # optional
-│       ├── meta.md                          # optional metadata
-│       └── state.md                         # per-user watch state (written as you watch)
+│       └── meta.json                        # title, fields, technical info, per-user state
 └── Shows - English/
+    ├── config.json
     └── (2002) Firefly/
         ├── (2002) Firefly - 1x1.avi         # "(YYYY) Title - SxE"
         ├── (2002) Firefly - 1x2.avi
-        └── meta.md
+        └── meta.json
 ```
 
-There is no distinction between films and TV shows: a media folder simply holds one or more media files,
-whether that is a single film, a film series, or a multi-episode show. See `meta.md` in this repo for a
-worked example of the per-media metadata file.
+A folder is a category when it contains a `config.json`; otherwise a folder holding one or more video
+files is a media item. Categories nest to any depth. There is no distinction between films and TV shows: a
+media folder simply holds one or more media files, whether that is a single film, a film series, or a
+multi-episode show.
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26+
 - Node.js + npm (to build the web frontend)
 - `ffmpeg` and `ffprobe` (optional, only needed to transcode non-browser-native formats such as `.avi`/`.mkv`)
 - a VAAPI-capable GPU (optional; AMD or Intel, used automatically for hardware encoding when present)
@@ -54,159 +56,50 @@ worked example of the per-media metadata file.
 ## Build
 
 ```sh
-just web-build   # build the Svelte frontend into web/dist
-just build       # compile the single binary into ./bin/filefin
+git clone https://github.com/xuedi/FileFin
+cd FileFin
+just build            # builds the web frontend, then the single binary into bin/filefin
 ```
 
 Without `just`:
 
 ```sh
 cd web && npm install && npm run build && cd ..
-CGO_ENABLED=0 go build -o bin/filefin ./cmd/filefin
+go build -o bin/filefin ./cmd/filefin
 ```
-
-The binary embeds the built frontend, so the result is fully self-contained.
 
 ## Usage
 
+FileFin is driven entirely from its web UI; there are no subcommands.
+
 ```sh
-# one-time setup: create the data directory and write the config (prompts for an admin login)
-filefin setup /path/to/media
-
-# copy a file into the library (flags must come before positional args)
-filefin import "Films - English" "/downloads/(1999) The Matrix.mkv"
-
-# check the library is well-formed (read-only)
-filefin validate
-
-# rebuild the cache index from the filesystem
-filefin rebuild
-
-# run the server (default http://localhost:8080)
-filefin serve
+just run              # build + run
+# or just run the binary directly
+./bin/filefin
 ```
 
-`import` identifies the title, year, and (for shows) season/episode from the filename, supporting both
-`(1999) The Matrix.mkv` and release-style `The.Matrix.1999.1080p.mkv` names. It copies the file into the
-canonical `(YYYY) Title/` layout and writes a `meta.md` for new media folders.
+On first start there is no config (`~/.filefin.json`), so FileFin comes up in **install mode** and serves
+a setup page on port `8080`. Open it in a browser, create the admin account, and pick your data directory
+and port. FileFin then rebinds and serves the library on the chosen port. Everything after that - importing
+media, organising categories, managing users, and changing settings - is done from the web UI.
 
-## Configuration
+## Features
 
-Configuration lives in `~/.filefin.md` (created by `setup`): a hand-editable markdown file holding the
-data directory, server port, API keys, and user accounts (passwords are stored as bcrypt hashes). A user is
-an administrator when its bullet ends with ` (admin)`, e.g. `- root: <hash> (admin)`; `setup` creates the
-first account as an admin. Admins get an in-app admin area (dashboard and optimizer queue) via a toggle in
-the top bar.
-
-### Optional: logging
-
-The server logs meaningful events (startup, playback, imports, optimization) under a level and output:
-
-```markdown
-## logging
- - level: info
- - output: STDOUT
-```
-
-`level` is `error`, `info`, or `debug`. `info` prints one human line per event
-(`[2026-06-06 17:07:36] backend: serving on http://localhost:8080`); `debug` prints the same events as JSON
-enriched with telemetry (durations, codecs, GPU, ...). `output` is `STDOUT`, `STDERR`, or a file path.
-
-### Optional: metadata enrichment
-
-If you add an [OMDb API](https://www.omdbapi.com) key to the config, `import` will fill `meta.md`
-(description, runtime, director, cast, genres as tags, ...) and download a poster automatically:
-
-```markdown
-## apikeys
- - omdb: YOUR_OMDB_KEY
-```
-
-Pass `--no-fetch` to skip the lookup for a single import.
-
-### Optional: subtitles
-
-All three importers (`import`, `plex`, `jellyfin`) carry external subtitle files into the media folder,
-named after the video with a language infix - `(1967) The Assassin.en.srt`. `ass`/`ssa` subtitles are
-converted to `srt` with `ffmpeg`; VobSub `sub`+`idx` pairs are copied verbatim. When a subtitle's language
-cannot be determined, it falls back to a configurable default:
-
-```markdown
-## subtitles
- - defaultLanguage: en
-```
-
-`import` also accepts `--sub-lang <tag>` to set the fallback for a single run.
-
-External `.srt` subtitles are shown in the player: the server converts them to WebVTT on the fly (the files
-stay `.srt` on disk) and offers each as a selectable track in the video controls, for both direct-play and
-transcoded titles. Tracks are off until you pick a language from the player's subtitle menu.
-
-### Optional: transcoding
-
-Browser-native containers (`.mp4`, `.webm`, `.m4v`) are streamed directly. Everything else (`.avi`, `.mkv`,
-`.mov`, ...) is transcoded to HLS on the fly with `ffmpeg` so it plays in the browser. Sources that are
-already H.264 + AAC/MP3 are remuxed without re-encoding, and seeking is fast even into not-yet-encoded
-regions (the encoder repositions to the seek target instead of grinding forward to it).
-
-When a VAAPI-capable GPU is available, encoding is offloaded to it automatically (probed once at startup;
-`serve` prints whether hardware acceleration is active). With no GPU it falls back to software (libx264).
-The defaults expect `ffmpeg`/`ffprobe` on `PATH`; override the paths, force software encoding, pin a
-specific render node, or turn transcoding off in the config:
-
-```markdown
-## transcode
- - ffmpeg: ffmpeg
- - ffprobe: ffprobe
- - enabled: true
- - hwaccel: auto
- - device: /dev/dri/renderD128
-```
-
-`hwaccel` is `auto` (detect a GPU, the default) or `off` (force software). `device` is optional - when set,
-only that render node is used; otherwise the first working one is chosen.
-
-### Optional: optimize for playback
-
-Files whose video codec a browser cannot decode (old MPEG-4/DivX `.avi`, HEVC, ...) are re-encoded on every
-playback. Enabling the optimizer pre-transcodes them **once** into a browser-direct-play
-`<name>.optimized.mp4` stored beside the source, so playback becomes a plain file with instant seeking and
-no per-play CPU/GPU. A single background worker (GPU-accelerated when available) processes the backlog while
-the server runs, yielding to live playback.
-
-```markdown
-## optimize
- - enabled: false
-```
-
-> **Warning:** this keeps the original **and** an optimized copy, so it roughly **doubles on-disk size** for
-> the affected files. It is **off by default**; enable it only if you have the disk headroom.
-
-## Status
-
-FileFin is an early MVP. Working today:
-
-- `setup`, `validate`, `rebuild`, `serve`, `import` (with optional OMDb enrichment), `plex`, and `jellyfin`
-- `plex` imports media, metadata, and posters from a Plex library database (read-only) into the
-  canonical layout, with a new/existing plan and confirmation before writing
-- `jellyfin` imports a Jellyfin/Kodi NFO library (per-item `.nfo` XML plus poster/fanart images)
-- filesystem scan → SQLite cache → authenticated API → embedded web UI
-- direct-play streaming with byte-range support for browser-native containers
-- on-the-fly HLS transcoding (via `ffmpeg`) so non-native formats like `.avi`/`.mkv` play in the browser,
-  with stream-copy remux when the source is already H.264 + AAC/MP3
-- fast seeking in transcoded streams: a far-forward seek repositions the encoder to the target rather
-  than waiting for a sequential encode to reach it
-- automatic GPU-accelerated encoding via VAAPI (AMD/Intel) when a compatible GPU is present, falling back
-  to software encoding otherwise
-- external `.srt` subtitles displayed in the player (converted to WebVTT on the fly), for both direct-play
-  and transcoded titles
-
-Not yet implemented:
-
-- hardware-accelerated decoding (decode stays in software; only encoding is offloaded to the GPU)
-- adaptive bitrate / multiple renditions
-- subtitles beyond external `.srt` sidecars (embedded/muxed tracks, and `.ass`/`.vtt`/VobSub display)
-- configurable naming scheme
+- **Filesystem as source of truth** - readable on-disk layout; the SQLite index is a disposable cache you
+  can delete and rebuild at any time with no data loss.
+- **Keep your own naming** - free-form categories that nest to any depth; no rigid file-naming rules.
+- **Single binary** - the CLI, web server, and frontend ship in one self-contained executable that runs
+  fully offline with no external assets.
+- **Direct streaming with on-demand transcoding** - HTTP byte-range direct play, falling back to HLS
+  transcoding (VAAPI hardware encoding when available) for non-browser-native formats.
+- **Optional background optimizer** - pre-transcodes media to browser-friendly copies to avoid live
+  transcoding.
+- **External subtitle support** - imports and serves sidecar `.srt` subtitles in the player.
+- **OMDb enrichment** - background fetch of titles, posters, and metadata, with frame-derived posters for
+  home videos and recordings.
+- **Multi-user with per-user state** - accounts with admin/block controls, resume points, watched flags,
+  and favorites.
+- **Import from Plex and Jellyfin** - bring an existing library across into FileFin's layout.
 
 ## License
 

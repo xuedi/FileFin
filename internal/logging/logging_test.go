@@ -22,9 +22,9 @@ func TestParseLevel(t *testing.T) {
 
 func TestInfoRendersHumanText(t *testing.T) {
 	var buf bytes.Buffer
-	New(Info, &buf).For(Optimizer).Info("optimized Django", Fields{"took_ms": 1234})
+	New(Info, &buf).For(Import).Info("imported Django", Fields{"took_ms": 1234})
 	out := buf.String()
-	if !strings.Contains(out, "optimizer: optimized Django") {
+	if !strings.Contains(out, "import: imported Django") {
 		t.Errorf("missing human line: %q", out)
 	}
 	if strings.Contains(out, "took_ms") || strings.Contains(out, "{") {
@@ -34,16 +34,16 @@ func TestInfoRendersHumanText(t *testing.T) {
 
 func TestDebugRendersJSONWithFields(t *testing.T) {
 	var buf bytes.Buffer
-	New(Debug, &buf).For(Optimizer).Info("optimized Django", Fields{"took_ms": 1234, "encoder": "vaapi"})
+	New(Debug, &buf).For(Import).Info("imported Django", Fields{"took_ms": 1234, "category": "Movies"})
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("debug output is not JSON: %v\n%s", err, buf.String())
 	}
-	if rec["category"] != "optimizer" || rec["level"] != "info" || rec["msg"] != "optimized Django" {
+	if rec["category"] != "import" || rec["level"] != "info" || rec["msg"] != "imported Django" {
 		t.Errorf("unexpected record: %v", rec)
 	}
-	if rec["encoder"] != "vaapi" || rec["took_ms"].(float64) != 1234 {
+	if rec["took_ms"].(float64) != 1234 {
 		t.Errorf("fields missing from JSON: %v", rec)
 	}
 	if _, ok := rec["pid"]; !ok {
@@ -79,4 +79,25 @@ func TestReservedKeysWinOverFields(t *testing.T) {
 func TestNilLoggerIsNoop(t *testing.T) {
 	var l *Logger
 	l.For(Backend).Info("should not panic")
+	l.SetLevel(Debug)
+	l.SetOutput(&bytes.Buffer{})
+}
+
+func TestSetLevelAndOutputLive(t *testing.T) {
+	var a, b bytes.Buffer
+	lg := New(Info, &a)
+	lg.For(Backend).Info("first")
+	// Raise threshold to error: an info event is now hidden.
+	lg.SetLevel(Error)
+	lg.For(Backend).Info("hidden")
+	if strings.Contains(a.String(), "hidden") {
+		t.Errorf("info leaked after SetLevel(Error): %q", a.String())
+	}
+	// Swap output: subsequent events land in b, not a.
+	lg.SetLevel(Info)
+	lg.SetOutput(&b)
+	lg.For(Backend).Info("second")
+	if !strings.Contains(b.String(), "second") || strings.Contains(a.String(), "second") {
+		t.Errorf("SetOutput did not redirect: a=%q b=%q", a.String(), b.String())
+	}
 }

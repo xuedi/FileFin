@@ -89,14 +89,6 @@ func NewManager(opts Options) *Manager {
 	return m
 }
 
-// ActiveSessions reports how many live transcode sessions exist, so the background
-// optimizer can yield the GPU/CPU to anyone currently watching.
-func (m *Manager) ActiveSessions() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.sessions)
-}
-
 // Close cancels every active session and removes its temp dir.
 func (m *Manager) Close() {
 	close(m.stop)
@@ -107,6 +99,14 @@ func (m *Manager) Close() {
 		_ = os.RemoveAll(s.dir)
 		delete(m.sessions, key)
 	}
+}
+
+// ActiveSessions reports how many transcode sessions are currently live. The optimizer
+// reads it to yield to viewers (live playback always wins over background encoding).
+func (m *Manager) ActiveSessions() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.sessions)
 }
 
 // Playlist ensures a session for key/inputPath exists and returns its VOD media
