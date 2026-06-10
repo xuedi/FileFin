@@ -22,6 +22,9 @@ single config file in your home directory. FileFin never modifies your existing 
 operation; only first-run setup, importing, the optional optimizer, and per-user watch-state tracking
 (kept in each item's `meta.json`) ever write to the data directory.
 
+For a deeper tour of how it works - the background agents, the import pipeline, playback, and the
+disposable cache - see the [architecture documentation](docs/).
+
 ## Filesystem layout
 
 ```
