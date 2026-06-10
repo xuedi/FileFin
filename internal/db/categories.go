@@ -47,13 +47,16 @@ CREATE TABLE IF NOT EXISTS media (
     enriched    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS media_files (
-    media_id TEXT,
-    idx      INTEGER,
-    path     TEXT,
-    name     TEXT,
-    season   INTEGER,
-    episode  INTEGER,
-    ext      TEXT
+    media_id    TEXT,
+    idx         INTEGER,
+    path        TEXT,
+    name        TEXT,
+    season      INTEGER,
+    episode     INTEGER,
+    ext         TEXT,
+    container   TEXT NOT NULL DEFAULT '',
+    video_codec TEXT NOT NULL DEFAULT '',
+    audio_codec TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS optimize_tasks (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +85,14 @@ CREATE TABLE IF NOT EXISTS thumbnail_tasks (
     status       TEXT,
     agent        TEXT,
     error        TEXT,
+    UNIQUE(media_id)
+);
+CREATE TABLE IF NOT EXISTS probe_tasks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id TEXT,
+    status   TEXT,
+    agent    TEXT,
+    error    TEXT,
     UNIQUE(media_id)
 );
 CREATE TABLE IF NOT EXISTS users (
@@ -137,6 +148,12 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"media", "enriched", `ALTER TABLE media ADD COLUMN enriched INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "other_media", `ALTER TABLE categories ADD COLUMN other_media INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "parent_id", `ALTER TABLE categories ADD COLUMN parent_id INTEGER`},
+		// Probed format, set at import and refreshed by the probe agent. An existing cache
+		// upgrades with empty columns; an un-probed row reads as empty and the decisions
+		// fall back to the filename extension until the probe agent backfills it.
+		{"media_files", "container", `ALTER TABLE media_files ADD COLUMN container TEXT NOT NULL DEFAULT ''`},
+		{"media_files", "video_codec", `ALTER TABLE media_files ADD COLUMN video_codec TEXT NOT NULL DEFAULT ''`},
+		{"media_files", "audio_codec", `ALTER TABLE media_files ADD COLUMN audio_codec TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, c := range cols {
 		has, err := hasColumn(ctx, pool, c.table, c.name)

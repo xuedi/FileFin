@@ -85,6 +85,55 @@ func (s *Server) refillThumbnail(ctx context.Context, pool *sql.DB) (int, error)
 	return candidates, nil
 }
 
+// refillProbe queues a probe task for every media item whose cache format columns are
+// missing on any file (e.g. after a rebuild), or whose meta.json lacks a complete
+// technical block, and prunes tasks for items now fully probed. It returns the candidate
+// count. A rebuild leaves the format columns empty, so this is what makes the cache
+// self-heal its probed format on the next sweep.
+func (s *Server) refillProbe(ctx context.Context, pool *sql.DB) (int, error) {
+	media, err := db.AllMedia(ctx, pool)
+	if err != nil {
+		return 0, err
+	}
+	missing, err := db.MediaMissingFormat(ctx, pool)
+	if err != nil {
+		return 0, err
+	}
+	missingSet := make(map[string]bool, len(missing))
+	for _, id := range missing {
+		missingSet[id] = true
+	}
+	queued, failed := 0, 0
+	for _, m := range media {
+		if missingSet[m.ID] || technicalIncomplete(m.FolderPath) {
+			if err := db.UpsertPendingProbe(ctx, pool, m.ID); err != nil {
+				failed++
+				continue
+			}
+			queued++
+		} else {
+			s.bestEffort(db.PruneProbe(ctx, pool, m.ID), "prune probe task")
+		}
+	}
+	if failed > 0 {
+		s.plog().Error("some probe tasks could not be queued", logging.Fields{"failed": failed})
+	}
+	return queued, nil
+}
+
+// technicalIncomplete reports whether a folder's meta.json is present but lacks a complete
+// technical block (no block, or no container/video codec), so the probe agent should
+// backfill it. A missing or unparseable meta.json is the health agent's concern, not the
+// probe queue's, so it reads as complete here.
+func technicalIncomplete(dir string) bool {
+	m, err := importer.ReadMeta(dir)
+	if err != nil {
+		return false
+	}
+	t := m.Technical
+	return t == nil || t.Container == "" || t.VideoCodec == ""
+}
+
 // Health-issue codes recorded in media_health. These are conditions the discovery agent
 // cannot fix automatically (unlike the refill candidacies above, which it just enqueues);
 // they are surfaced to the admin instead.
@@ -271,6 +320,7 @@ func (s *Server) reconcileDiff(ctx context.Context, pool *sql.DB, dataDir string
 		s.bestEffort(db.PruneEnrich(ctx, pool, id), "prune vanished enrich task")
 		s.bestEffort(db.PruneThumbnail(ctx, pool, id), "prune vanished thumbnail task")
 		s.bestEffort(db.PruneOptimizeForMedia(ctx, pool, id), "prune vanished optimize task")
+		s.bestEffort(db.PruneProbe(ctx, pool, id), "prune vanished probe task")
 		removed++
 	}
 	return added, removed

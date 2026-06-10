@@ -34,6 +34,7 @@ const (
 	Enrich    = "enrich"
 	Thumbnail = "thumbnail"
 	Discovery = "discovery"
+	Probe     = "probe"
 )
 
 // Fields is structured context attached to an event, rendered only at debug level.

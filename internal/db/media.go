@@ -21,14 +21,20 @@ type Media struct {
 }
 
 // MediaFile is one file belonging to a media row (season/episode 0 for a movie).
+// Container/VideoCodec/AudioCodec are the ffprobe-derived true format, set at import and
+// refreshed by the probe agent; they are empty for a row not yet probed (e.g. after a
+// cache rebuild), and the playback/optimize decisions fall back to Ext until then.
 type MediaFile struct {
-	MediaID string
-	Idx     int
-	Path    string
-	Name    string
-	Season  int
-	Episode int
-	Ext     string
+	MediaID    string
+	Idx        int
+	Path       string
+	Name       string
+	Season     int
+	Episode    int
+	Ext        string
+	Container  string
+	VideoCodec string
+	AudioCodec string
 }
 
 // InsertMedia inserts (or replaces) a media row. REPLACE keeps a reimport of the
@@ -92,14 +98,29 @@ func CategoryOtherMedia(ctx context.Context, pool *sql.DB, id int64) (bool, erro
 	return other, nil
 }
 
-// InsertMediaFile inserts one file row for a media item.
+// InsertMediaFile inserts one file row for a media item. The probed format columns ride
+// along from the struct (set by the importer after probing); a rebuild/reconcile leaves
+// them empty and the probe agent backfills them later.
 func InsertMediaFile(ctx context.Context, pool *sql.DB, f MediaFile) error {
 	_, err := pool.ExecContext(ctx,
-		`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext)
+		`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext, container, video_codec, audio_codec)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext, f.Container, f.VideoCodec, f.AudioCodec)
 	if err != nil {
 		return fmt.Errorf("insert media file %s/%d: %w", f.MediaID, f.Idx, err)
+	}
+	return nil
+}
+
+// SetMediaFileFormat records a file's probed true format (container + video/audio codec)
+// onto its cache row, used by the probe agent to backfill/refresh a row whose columns
+// were empty or stale.
+func SetMediaFileFormat(ctx context.Context, pool *sql.DB, mediaID string, idx int, container, vCodec, aCodec string) error {
+	_, err := pool.ExecContext(ctx,
+		`UPDATE media_files SET container = ?, video_codec = ?, audio_codec = ? WHERE media_id = ? AND idx = ?`,
+		container, vCodec, aCodec, mediaID, idx)
+	if err != nil {
+		return fmt.Errorf("set media file format %s/%d: %w", mediaID, idx, err)
 	}
 	return nil
 }
@@ -161,9 +182,9 @@ func ReplaceMediaFiles(ctx context.Context, pool *sql.DB, mediaID string, files 
 	}
 	for _, f := range files {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext); err != nil {
+			`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext, container, video_codec, audio_codec)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext, f.Container, f.VideoCodec, f.AudioCodec); err != nil {
 			return fmt.Errorf("insert media file %s/%d: %w", f.MediaID, f.Idx, err)
 		}
 	}

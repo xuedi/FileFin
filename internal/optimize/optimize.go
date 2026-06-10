@@ -29,12 +29,15 @@ type Candidate struct {
 }
 
 // Candidates derives the pending work from the cached media files: sources the browser
-// cannot direct-play that lack a fresh optimized copy. Remux-eligible files are not
-// filtered here (that needs ffprobe) - the agent skips them after probing.
+// cannot direct-play that lack a fresh optimized copy. The "cannot direct-play" judgement
+// uses the probed true format when the row carries it (so a `.avi`-named H.264/MP4 is not
+// queued), falling back to the filename extension for a row the probe agent has not
+// reached yet. Remux-eligible files are not filtered here (that needs ffprobe) - the agent
+// skips them after probing.
 func Candidates(files []db.MediaFile) []Candidate {
 	var out []Candidate
 	for _, f := range files {
-		if !transcode.NeedsTranscode(f.Ext) {
+		if !needsTranscode(f) {
 			continue
 		}
 		opt, fresh := transcode.OptimizedSibling(f.Path)
@@ -44,6 +47,15 @@ func Candidates(files []db.MediaFile) []Candidate {
 		out = append(out, Candidate{MediaID: f.MediaID, FileIdx: f.Idx, Source: f.Path, Optimized: opt})
 	}
 	return out
+}
+
+// needsTranscode reports whether a file is not browser-direct-playable, by its probed
+// format when known and by the filename extension otherwise.
+func needsTranscode(f db.MediaFile) bool {
+	if f.Container != "" && f.VideoCodec != "" {
+		return !transcode.DirectPlayable(f.Container, f.VideoCodec, f.AudioCodec)
+	}
+	return transcode.NeedsTranscode(f.Ext)
 }
 
 // EncodeOptions configures one optimize encode. Source/Output are the input file and the

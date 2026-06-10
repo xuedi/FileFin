@@ -246,6 +246,8 @@ export class AppState {
   enrichScanMsg = $state('')
   thumbnailScanning = $state(false)
   thumbnailScanMsg = $state('')
+  probeScanning = $state(false)
+  probeScanMsg = $state('')
 
   // inline alias editing in the admin table
   editName = $state('') // category being edited, '' = none
@@ -306,6 +308,8 @@ export class AppState {
   enrichPending = $state(0)
   thumbnailRows = $state([])
   thumbnailPending = $state(0)
+  probeRows = $state([])
+  probePending = $state(0)
   progressTimer = 0
 
   // admin dashboard
@@ -1007,6 +1011,20 @@ export class AppState {
     }
   }
 
+  async probeScan() {
+    this.probeScanning = true
+    this.probeScanMsg = ''
+    this.settingsError = ''
+    try {
+      const r = await api('/api/admin/probe/scan', { method: 'POST' })
+      this.probeScanMsg = `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for probing; ${r.pending} waiting in line.`
+    } catch (e) {
+      this.settingsError = (await errText(e)) || 'Probe scan failed'
+    } finally {
+      this.probeScanning = false
+    }
+  }
+
   async selectFormat() {
     if (!this.formatChoice) return
     this.settingsError = ''
@@ -1555,6 +1573,14 @@ export class AppState {
     } catch {
       this.thumbnailRows = []
       this.thumbnailPending = 0
+    }
+    try {
+      const r = await api('/api/admin/probe/active')
+      this.probeRows = r.active
+      this.probePending = r.pending
+    } catch {
+      this.probeRows = []
+      this.probePending = 0
     }
   }
 

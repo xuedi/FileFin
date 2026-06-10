@@ -75,3 +75,18 @@
   </table>
 {/if}
 {#if app.thumbnailPending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.thumbnailPending} more waiting in line</p>{/if}
+
+<h2 class="title is-6 ff-prog-section">Probing</h2>
+{#if app.probeRows.length === 0}
+  <p class="has-text-grey">No probing running.</p>
+{:else}
+  <table class="table is-fullwidth">
+    <thead><tr><th>Title</th><th>Agent</th><th>Status</th></tr></thead>
+    <tbody>
+      {#each app.probeRows as row}
+        <tr><td>{row.title}</td><td>{row.agent}</td><td>probing...</td></tr>
+      {/each}
+    </tbody>
+  </table>
+{/if}
+{#if app.probePending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.probePending} more waiting in line</p>{/if}

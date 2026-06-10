@@ -108,11 +108,11 @@ func TestMediaQueries(t *testing.T) {
 		t.Fatalf("no-poster item should yield empty path, got %q", p)
 	}
 
-	path, ext, err := FilePath(ctx, pool, "abc123", 0)
-	if err != nil || ext != ".mkv" || path != filepath.Join(dir, "(1999) The Matrix.mkv") {
-		t.Fatalf("file path: %q %q %v", path, ext, err)
+	f, ok, err := FileAt(ctx, pool, "abc123", 0)
+	if err != nil || !ok || f.Ext != ".mkv" || f.Path != filepath.Join(dir, "(1999) The Matrix.mkv") {
+		t.Fatalf("file: %+v ok=%v %v", f, ok, err)
 	}
-	if path, _, _ := FilePath(ctx, pool, "abc123", 9); path != "" {
-		t.Fatalf("unknown index should yield empty path, got %q", path)
+	if _, ok, _ := FileAt(ctx, pool, "abc123", 9); ok {
+		t.Fatalf("unknown index should yield ok=false")
 	}
 }

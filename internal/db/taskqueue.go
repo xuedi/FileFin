@@ -26,6 +26,7 @@ var (
 	enrichQueue    = taskQueue{table: "enrich_tasks", pending: EnrichStatusPending, active: EnrichStatusEnriching, errored: EnrichStatusError}
 	optimizeQueue  = taskQueue{table: "optimize_tasks", pending: OptimizeStatusPending, active: OptimizeStatusEncoding, errored: OptimizeStatusError}
 	thumbnailQueue = taskQueue{table: "thumbnail_tasks", pending: ThumbStatusPending, active: ThumbStatusGenerating, errored: ThumbStatusError}
+	probeQueue     = taskQueue{table: "probe_tasks", pending: ProbeStatusPending, active: ProbeStatusProbing, errored: ProbeStatusError}
 )
 
 // claim runs the race-free read-then-flip transaction shared by every queue: it selects

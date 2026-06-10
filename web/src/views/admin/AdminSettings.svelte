@@ -16,6 +16,9 @@
     <button class="button" disabled={app.thumbnailScanning} onclick={() => app.thumbnailScan()}>
       {app.thumbnailScanning ? 'Scanning...' : 'Thumbnail scan'}
     </button>
+    <button class="button" disabled={app.probeScanning} onclick={() => app.probeScan()}>
+      {app.probeScanning ? 'Scanning...' : 'Probe scan'}
+    </button>
     <button class="button" disabled={app.rebuilding} onclick={() => app.rebuildDb()}>
       {app.rebuilding ? 'Rebuilding...' : 'Rebuild database'}
     </button>
@@ -26,6 +29,7 @@
 {#if app.optimizeScanMsg}<p class="has-text-link">{app.optimizeScanMsg}</p>{/if}
 {#if app.enrichScanMsg}<p class="has-text-link">{app.enrichScanMsg}</p>{/if}
 {#if app.thumbnailScanMsg}<p class="has-text-link">{app.thumbnailScanMsg}</p>{/if}
+{#if app.probeScanMsg}<p class="has-text-link">{app.probeScanMsg}</p>{/if}
 <table class="table is-fullwidth">
   <tbody>
     {#each app.settings as row}

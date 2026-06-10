@@ -62,6 +62,10 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not clear thumbnail tasks", http.StatusInternalServerError)
 		return
 	}
+	if err := db.ClearProbeTasksAll(ctx, pool); err != nil {
+		http.Error(w, "could not clear probe tasks", http.StatusInternalServerError)
+		return
+	}
 	if err := db.ClearHealthAll(ctx, pool); err != nil {
 		http.Error(w, "could not clear media health", http.StatusInternalServerError)
 		return

@@ -69,7 +69,7 @@ func (s *Server) handleActiveEnrich(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, queueStatus[db.ActiveEnrich]{Active: active, Pending: pending})
 }
 
-// startEnrichAgent launches the single OMDb enrichment worker once per process.
+// startEnrichAgent launches the single OMDb enrichment agent once per process.
 func (s *Server) startEnrichAgent() {
 	s.enrichStart.Do(func() { go s.enrichLoop() })
 }

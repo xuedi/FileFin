@@ -84,16 +84,21 @@ func GetMedia(ctx context.Context, pool *sql.DB, id string) (Media, error) {
 	return m, nil
 }
 
+// fileColumns is the canonical media_files column order shared by every file query and
+// the scanMediaFile scanner.
+const fileColumns = `media_id, idx, path, name, season, episode, ext, container, video_codec, audio_codec`
+
 // scanMediaFile scans one media_files row in the canonical column order.
 func scanMediaFile(r *sql.Rows) (MediaFile, error) {
 	var f MediaFile
-	return f, r.Scan(&f.MediaID, &f.Idx, &f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext)
+	return f, r.Scan(&f.MediaID, &f.Idx, &f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext,
+		&f.Container, &f.VideoCodec, &f.AudioCodec)
 }
 
 // MediaFiles returns a media item's files, ordered by idx.
 func MediaFiles(ctx context.Context, pool *sql.DB, id string) ([]MediaFile, error) {
 	return queryRows(ctx, pool,
-		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files WHERE media_id = ? ORDER BY idx`,
+		`SELECT `+fileColumns+` FROM media_files WHERE media_id = ? ORDER BY idx`,
 		scanMediaFile, id)
 }
 
@@ -101,8 +106,19 @@ func MediaFiles(ctx context.Context, pool *sql.DB, id string) ([]MediaFile, erro
 // derive its candidate list.
 func AllFiles(ctx context.Context, pool *sql.DB) ([]MediaFile, error) {
 	return queryRows(ctx, pool,
-		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files ORDER BY media_id, idx`,
+		`SELECT `+fileColumns+` FROM media_files ORDER BY media_id, idx`,
 		scanMediaFile)
+}
+
+// MediaMissingFormat returns the ids of media items that have at least one file whose
+// probed format columns are still empty, for the probe agent's queue refill.
+func MediaMissingFormat(ctx context.Context, pool *sql.DB) ([]string, error) {
+	return queryRows(ctx, pool,
+		`SELECT DISTINCT media_id FROM media_files WHERE container = '' OR video_codec = '' ORDER BY media_id`,
+		func(r *sql.Rows) (string, error) {
+			var id string
+			return id, r.Scan(&id)
+		})
 }
 
 // FolderPath returns the on-disk media folder for an item, for the live meta.json
@@ -136,16 +152,19 @@ func PosterPath(ctx context.Context, pool *sql.DB, id string) (string, error) {
 	return filepath.Join(path, poster), nil
 }
 
-// FilePath returns the absolute path and lowercase extension of the n-th file of a media
-// item. An unknown id/index yields "" (no error).
-func FilePath(ctx context.Context, pool *sql.DB, id string, n int) (path, ext string, err error) {
-	err = pool.QueryRowContext(ctx,
-		`SELECT path, ext FROM media_files WHERE media_id = ? AND idx = ?`, id, n).Scan(&path, &ext)
+// FileAt returns the n-th file of a media item with its probed format, for the playback
+// serve decision. ok is false (no error) for an unknown id/index.
+func FileAt(ctx context.Context, pool *sql.DB, id string, n int) (MediaFile, bool, error) {
+	f := MediaFile{MediaID: id, Idx: n}
+	err := pool.QueryRowContext(ctx,
+		`SELECT path, name, season, episode, ext, container, video_codec, audio_codec
+         FROM media_files WHERE media_id = ? AND idx = ?`, id, n).
+		Scan(&f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext, &f.Container, &f.VideoCodec, &f.AudioCodec)
 	if err == sql.ErrNoRows {
-		return "", "", nil
+		return MediaFile{}, false, nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("query file path %s/%d: %w", id, n, err)
+		return MediaFile{}, false, fmt.Errorf("query file %s/%d: %w", id, n, err)
 	}
-	return path, ext, nil
+	return f, true, nil
 }

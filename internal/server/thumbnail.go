@@ -106,7 +106,7 @@ func (s *Server) handleActiveThumbnail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, queueStatus[db.ActiveThumbnail]{Active: active, Pending: pending})
 }
 
-// startThumbnailAgent launches the single thumbnail worker once per process.
+// startThumbnailAgent launches the single thumbnail agent once per process.
 func (s *Server) startThumbnailAgent() {
 	s.thumbnailStart.Do(func() { go s.thumbnailLoop() })
 }

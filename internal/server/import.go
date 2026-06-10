@@ -407,6 +407,9 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	// so the OMDb agent skips it; an empty blob falls back to a stub the enricher fills.
 	// The write goes through the shared per-folder lock so a playback event mid-import
 	// cannot race the file.
+	// Probe the real container + codecs once: the folder-wide meta.json technical block
+	// (first episode only) and this file's cache format columns both come from it.
+	tech := ffprobe.Probe(ctx, ffprobeBin, target)
 	meta, err := s.metaMgr.Update(dir, func(cur importer.Meta) importer.Meta {
 		if cur.Title != "" {
 			return cur // an earlier episode already wrote this folder's meta
@@ -420,7 +423,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 			nm = importer.StubMeta(row.Title, row.Year)
 		}
 		nm.Title, nm.Year = row.Title, row.Year // the row's title/year match the folder
-		if tech := ffprobe.Probe(ctx, target); !tech.Empty() {
+		if !tech.Empty() {
 			nm.Technical = &tech
 		}
 		nm.State = cur.State // preserve any state already on disk (defensive)
@@ -453,6 +456,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	idx, _ := db.CountMediaFiles(ctx, pool, id)
 	_ = db.InsertMediaFile(ctx, pool, db.MediaFile{
 		MediaID: id, Idx: idx, Path: target, Name: fileName, Season: row.Season, Episode: row.Episode, Ext: ext,
+		Container: tech.Container, VideoCodec: tech.VideoCodec, AudioCodec: tech.AudioCodec,
 	})
 
 	// The import folder is a vacuum: once the copy and media row are committed, remove

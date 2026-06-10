@@ -150,6 +150,9 @@ func (s *Server) discoveryTick(ctx context.Context) {
 	if _, err := s.refillThumbnail(ctx, pool); err != nil {
 		s.dlog().Error("discovery thumbnail refill failed", logging.Fields{"error": err.Error()})
 	}
+	if _, err := s.refillProbe(ctx, pool); err != nil {
+		s.dlog().Error("discovery probe refill failed", logging.Fields{"error": err.Error()})
+	}
 
 	// Rolling pass: fully process the N least-recently-checked items so a large library is
 	// swept as a continuous trickle rather than all at once.

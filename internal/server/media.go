@@ -309,7 +309,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	// source, plus any an admin later drops in beside the media.
 	folderEntries, _ := folderFileNames(m.Path)
 	for _, f := range files {
-		_, needsTranscode := playbackTarget(f.Path, f.Ext)
+		_, needsTranscode := playbackTarget(f)
 		fi := fileInfo{
 			Index: f.Idx, Name: f.Name, Season: f.Season, Episode: f.Episode,
 			Ext: f.Ext, Transcode: needsTranscode, Subtitles: []subtitleInfo{},

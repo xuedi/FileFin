@@ -196,7 +196,7 @@ func UpdateImportCategory(ctx context.Context, pool *sql.DB, id, categoryID int6
 	return nil
 }
 
-// UpdateImportProgress records the worker's progress and terminal state for a row.
+// UpdateImportProgress records the import agent's progress and terminal state for a row.
 func UpdateImportProgress(ctx context.Context, pool *sql.DB, id int64, status string, copied, total int64, errMsg string) error {
 	_, err := pool.ExecContext(ctx,
 		`UPDATE imports SET status = ?, copied = ?, total = ?, error = ? WHERE id = ?`,

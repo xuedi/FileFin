@@ -67,6 +67,9 @@ type Server struct {
 	// thumbnailStart guards the single thumbnail agent goroutine.
 	thumbnailStart sync.Once
 
+	// probeStart guards the single format-probe agent goroutine.
+	probeStart sync.Once
+
 	// discovery orchestration. The supervisor (optimizer pattern) re-arms its ticker on a
 	// reconfigDisc signal when the interval setting changes. maintMu serializes the cache
 	// mutations of a discovery tick against a full rebuild so the two never overlap;
@@ -167,6 +170,7 @@ func Run() error {
 		s.startOptimizer()
 		s.startEnrichAgent()
 		s.startThumbnailAgent()
+		s.startProbeAgent()
 		s.startDiscovery()
 		s.signalReconfigOpt()
 		s.signalReconfigDisc()
@@ -255,6 +259,8 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/enrich/scan", s.admin(s.handleEnrichScan))
 		mux.Handle("GET /api/admin/thumbnail/active", s.admin(s.handleActiveThumbnail))
 		mux.Handle("POST /api/admin/thumbnail/scan", s.admin(s.handleThumbnailScan))
+		mux.Handle("GET /api/admin/probe/active", s.admin(s.handleActiveProbe))
+		mux.Handle("POST /api/admin/probe/scan", s.admin(s.handleProbeScan))
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
 		mux.Handle("POST /api/admin/import/assess", s.admin(s.handleAssess))
 		mux.Handle("GET /api/admin/import/plex/default", s.admin(s.handlePlexDefault))

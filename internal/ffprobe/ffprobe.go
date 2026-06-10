@@ -79,11 +79,11 @@ func decode(ctx context.Context, bin, path string) (probeOutput, error) {
 	return po, nil
 }
 
-// Probe runs ffprobe on path and returns its technical details. A missing ffprobe
-// binary or any probe error yields an empty Technical, never an error - an import still
-// succeeds without it.
-func Probe(ctx context.Context, path string) Technical {
-	po, err := decode(ctx, "", path)
+// Probe runs ffprobe on path and returns its technical details, using the given binary
+// (falling back to "ffprobe" on PATH when empty). A missing ffprobe binary or any probe
+// error yields an empty Technical, never an error - an import still succeeds without it.
+func Probe(ctx context.Context, bin, path string) Technical {
+	po, err := decode(ctx, bin, path)
 	if err != nil {
 		return Technical{}
 	}

@@ -61,14 +61,25 @@ func (s *Server) resetHLS() {
 	}
 }
 
-// playbackTarget resolves which file playback should serve for a source and its
-// extension: a fresh optimized sibling is served directly (no transcode), otherwise the
-// source itself with its native transcode requirement.
-func playbackTarget(src, ext string) (serve string, needsTranscode bool) {
-	if sib, fresh := transcode.OptimizedSibling(src); fresh {
+// playbackTarget resolves which file playback should serve for a cached file: a fresh
+// optimized sibling is served directly (no transcode), otherwise the source itself with
+// its transcode requirement judged by fileNeedsTranscode.
+func playbackTarget(f db.MediaFile) (serve string, needsTranscode bool) {
+	if sib, fresh := transcode.OptimizedSibling(f.Path); fresh {
 		return sib, false
 	}
-	return src, transcode.NeedsTranscode(ext)
+	return f.Path, fileNeedsTranscode(f)
+}
+
+// fileNeedsTranscode reports whether a media file must be transcoded to play in the
+// browser. It judges by the probed format (the true container + codecs) when the row
+// carries it, falling back to the filename extension for a legacy row the probe agent
+// has not reached yet. This is what lets a `.avi`-named H.264/MP4 direct-play.
+func fileNeedsTranscode(f db.MediaFile) bool {
+	if f.Container != "" && f.VideoCodec != "" {
+		return !transcode.DirectPlayable(f.Container, f.VideoCodec, f.AudioCodec)
+	}
+	return transcode.NeedsTranscode(f.Ext)
 }
 
 // isOptimizedSibling reports whether a file name is an optimizer artifact (the
@@ -93,12 +104,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path, ext, err := db.FilePath(r.Context(), pool, r.PathValue("id"), n)
-	if err != nil || path == "" {
+	f, ok, err := db.FileAt(r.Context(), pool, r.PathValue("id"), n)
+	if err != nil || !ok {
 		http.NotFound(w, r)
 		return
 	}
-	serve, needsTranscode := playbackTarget(path, ext)
+	serve, needsTranscode := playbackTarget(f)
 	if needsTranscode {
 		if !s.transcodeOn() {
 			http.Error(w, "transcoding disabled", http.StatusUnsupportedMediaType)
@@ -107,18 +118,18 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path+"/hls/index.m3u8", http.StatusTemporaryRedirect)
 		return
 	}
-	f, err := os.Open(serve)
+	fh, err := os.Open(serve)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
-	fi, err := f.Stat()
+	defer fh.Close()
+	fi, err := fh.Stat()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
+	http.ServeContent(w, r, fi.Name(), fi.ModTime(), fh)
 }
 
 // streamTarget resolves the media file for an HLS request and enforces the toggle and
@@ -133,16 +144,16 @@ func (s *Server) streamTarget(w http.ResponseWriter, r *http.Request) (path, key
 	if !ok {
 		return "", "", false
 	}
-	p, ext, err := db.FilePath(r.Context(), pool, r.PathValue("id"), n)
-	if err != nil || p == "" {
+	f, found, err := db.FileAt(r.Context(), pool, r.PathValue("id"), n)
+	if err != nil || !found {
 		http.NotFound(w, r)
 		return "", "", false
 	}
-	if !s.transcodeOn() || !transcode.NeedsTranscode(ext) {
+	if !s.transcodeOn() || !fileNeedsTranscode(f) {
 		http.Error(w, "not transcodable", http.StatusUnsupportedMediaType)
 		return "", "", false
 	}
-	return p, r.PathValue("id") + "/" + r.PathValue("n"), true
+	return f.Path, r.PathValue("id") + "/" + r.PathValue("n"), true
 }
 
 func (s *Server) handleHLSPlaylist(w http.ResponseWriter, r *http.Request) {
@@ -209,11 +220,12 @@ func (s *Server) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path, _, err := db.FilePath(ctx, pool, id, n)
-	if err != nil || path == "" {
+	file, ok, err := db.FileAt(ctx, pool, id, n)
+	if err != nil || !ok {
 		http.NotFound(w, r)
 		return
 	}
+	path := file.Path
 	names, err := folderFileNames(folder)
 	if err != nil {
 		http.NotFound(w, r)

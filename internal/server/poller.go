@@ -27,8 +27,8 @@ func (s *Server) clearProgress(id int64) {
 	s.progMu.Unlock()
 }
 
-// startPoller launches the single background import worker, once per process. Every
-// ~5s, when a config exists, it drains import-status rows one at a time. The Start
+// startPoller launches the single background import agent (the poller), once per process.
+// Every ~5s, when a config exists, it drains import-status rows one at a time. The Start
 // button only flips statuses; the poller picks them up on its next tick.
 func (s *Server) startPoller() {
 	s.pollerStart.Do(func() {
