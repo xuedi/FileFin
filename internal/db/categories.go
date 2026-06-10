@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS users (
     blocked       INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL DEFAULT 0,
     last_login_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS media_health (
+    media_id        TEXT PRIMARY KEY,
+    last_checked_at INTEGER NOT NULL DEFAULT 0,
+    fingerprint     TEXT NOT NULL DEFAULT '',
+    ok              INTEGER NOT NULL DEFAULT 0,
+    issues          TEXT NOT NULL DEFAULT ''
 );`
 
 // Category is one row of the categories cache. It mirrors the authoritative config.json

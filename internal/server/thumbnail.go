@@ -43,30 +43,10 @@ func (s *Server) handleThumbnailScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	media, err := db.AllMediaPosters(ctx, pool)
+	candidates, err := s.refillThumbnail(ctx, pool)
 	if err != nil {
 		http.Error(w, "could not scan for thumbnail work", http.StatusInternalServerError)
 		return
-	}
-	flags, err := db.CategoryFlags(ctx, pool)
-	if err != nil {
-		http.Error(w, "could not read category flags", http.StatusInternalServerError)
-		return
-	}
-	candidates, failed := 0, 0
-	for _, m := range media {
-		if s.thumbnailCandidate(m, flags[m.CategoryID]) {
-			if err := db.UpsertPendingThumbnail(ctx, pool, m.ID, flags[m.CategoryID]); err != nil {
-				failed++
-				continue
-			}
-			candidates++
-		} else {
-			s.bestEffort(db.PruneThumbnail(ctx, pool, m.ID), "prune thumbnail task")
-		}
-	}
-	if failed > 0 {
-		s.tlog().Error("some thumbnail tasks could not be queued", logging.Fields{"failed": failed})
 	}
 	pending, err := db.CountPendingThumbnail(ctx, pool)
 	if err != nil {

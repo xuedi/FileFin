@@ -27,6 +27,10 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dataDir := s.dataDir()
 
+	// Serialize against a discovery tick so the two never mutate the cache concurrently.
+	s.maintMu.Lock()
+	defer s.maintMu.Unlock()
+
 	cats, err := library.List(dataDir)
 	if err != nil {
 		http.Error(w, "could not read categories", http.StatusInternalServerError)
@@ -56,6 +60,10 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := db.ClearThumbnailTasksAll(ctx, pool); err != nil {
 		http.Error(w, "could not clear thumbnail tasks", http.StatusInternalServerError)
+		return
+	}
+	if err := db.ClearHealthAll(ctx, pool); err != nil {
+		http.Error(w, "could not clear media health", http.StatusInternalServerError)
 		return
 	}
 
@@ -100,49 +108,59 @@ func scanCategoryMedia(dataDir string, c library.Category) []scannedMedia {
 		if !e.IsDir() {
 			continue
 		}
-		folder := e.Name()
-		dir := filepath.Join(catDir, folder)
-		if _, err := os.Stat(filepath.Join(dir, "config.json")); err == nil {
-			continue // a sub-category, scanned as its own category - not a media item
+		if sm, ok := readMediaFolder(dataDir, c, e.Name()); ok {
+			out = append(out, sm)
 		}
-		videos, poster := scanFolderFiles(dir)
-		if len(videos) == 0 {
-			continue // a folder with no media is not a media item
-		}
-
-		// Prefer the written meta.json; fall back to parsing the folder name.
-		title, year, desc, plot := "", 0, "", ""
-		enriched := false
-		if m, err := importer.ReadMeta(dir); err == nil {
-			title, year, desc, plot = m.Title, m.Year, m.Description, m.Plot
-			// A folder enriched before this flag existed has no Enriched=true but does
-			// carry an imdbID; treat either as enriched so it is not needlessly requeued.
-			enriched = m.Enriched || m.Metadata["imdbID"] != ""
-		}
-		if title == "" {
-			p := recognize.ParseName(folder, false)
-			title, year = p.Title, p.Year
-			if title == "" {
-				title = folder
-			}
-		}
-
-		id := mediaID(c.Name, folder)
-		sm := scannedMedia{media: db.Media{
-			ID: id, CategoryID: c.ID, Path: dir,
-			Year: year, Title: title, Description: desc, Plot: plot, Poster: poster, Enriched: enriched,
-		}}
-		for i, vf := range videos {
-			base := filepath.Base(vf)
-			p := recognize.ParseName(base, false)
-			sm.files = append(sm.files, db.MediaFile{
-				MediaID: id, Idx: i, Path: vf, Name: base,
-				Season: p.Season, Episode: p.Episode, Ext: strings.ToLower(filepath.Ext(base)),
-			})
-		}
-		out = append(out, sm)
 	}
 	return out
+}
+
+// readMediaFolder reconstructs one media folder's cache rows from meta.json (falling back
+// to parsing the folder name) and the video files on disk. ok is false when the folder is
+// a sub-category (has config.json) or holds no video files - neither is a media item. It
+// is the shared per-folder read used by both the full rebuild and the incremental
+// discovery reconcile.
+func readMediaFolder(dataDir string, c library.Category, folder string) (scannedMedia, bool) {
+	dir := filepath.Join(dataDir, c.Name, folder)
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err == nil {
+		return scannedMedia{}, false // a sub-category, scanned as its own category
+	}
+	videos, poster := scanFolderFiles(dir)
+	if len(videos) == 0 {
+		return scannedMedia{}, false // a folder with no media is not a media item
+	}
+
+	// Prefer the written meta.json; fall back to parsing the folder name.
+	title, year, desc, plot := "", 0, "", ""
+	enriched := false
+	if m, err := importer.ReadMeta(dir); err == nil {
+		title, year, desc, plot = m.Title, m.Year, m.Description, m.Plot
+		// A folder enriched before this flag existed has no Enriched=true but does
+		// carry an imdbID; treat either as enriched so it is not needlessly requeued.
+		enriched = m.Enriched || m.Metadata["imdbID"] != ""
+	}
+	if title == "" {
+		p := recognize.ParseName(folder, false)
+		title, year = p.Title, p.Year
+		if title == "" {
+			title = folder
+		}
+	}
+
+	id := mediaID(c.Name, folder)
+	sm := scannedMedia{media: db.Media{
+		ID: id, CategoryID: c.ID, Path: dir,
+		Year: year, Title: title, Description: desc, Plot: plot, Poster: poster, Enriched: enriched,
+	}}
+	for i, vf := range videos {
+		base := filepath.Base(vf)
+		p := recognize.ParseName(base, false)
+		sm.files = append(sm.files, db.MediaFile{
+			MediaID: id, Idx: i, Path: vf, Name: base,
+			Season: p.Season, Episode: p.Episode, Ext: strings.ToLower(filepath.Ext(base)),
+		})
+	}
+	return sm, true
 }
 
 // scanFolderFiles returns the sorted video files in a media folder plus the base name

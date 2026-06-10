@@ -33,33 +33,11 @@ func (s *Server) handleEnrichScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	media, err := db.UnenrichedMedia(ctx, pool)
+	queued, err := s.refillEnrich(ctx, pool)
 	if err != nil {
 		http.Error(w, "could not scan for enrichment work", http.StatusInternalServerError)
 		return
 	}
-	// Other-media categories (home videos / recordings) are never enriched: they would
-	// not match OMDb. Resolve each owning category's flag once into a map and skip them.
-	flags, err := db.CategoryFlags(ctx, pool)
-	if err != nil {
-		http.Error(w, "could not read category flags", http.StatusInternalServerError)
-		return
-	}
-	queued, failed := 0, 0
-	for _, m := range media {
-		if flags[m.CategoryID] {
-			continue
-		}
-		if err := db.UpsertPendingEnrich(ctx, pool, m.ID); err != nil {
-			failed++
-			continue
-		}
-		queued++
-	}
-	if failed > 0 {
-		s.elog().Error("some enrichment tasks could not be queued", logging.Fields{"failed": failed})
-	}
-	s.bestEffort(db.PruneEnrichedTasks(ctx, pool), "prune enriched tasks")
 	pending, err := db.CountPendingEnrich(ctx, pool)
 	if err != nil {
 		http.Error(w, "could not count enrichment tasks", http.StatusInternalServerError)

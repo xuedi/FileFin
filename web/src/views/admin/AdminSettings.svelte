@@ -70,6 +70,16 @@
             </div>
             <button class="button is-small is-primary" onclick={() => app.saveOptimizer()}>Save</button>
             <button class="button is-small is-ghost" onclick={() => (app.editOptimizer = false)}>Cancel</button>
+          {:else if row.name === 'Discovery' && app.editDiscovery}
+            <div class="select is-small">
+              <select bind:value={app.discoveryIntervalInput}>
+                {#each app.discoveryIntervals as d}
+                  <option value={d.value}>{d.label}</option>
+                {/each}
+              </select>
+            </div>
+            <button class="button is-small is-primary" onclick={() => app.saveDiscovery()}>Save</button>
+            <button class="button is-small is-ghost" onclick={() => (app.editDiscovery = false)}>Cancel</button>
           {:else}
             {row.value}
             {#if row.name === 'Import folder'}
@@ -86,6 +96,8 @@
               <button class="button is-small ff-settings-edit" onclick={() => app.startEditSubtitle()}>Edit</button>
             {:else if row.name === 'Optimizer'}
               <button class="button is-small ff-settings-edit" onclick={() => app.startEditOptimizer()}>Edit</button>
+            {:else if row.name === 'Discovery'}
+              <button class="button is-small ff-settings-edit" onclick={() => app.startEditDiscovery()}>Edit</button>
             {/if}
           {/if}
         </td>

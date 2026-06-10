@@ -137,8 +137,8 @@ func (s *Server) startOptimizeRun(ctx context.Context, wg *sync.WaitGroup) {
 		return
 	}
 
-	// The queue is filled only by an explicit "Optimizer scan" (handleOptimizeScan); the
-	// agents below just drain whatever it holds. There is no background discovery.
+	// The queue is filled by the scan (the "Optimizer scan" button or the discovery agent,
+	// see discovery.go); the agents below just drain whatever it holds.
 	if mode == config.OptimizeGPU || mode == config.OptimizeAll {
 		enc := s.optimizeGPUEncoder(ctx)
 		wg.Add(1)
@@ -169,8 +169,8 @@ func (s *Server) optimizeGPUEncoder(ctx context.Context) transcode.Encoder {
 
 // handleOptimizeScan is the manual queue refill: it walks the cached media files, queues
 // a task for every source that needs a direct-play copy and lacks a fresh one, prunes
-// stale rows, and reports how many candidates were found and how many are now pending.
-// There is no automatic discovery; the admin triggers this explicitly.
+// stale rows, and reports how many candidates were found and how many are now pending. The
+// discovery agent (discovery.go) runs the same refill on a timer.
 func (s *Server) handleOptimizeScan(w http.ResponseWriter, r *http.Request) {
 	pool, err := s.ensureDB(r.Context())
 	if err != nil {

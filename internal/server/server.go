@@ -67,6 +67,18 @@ type Server struct {
 	// thumbnailStart guards the single thumbnail agent goroutine.
 	thumbnailStart sync.Once
 
+	// discovery orchestration. The supervisor (optimizer pattern) re-arms its ticker on a
+	// reconfigDisc signal when the interval setting changes. maintMu serializes the cache
+	// mutations of a discovery tick against a full rebuild so the two never overlap;
+	// discRunning skips a tick while the previous one is still going; discLastSweep records
+	// the last completed sweep time (unix seconds) for the dashboard.
+	discoveryStart sync.Once
+	reconfigDisc   chan struct{}
+	maintMu        sync.Mutex
+	discMu         sync.Mutex
+	discRunning    bool
+	discLastSweep  int64
+
 	// plexStaging/jellyfinStaging each track a single in-flight library staging job's
 	// live progress (one job at a time per source, like the optimizer percent map). The
 	// frontend polls them.
@@ -76,12 +88,13 @@ type Server struct {
 
 func New() *Server {
 	return &Server{
-		sessions:    newSessionStore(),
-		reload:      make(chan struct{}, 1),
-		progress:    map[int64]progressEntry{},
-		metaMgr:     importer.NewManager(),
-		reconfigOpt: make(chan struct{}, 1),
-		optPercent:  map[int64]int{},
+		sessions:     newSessionStore(),
+		reload:       make(chan struct{}, 1),
+		progress:     map[int64]progressEntry{},
+		metaMgr:      importer.NewManager(),
+		reconfigOpt:  make(chan struct{}, 1),
+		optPercent:   map[int64]int{},
+		reconfigDisc: make(chan struct{}, 1),
 	}
 }
 
@@ -154,7 +167,9 @@ func Run() error {
 		s.startOptimizer()
 		s.startEnrichAgent()
 		s.startThumbnailAgent()
+		s.startDiscovery()
 		s.signalReconfigOpt()
+		s.signalReconfigDisc()
 
 		port := config.DefaultPort
 		mode := "install"
@@ -231,6 +246,9 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/settings/transcoding", s.admin(s.handleSetTranscoding))
 		mux.Handle("POST /api/admin/settings/subtitle-language", s.admin(s.handleSetSubtitleLanguage))
 		mux.Handle("POST /api/admin/settings/optimizer", s.admin(s.handleSetOptimizer))
+		mux.Handle("POST /api/admin/settings/discovery", s.admin(s.handleSetDiscovery))
+		mux.Handle("GET /api/admin/health", s.admin(s.handleHealth))
+		mux.Handle("POST /api/admin/discovery/run", s.admin(s.handleRunDiscovery))
 		mux.Handle("GET /api/admin/optimize/active", s.admin(s.handleActiveOptimize))
 		mux.Handle("POST /api/admin/optimize/scan", s.admin(s.handleOptimizeScan))
 		mux.Handle("GET /api/admin/enrich/active", s.admin(s.handleActiveEnrich))

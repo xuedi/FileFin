@@ -135,6 +135,44 @@ func CountFiles(ctx context.Context, pool *sql.DB) (int, error) {
 	return n, nil
 }
 
+// DeleteMedia removes one media item and its file rows from the cache, used by the
+// discovery reconcile when a folder has vanished from disk. The caller also prunes the
+// item's health row and any pending/error queue tasks.
+func DeleteMedia(ctx context.Context, pool *sql.DB, id string) error {
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media_files WHERE media_id = ?`, id); err != nil {
+		return fmt.Errorf("delete media files %s: %w", id, err)
+	}
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete media %s: %w", id, err)
+	}
+	return nil
+}
+
+// ReplaceMediaFiles swaps a media item's file rows for a fresh set, used by the discovery
+// reconcile when a folder's files changed on disk.
+func ReplaceMediaFiles(ctx context.Context, pool *sql.DB, mediaID string, files []MediaFile) error {
+	tx, err := pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace media files %s: %w", mediaID, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM media_files WHERE media_id = ?`, mediaID); err != nil {
+		return fmt.Errorf("clear media files %s: %w", mediaID, err)
+	}
+	for _, f := range files {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext); err != nil {
+			return fmt.Errorf("insert media file %s/%d: %w", f.MediaID, f.Idx, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace media files %s: %w", mediaID, err)
+	}
+	return nil
+}
+
 // ClearMedia empties the media cache (both tables), for a full rebuild from disk.
 func ClearMedia(ctx context.Context, pool *sql.DB) error {
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media_files`); err != nil {

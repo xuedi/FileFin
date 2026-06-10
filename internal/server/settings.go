@@ -22,17 +22,35 @@ type settingRow struct {
 // settingsView is the typed read view of the app config returned by every settings
 // endpoint: the structured values the form edits plus a flat name/value list for display.
 type settingsView struct {
-	MediaFormat      string       `json:"mediaFormat"`
-	ImportFolder     string       `json:"importFolder"`
-	OMDBKey          string       `json:"omdbKey"`
-	LogLevel         string       `json:"logLevel"`
-	LogOutput        string       `json:"logOutput"`
-	TranscodeEnabled bool         `json:"transcodeEnabled"`
-	FFmpegPath       string       `json:"ffmpegPath"`
-	FFprobePath      string       `json:"ffprobePath"`
-	SubtitleLanguage string       `json:"subtitleLanguage"`
-	OptimizeMode     string       `json:"optimizeMode"`
-	Settings         []settingRow `json:"settings"`
+	MediaFormat       string       `json:"mediaFormat"`
+	ImportFolder      string       `json:"importFolder"`
+	OMDBKey           string       `json:"omdbKey"`
+	LogLevel          string       `json:"logLevel"`
+	LogOutput         string       `json:"logOutput"`
+	TranscodeEnabled  bool         `json:"transcodeEnabled"`
+	FFmpegPath        string       `json:"ffmpegPath"`
+	FFprobePath       string       `json:"ffprobePath"`
+	SubtitleLanguage  string       `json:"subtitleLanguage"`
+	OptimizeMode      string       `json:"optimizeMode"`
+	DiscoveryInterval int          `json:"discoveryInterval"`
+	Settings          []settingRow `json:"settings"`
+}
+
+// discoveryLabel renders a discovery interval (seconds) as the human label shown in
+// Settings and the dashboard.
+func discoveryLabel(seconds int) string {
+	switch seconds {
+	case config.Discovery1h:
+		return "every 1 hour"
+	case config.Discovery3h:
+		return "every 3 hours"
+	case config.Discovery12h:
+		return "every 12 hours"
+	case config.Discovery24h:
+		return "every 24 hours"
+	default:
+		return "off"
+	}
 }
 
 // mutateConfig applies apply to a copy of the live config and persists it, publishing the
@@ -103,19 +121,21 @@ func settingsPayload(cfg *config.Config) settingsView {
 		{"ffprobe path", cfg.FFprobe()},
 		{"Subtitle language", cfg.SubLang()},
 		{"Optimizer", optimizeMode},
+		{"Discovery", discoveryLabel(cfg.DiscoveryInterval)},
 	}
 	return settingsView{
-		MediaFormat:      cfg.MediaFormat,
-		ImportFolder:     cfg.ImportFolder,
-		OMDBKey:          cfg.OMDBKey,
-		LogLevel:         logLevel,
-		LogOutput:        logOutput,
-		TranscodeEnabled: transcodeEnabled,
-		FFmpegPath:       cfg.FFmpeg(),
-		FFprobePath:      cfg.FFprobe(),
-		SubtitleLanguage: cfg.SubLang(),
-		OptimizeMode:     optimizeMode,
-		Settings:         rows,
+		MediaFormat:       cfg.MediaFormat,
+		ImportFolder:      cfg.ImportFolder,
+		OMDBKey:           cfg.OMDBKey,
+		LogLevel:          logLevel,
+		LogOutput:         logOutput,
+		TranscodeEnabled:  transcodeEnabled,
+		FFmpegPath:        cfg.FFmpeg(),
+		FFprobePath:       cfg.FFprobe(),
+		SubtitleLanguage:  cfg.SubLang(),
+		OptimizeMode:      optimizeMode,
+		DiscoveryInterval: cfg.DiscoveryInterval,
+		Settings:          rows,
 	}
 }
 
@@ -287,6 +307,29 @@ func (s *Server) handleSetOptimizer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signalReconfigOpt()
+	writeJSON(w, settingsPayload(cfg))
+}
+
+// handleSetDiscovery records the background discovery sweep interval and nudges the
+// discovery supervisor to re-arm its ticker (or idle) under the new interval without a
+// restart.
+func (s *Server) handleSetDiscovery(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Interval int `json:"interval"`
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !config.ValidDiscoveryInterval[req.Interval] {
+		http.Error(w, "discovery interval must be 0, 3600, 10800, 43200, or 86400", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.DiscoveryInterval = req.Interval })
+	if !ok {
+		return
+	}
+	s.signalReconfigDisc()
 	writeJSON(w, settingsPayload(cfg))
 }
 

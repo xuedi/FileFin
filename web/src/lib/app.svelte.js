@@ -192,6 +192,20 @@ export class AppState {
   editOptimizer = $state(false)
   optimizeModeInput = $state('none')
 
+  discoveryIntervals = [
+    { value: 0, label: 'Off' },
+    { value: 3600, label: 'Every 1 hour' },
+    { value: 10800, label: 'Every 3 hours' },
+    { value: 43200, label: 'Every 12 hours' },
+    { value: 86400, label: 'Every 24 hours' },
+  ]
+  discoveryInterval = $state(0)
+  editDiscovery = $state(false)
+  discoveryIntervalInput = $state(0)
+  discoveryRunning = $state(false)
+  discoveryMsg = $state('')
+  health = $state(null) // { items: [{id, title, issues:[{code,detail}], lastChecked}] }
+
   // import-folder picker (settings)
   ifBrowseOpen = $state(false)
   ifPath = $state('')
@@ -837,6 +851,49 @@ export class AppState {
     }
   }
 
+  startEditDiscovery() {
+    this.discoveryIntervalInput = this.discoveryInterval
+    this.editDiscovery = true
+    this.settingsError = ''
+  }
+
+  async saveDiscovery() {
+    this.settingsError = ''
+    try {
+      const r = await api('/api/admin/settings/discovery', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ interval: Number(this.discoveryIntervalInput) }),
+      })
+      this.discoveryInterval = r.discoveryInterval
+      this.settings = r.settings
+      this.editDiscovery = false
+    } catch (e) {
+      this.settingsError = (await errText(e)) || 'Could not save the discovery interval'
+    }
+  }
+
+  async runDiscovery() {
+    this.discoveryRunning = true
+    this.discoveryMsg = ''
+    try {
+      await api('/api/admin/discovery/run', { method: 'POST' })
+      this.discoveryMsg = 'Discovery sweep started; results appear as it runs.'
+    } catch (e) {
+      this.discoveryMsg = (await errText(e)) || 'Could not start a discovery sweep'
+    } finally {
+      this.discoveryRunning = false
+    }
+  }
+
+  async loadHealth() {
+    try {
+      this.health = await api('/api/admin/health')
+    } catch {
+      this.health = null
+    }
+  }
+
   async openImportFolderBrowser() {
     this.ifBrowseOpen = true
     await this.importFolderNavigate(this.importFolder || '')
@@ -883,6 +940,7 @@ export class AppState {
       this.ffprobePath = r.ffprobePath
       this.subtitleLanguage = r.subtitleLanguage
       this.optimizeMode = r.optimizeMode
+      this.discoveryInterval = r.discoveryInterval
       this.settings = r.settings
     } catch {}
   }
@@ -1521,6 +1579,7 @@ export class AppState {
     } catch {
       this.summary = null
     }
+    this.loadHealth()
   }
 
   // --- admin users ---

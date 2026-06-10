@@ -116,6 +116,12 @@ func PruneTask(ctx context.Context, pool *sql.DB, mediaID string, fileIdx int) e
 	return optimizeQueue.pruneByMedia(ctx, pool, mediaID, "file_idx = ?", fileIdx)
 }
 
+// PruneOptimizeForMedia removes every pending/error optimize task for a media item across
+// all its file indices, used by the discovery reconcile when the folder has vanished.
+func PruneOptimizeForMedia(ctx context.Context, pool *sql.DB, mediaID string) error {
+	return optimizeQueue.pruneByMedia(ctx, pool, mediaID, "")
+}
+
 // ResetEncodingToPending re-queues every encoding row, used at startup so a task whose
 // agent died mid-encode (no one owns it after a restart) is retried.
 func ResetEncodingToPending(ctx context.Context, pool *sql.DB) error {

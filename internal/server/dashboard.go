@@ -1,10 +1,21 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"time"
 
 	"filefin/internal/db"
 )
+
+// fmtUnix renders a unix-seconds timestamp as the canonical YYYY-MM-DD HH:MM:SS, or "" for
+// a zero time (never happened). Local time, never locale-formatted.
+func fmtUnix(sec int64) string {
+	if sec == 0 {
+		return ""
+	}
+	return time.Unix(sec, 0).Format("2006-01-02 15:04:05")
+}
 
 // handleSummary aggregates the admin dashboard's overview in one cheap call: library
 // totals, account counts, and the optimizer / enrich / import queue state. It derives
@@ -52,6 +63,16 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read import state", http.StatusInternalServerError)
 		return
 	}
+	healthIssues, err := db.CountUnhealthy(ctx, pool)
+	if err != nil {
+		http.Error(w, "could not read health state", http.StatusInternalServerError)
+		return
+	}
+	healthUnchecked, err := db.CountUncheckedMedia(ctx, pool)
+	if err != nil {
+		http.Error(w, "could not read health state", http.StatusInternalServerError)
+		return
+	}
 
 	s.mu.RLock()
 	total, admins := len(s.cfg.Users), 0
@@ -61,7 +82,11 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	mode := s.cfg.OptimizeModeOr()
+	interval := s.cfg.DiscoveryInterval
 	s.mu.RUnlock()
+	s.discMu.Lock()
+	lastSweep := s.discLastSweep
+	s.discMu.Unlock()
 
 	writeJSON(w, dashboardView{
 		Library:   libraryStats{Categories: categories, Media: media, Files: files},
@@ -69,7 +94,40 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		Optimizer: optimizerStats{Mode: mode, Pending: optPending, Active: len(optActive)},
 		Enrich:    pendingStat{Pending: enrichPending},
 		Imports:   activeStat{Active: len(importsActive)},
+		Health: healthStats{
+			Issues:    healthIssues,
+			Unchecked: healthUnchecked,
+			LastSweep: fmtUnix(lastSweep),
+			Discovery: discoveryLabel(interval),
+		},
 	})
+}
+
+// handleHealth returns the items currently flagged with issues (each issue decoded for the
+// wire), for the admin health panel.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pool, err := s.ensureDB(ctx)
+	if err != nil {
+		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	rows, err := db.ListUnhealthy(ctx, pool)
+	if err != nil {
+		http.Error(w, "could not read health", http.StatusInternalServerError)
+		return
+	}
+	items := make([]healthItem, 0, len(rows))
+	for _, r := range rows {
+		var issues []Issue
+		if r.Issues != "" {
+			_ = json.Unmarshal([]byte(r.Issues), &issues)
+		}
+		items = append(items, healthItem{
+			ID: r.MediaID, Title: r.Title, Issues: issues, LastChecked: fmtUnix(r.LastCheckedAt),
+		})
+	}
+	writeJSON(w, healthView{Items: items})
 }
 
 // dashboardView is the typed admin-dashboard summary, replacing the nested map payload.
@@ -79,6 +137,30 @@ type dashboardView struct {
 	Optimizer optimizerStats `json:"optimizer"`
 	Enrich    pendingStat    `json:"enrich"`
 	Imports   activeStat     `json:"imports"`
+	Health    healthStats    `json:"health"`
+}
+
+// healthStats is the dashboard's discovery/health overview: how many items carry issues,
+// how many are still unchecked (the sweep backlog), the last completed sweep time, and the
+// configured sweep interval label.
+type healthStats struct {
+	Issues    int    `json:"issues"`
+	Unchecked int    `json:"unchecked"`
+	LastSweep string `json:"lastSweep"`
+	Discovery string `json:"discovery"`
+}
+
+// healthView is the admin health panel: the list of flagged items.
+type healthView struct {
+	Items []healthItem `json:"items"`
+}
+
+// healthItem is one flagged media item with its decoded issues and last-checked time.
+type healthItem struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Issues      []Issue `json:"issues"`
+	LastChecked string  `json:"lastChecked"`
 }
 
 type libraryStats struct {

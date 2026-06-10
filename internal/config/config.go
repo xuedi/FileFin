@@ -60,6 +60,24 @@ type Config struct {
 	TranscodeEnabled *bool  `json:"transcodeEnabled"` // nil => enabled (the default)
 	SubtitleLanguage string `json:"subtitleLanguage"` // preferred sidecar language; "" => "en"
 	OptimizeMode     string `json:"optimizeMode"`     // none|cpu|gpu|all; "" => none (off)
+
+	// DiscoveryInterval is the background discovery sweep period in seconds; 0 (the
+	// default) turns the agent off. Only the fixed set in ValidDiscoveryInterval is
+	// accepted (off / 1h / 3h / 12h / 24h).
+	DiscoveryInterval int `json:"discoveryInterval"`
+}
+
+// Discovery sweep intervals (seconds). 0 is off; the rest are 1h / 3h / 12h / 24h.
+const (
+	Discovery1h  = 3600
+	Discovery3h  = 10800
+	Discovery12h = 43200
+	Discovery24h = 86400
+)
+
+// ValidDiscoveryInterval is the set of accepted discovery intervals (0 = off).
+var ValidDiscoveryInterval = map[int]bool{
+	0: true, Discovery1h: true, Discovery3h: true, Discovery12h: true, Discovery24h: true,
 }
 
 // Optimizer modes drive which background pre-transcode agents run.

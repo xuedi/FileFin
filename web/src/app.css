@@ -90,6 +90,8 @@ body { min-height: 100vh; }
 .ff-dash-card { display: flex; flex-direction: column; gap: 0.3rem; min-width: 160px; }
 .ff-dash-num { font-size: 1.8rem; font-weight: 600; }
 .ff-dash-label { font-size: 0.85rem; color: var(--bulma-text-weak); }
+.ff-health-head { margin-top: 2rem; }
+.ff-health-tag { margin-right: 0.35rem; }
 
 /* format picker boxes */
 .ff-format-boxes { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.25rem 0; }

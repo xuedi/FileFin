@@ -58,6 +58,16 @@ func scanSummaries(rows *sql.Rows) ([]MediaSummary, error) {
 	return out, rows.Err()
 }
 
+// AllMediaIDs returns every cached media id, for the discovery reconcile to diff the
+// cache against the on-disk folder set.
+func AllMediaIDs(ctx context.Context, pool *sql.DB) ([]string, error) {
+	return queryRows(ctx, pool, `SELECT id FROM media`,
+		func(r *sql.Rows) (string, error) {
+			var id string
+			return id, r.Scan(&id)
+		})
+}
+
 // GetMedia returns the media row for an id, or sql.ErrNoRows when absent.
 func GetMedia(ctx context.Context, pool *sql.DB, id string) (Media, error) {
 	var m Media
