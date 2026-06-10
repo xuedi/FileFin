@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // Thumbnail task statuses. A row is pending until the agent claims it (generating); on
@@ -41,113 +42,77 @@ type ActiveThumbnail struct {
 // (a generating row keeps its agent; an error row is cleared by PruneThumbnail once the
 // folder is complete).
 func UpsertPendingThumbnail(ctx context.Context, pool *sql.DB, mediaID string, otherMedia bool) error {
-	_, err := pool.ExecContext(ctx,
+	if _, err := pool.ExecContext(ctx,
 		`INSERT OR IGNORE INTO thumbnail_tasks (media_id, other_media, status, agent, error)
          VALUES (?, ?, ?, '', '')`,
-		mediaID, otherMedia, ThumbStatusPending)
-	return err
+		mediaID, otherMedia, ThumbStatusPending); err != nil {
+		return fmt.Errorf("upsert thumbnail %s: %w", mediaID, err)
+	}
+	return nil
 }
 
 // ClaimNextThumbnail atomically claims the oldest pending task for agent, flipping it to
 // generating, and returns it. ok is false when none is pending.
 func ClaimNextThumbnail(ctx context.Context, pool *sql.DB, agent string) (ThumbnailTask, bool, error) {
-	tx, err := pool.BeginTx(ctx, nil)
-	if err != nil {
-		return ThumbnailTask{}, false, err
-	}
-	defer tx.Rollback()
-
 	var t ThumbnailTask
-	err = tx.QueryRowContext(ctx,
-		`SELECT id, media_id, other_media FROM thumbnail_tasks WHERE status = ? ORDER BY id LIMIT 1`,
-		ThumbStatusPending).Scan(&t.ID, &t.MediaID, &t.OtherMedia)
-	if err == sql.ErrNoRows {
-		return ThumbnailTask{}, false, nil
+	id, ok, err := thumbnailQueue.claim(ctx, pool, agent, "media_id, other_media", "",
+		func(s scanner) (int64, error) {
+			var id int64
+			return id, s.Scan(&id, &t.MediaID, &t.OtherMedia)
+		})
+	if err != nil || !ok {
+		return ThumbnailTask{}, ok, err
 	}
-	if err != nil {
-		return ThumbnailTask{}, false, err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE thumbnail_tasks SET status = ?, agent = ?, error = '' WHERE id = ?`,
-		ThumbStatusGenerating, agent, t.ID); err != nil {
-		return ThumbnailTask{}, false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return ThumbnailTask{}, false, err
-	}
-	t.Status, t.Agent = ThumbStatusGenerating, agent
+	t.ID, t.Status, t.Agent = id, ThumbStatusGenerating, agent
 	return t, true, nil
 }
 
 // FinishThumbnail removes a task that generated successfully (the WebP files on disk are
 // now the record).
 func FinishThumbnail(ctx context.Context, pool *sql.DB, id int64) error {
-	_, err := pool.ExecContext(ctx, `DELETE FROM thumbnail_tasks WHERE id = ?`, id)
-	return err
+	return thumbnailQueue.finish(ctx, pool, id)
 }
 
 // FailThumbnail marks a task failed with a message, leaving it for inspection (not
 // retried automatically).
 func FailThumbnail(ctx context.Context, pool *sql.DB, id int64, msg string) error {
-	_, err := pool.ExecContext(ctx,
-		`UPDATE thumbnail_tasks SET status = ?, agent = '', error = ? WHERE id = ?`,
-		ThumbStatusError, msg, id)
-	return err
+	return thumbnailQueue.fail(ctx, pool, id, msg)
 }
 
 // ListActiveThumbnail returns the in-flight thumbnail jobs joined to their media title.
 func ListActiveThumbnail(ctx context.Context, pool *sql.DB) ([]ActiveThumbnail, error) {
-	rows, err := pool.QueryContext(ctx,
+	return queryRows(ctx, pool,
 		`SELECT t.id, COALESCE(m.title, ''), t.agent, t.status
          FROM thumbnail_tasks t
          LEFT JOIN media m ON m.id = t.media_id
-         WHERE t.status = ? ORDER BY t.id`, ThumbStatusGenerating)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ActiveThumbnail{}
-	for rows.Next() {
-		var a ActiveThumbnail
-		if err := rows.Scan(&a.ID, &a.Title, &a.Agent, &a.Status); err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+         WHERE t.status = ? ORDER BY t.id`,
+		func(r *sql.Rows) (ActiveThumbnail, error) {
+			var a ActiveThumbnail
+			return a, r.Scan(&a.ID, &a.Title, &a.Agent, &a.Status)
+		}, ThumbStatusGenerating)
 }
 
 // CountPendingThumbnail returns how many thumbnail tasks are still waiting.
 func CountPendingThumbnail(ctx context.Context, pool *sql.DB) (int, error) {
-	var n int
-	err := pool.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM thumbnail_tasks WHERE status = ?`, ThumbStatusPending).Scan(&n)
-	return n, err
+	return thumbnailQueue.countPending(ctx, pool)
 }
 
 // PruneThumbnail removes any pending or error task for a media folder, used by the scan
 // once the folder's thumbnails are complete. A generating row is left to its agent.
 func PruneThumbnail(ctx context.Context, pool *sql.DB, mediaID string) error {
-	_, err := pool.ExecContext(ctx,
-		`DELETE FROM thumbnail_tasks WHERE media_id = ? AND status IN (?, ?)`,
-		mediaID, ThumbStatusPending, ThumbStatusError)
-	return err
+	return thumbnailQueue.pruneByMedia(ctx, pool, mediaID, "")
 }
 
 // ResetGeneratingToPending re-queues every generating row, used at startup so a task
 // whose agent died mid-encode is retried.
 func ResetGeneratingToPending(ctx context.Context, pool *sql.DB) error {
-	_, err := pool.ExecContext(ctx,
-		`UPDATE thumbnail_tasks SET status = ?, agent = '' WHERE status = ?`,
-		ThumbStatusPending, ThumbStatusGenerating)
-	return err
+	return thumbnailQueue.resetActiveToPending(ctx, pool, "")
 }
 
 // ClearThumbnailTasksAll empties the queue, for a full cache rebuild (the queue is
 // transient and refilled by the scan from the media cache).
 func ClearThumbnailTasksAll(ctx context.Context, pool *sql.DB) error {
-	_, err := pool.ExecContext(ctx, `DELETE FROM thumbnail_tasks`)
-	return err
+	return thumbnailQueue.clearAll(ctx, pool)
 }
 
 // MediaPoster is a minimal media row for the thumbnail scan: the folder path, base
@@ -163,21 +128,12 @@ type MediaPoster struct {
 // AllMediaPosters returns every media item with its folder path, poster basename, and
 // category id, for the thumbnail scan to decide candidacy.
 func AllMediaPosters(ctx context.Context, pool *sql.DB) ([]MediaPoster, error) {
-	rows, err := pool.QueryContext(ctx,
-		`SELECT id, path, poster, category_id FROM media ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []MediaPoster{}
-	for rows.Next() {
-		var m MediaPoster
-		if err := rows.Scan(&m.ID, &m.Path, &m.Poster, &m.CategoryID); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return queryRows(ctx, pool,
+		`SELECT id, path, poster, category_id FROM media ORDER BY id`,
+		func(r *sql.Rows) (MediaPoster, error) {
+			var m MediaPoster
+			return m, r.Scan(&m.ID, &m.Path, &m.Poster, &m.CategoryID)
+		})
 }
 
 // CategoryFlags returns a map of category id to its other-media flag, for resolving each
@@ -185,7 +141,7 @@ func AllMediaPosters(ctx context.Context, pool *sql.DB) ([]MediaPoster, error) {
 func CategoryFlags(ctx context.Context, pool *sql.DB) (map[int64]bool, error) {
 	rows, err := pool.QueryContext(ctx, `SELECT id, other_media FROM categories`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query category flags: %w", err)
 	}
 	defer rows.Close()
 	out := map[int64]bool{}
@@ -193,7 +149,7 @@ func CategoryFlags(ctx context.Context, pool *sql.DB) (map[int64]bool, error) {
 		var id int64
 		var other bool
 		if err := rows.Scan(&id, &other); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan category flag: %w", err)
 		}
 		out[id] = other
 	}
@@ -203,6 +159,8 @@ func CategoryFlags(ctx context.Context, pool *sql.DB) (map[int64]bool, error) {
 // SetMediaPoster updates only the poster basename of a media cache row, used when the
 // thumbnail agent writes a frame-derived base poster for an other-media folder.
 func SetMediaPoster(ctx context.Context, pool *sql.DB, id, poster string) error {
-	_, err := pool.ExecContext(ctx, `UPDATE media SET poster = ? WHERE id = ?`, poster, id)
-	return err
+	if _, err := pool.ExecContext(ctx, `UPDATE media SET poster = ? WHERE id = ?`, poster, id); err != nil {
+		return fmt.Errorf("set media poster %s: %w", id, err)
+	}
+	return nil
 }

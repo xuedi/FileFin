@@ -5,8 +5,11 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"filefin/internal/fsutil"
 )
 
 // DefaultPort is used before any config exists (install mode).
@@ -158,11 +161,7 @@ func Save(c *Config) error {
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal config: %w", err)
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return fsutil.WriteFileAtomic(p, data, 0o600)
 }

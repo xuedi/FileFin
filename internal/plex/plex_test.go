@@ -1,6 +1,7 @@
 package plex
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -152,7 +153,7 @@ func newTestDB(t *testing.T) *DB {
 
 func TestSections(t *testing.T) {
 	d := newTestDB(t)
-	secs, err := d.Sections()
+	secs, err := d.Sections(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestSections(t *testing.T) {
 
 func TestSampleFilesSpread(t *testing.T) {
 	d := newTestDB(t)
-	files, err := d.SampleFiles([]string{"Films", "Series"}, 10)
+	files, err := d.SampleFiles(context.Background(), []string{"Films", "Series"}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestSampleFilesSpread(t *testing.T) {
 
 func TestItemsAndFiles(t *testing.T) {
 	d := newTestDB(t)
-	items, err := d.Items("")
+	items, err := d.Items(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

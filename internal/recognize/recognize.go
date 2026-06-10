@@ -39,6 +39,12 @@ var (
 	reSpecialsDir = regexp.MustCompile(`(?i)^specials?$`)
 )
 
+// IsSeasonDir reports whether a directory name is a season or specials folder
+// ("Season 1", "Series 02", "S03", "Specials"). It is used to detect a TV-show layout.
+func IsSeasonDir(name string) bool {
+	return reSeasonDir.MatchString(name) || reSpecialsDir.MatchString(name)
+}
+
 // FromPath identifies a media file from its path relative to the import root,
 // folding in directory context: a "Season N"/"S0N"/"Specials" ancestor folder sets
 // the season and marks the item as a show (so a bare trailing episode number is

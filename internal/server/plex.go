@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,19 +15,6 @@ import (
 	"filefin/internal/logging"
 	"filefin/internal/plex"
 )
-
-// stagingJobState is a single in-flight library staging job's live progress, shared by
-// the Plex and Jellyfin sources. running is not serialized; it guards against starting
-// a second job while one is active.
-type stagingJobState struct {
-	Total    int    `json:"total"`
-	Done     int    `json:"done"`
-	Staged   int    `json:"staged"`
-	Missing  int    `json:"missing"`
-	Finished bool   `json:"finished"`
-	Error    string `json:"error"`
-	running  bool
-}
 
 // plexSampleSize is how many files per library the resolver probes.
 const plexSampleSize = 10
@@ -71,11 +57,11 @@ func metadataDirOr(dbPath, metadataDir string) string {
 // handlePlexCheck opens the Plex database read-only and returns its libraries. It
 // stages nothing.
 func (s *Server) handlePlexCheck(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		DBPath      string `json:"dbPath"`
 		MetadataDir string `json:"metadataDir"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.DBPath) == "" {
+	}](w, r)
+	if err != nil || strings.TrimSpace(req.DBPath) == "" {
 		http.Error(w, "a Plex database path is required", http.StatusBadRequest)
 		return
 	}
@@ -85,7 +71,7 @@ func (s *Server) handlePlexCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	secs, err := d.Sections()
+	secs, err := d.Sections(r.Context())
 	if err != nil {
 		http.Error(w, "could not read the Plex libraries", http.StatusInternalServerError)
 		return
@@ -110,13 +96,13 @@ type plexResolution struct {
 // onto the filesystem. With no searchBase only the as-is check runs (a co-located
 // install goes green with zero input); with one it auto-detects a remap and verifies.
 func (s *Server) handlePlexResolve(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		DBPath      string   `json:"dbPath"`
 		MetadataDir string   `json:"metadataDir"`
 		Sections    []string `json:"sections"`
 		SearchBase  string   `json:"searchBase"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.DBPath) == "" {
+	}](w, r)
+	if err != nil || strings.TrimSpace(req.DBPath) == "" {
 		http.Error(w, "a Plex database path is required", http.StatusBadRequest)
 		return
 	}
@@ -128,7 +114,7 @@ func (s *Server) handlePlexResolve(w http.ResponseWriter, r *http.Request) {
 	defer d.Close()
 	out := []plexResolution{}
 	for _, sec := range req.Sections {
-		samples, err := d.SampleFiles([]string{sec}, plexSampleSize)
+		samples, err := d.SampleFiles(r.Context(), []string{sec}, plexSampleSize)
 		if err != nil {
 			http.Error(w, "could not sample the Plex library", http.StatusInternalServerError)
 			return
@@ -163,8 +149,8 @@ type plexPrepareReq struct {
 // preCheck row per locatable file; the frontend polls /plex/progress and redirects
 // to the preCheck page when it finishes.
 func (s *Server) handlePlexPrepare(w http.ResponseWriter, r *http.Request) {
-	var req plexPrepareReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.DBPath) == "" {
+	req, err := decodeJSON[plexPrepareReq](w, r)
+	if err != nil || strings.TrimSpace(req.DBPath) == "" {
 		http.Error(w, "a Plex database path is required", http.StatusBadRequest)
 		return
 	}
@@ -172,14 +158,10 @@ func (s *Server) handlePlexPrepare(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "select at least one library", http.StatusBadRequest)
 		return
 	}
-	s.plexMu.Lock()
-	if s.plexJob.running {
-		s.plexMu.Unlock()
+	if !s.plexStaging.begin() {
 		http.Error(w, "a Plex import is already in progress", http.StatusConflict)
 		return
 	}
-	s.plexJob = stagingJobState{running: true}
-	s.plexMu.Unlock()
 
 	go s.runPlexStaging(req)
 	w.WriteHeader(http.StatusAccepted)
@@ -187,24 +169,17 @@ func (s *Server) handlePlexPrepare(w http.ResponseWriter, r *http.Request) {
 
 // handlePlexProgress returns the live staging job state for the polling frontend.
 func (s *Server) handlePlexProgress(w http.ResponseWriter, r *http.Request) {
-	s.plexMu.Lock()
-	job := s.plexJob
-	s.plexMu.Unlock()
-	writeJSON(w, job)
+	writeJSON(w, s.plexStaging.snapshot())
 }
 
-// runPlexStaging is the background staging walk. It resolves target categories
-// (creating them from the Plex library name when asked), counts the files for the
-// progress denominator, then stages a preCheck row per locatable file with Plex's
-// own metadata blob. Originals are never touched: delete_after is forced off.
+// runPlexStaging is the background staging walk. It resolves target categories (creating
+// them from the Plex library name when asked), applies each library's path remap and
+// resolves subtitles into source-neutral staged items, then hands them to the shared
+// stageImport driver.
 func (s *Server) runPlexStaging(req plexPrepareReq) {
 	ctx := context.Background()
 	finishErr := func(msg string) {
-		s.plexMu.Lock()
-		s.plexJob.Error = msg
-		s.plexJob.Finished = true
-		s.plexJob.running = false
-		s.plexMu.Unlock()
+		s.plexStaging.fail(msg)
 		s.logger().For(logging.Import).Error("Plex import staging failed", logging.Fields{"error": msg})
 	}
 
@@ -246,78 +221,34 @@ func (s *Server) runPlexStaging(req plexPrepareReq) {
 	}
 	defer d.Close()
 
-	// Load items per library and count files for the progress denominator.
-	type secWork struct {
-		cat   library.Category
-		remap plex.Remap
-		items []plex.Item
-	}
-	var work []secWork
-	total := 0
+	// Build the source-neutral item list: one entry per file, with the remap and
+	// subtitle resolution (Plex's own responsibilities) already applied.
+	var items []stagedItem
 	for _, sel := range req.Selections {
-		items, err := d.Items(sel.Section)
+		plexItems, err := d.Items(ctx, sel.Section)
 		if err != nil {
 			finishErr("could not read the Plex library " + sel.Section)
 			return
 		}
-		for _, it := range items {
-			total += len(it.Files)
-		}
-		work = append(work, secWork{cat: cats[sel.Section], remap: remaps[sel.Section], items: items})
-	}
-	s.plexMu.Lock()
-	s.plexJob.Total = total
-	s.plexMu.Unlock()
-
-	staged, missing := 0, 0
-	for _, ws := range work {
-		for _, it := range ws.items {
+		cat, remap := cats[sel.Section], remaps[sel.Section]
+		for _, it := range plexItems {
 			blob := ""
 			if b, err := json.Marshal(importer.MetaFromPlex(it)); err == nil {
 				blob = string(b)
 			}
 			for _, f := range it.Files {
-				src := ws.remap.Apply(f.Path)
-				if !fileExists(src) {
-					missing++
-					s.plexAdvance(false)
-					continue
-				}
-				_, _ = db.InsertImport(ctx, pool, db.Import{
-					CategoryID: ws.cat.ID,
-					SourcePath: src, Filename: filepath.Base(src),
-					Title: it.Title, Year: it.Year, Season: f.Season, Episode: f.Episode,
-					Subtitles: plexSubsJSON(f.Subtitles, ws.remap), Poster: it.PosterPath,
-					APIJSON: blob, Origin: db.OriginPlex,
-					Status: db.StatusPreCheck, DeleteAfter: false,
+				items = append(items, stagedItem{
+					categoryID: cat.ID,
+					sourcePath: remap.Apply(f.Path),
+					title:      it.Title, year: it.Year, season: f.Season, episode: f.Episode,
+					subtitles: plexSubsJSON(f.Subtitles, remap), poster: it.PosterPath,
+					metaBlob: blob,
 				})
-				staged++
-				s.plexAdvance(true)
 			}
 		}
 	}
 
-	s.plexMu.Lock()
-	s.plexJob.Done = total
-	s.plexJob.Staged = staged
-	s.plexJob.Missing = missing
-	s.plexJob.Finished = true
-	s.plexJob.running = false
-	s.plexMu.Unlock()
-	s.logger().For(logging.Import).Info(fmt.Sprintf("staged %d Plex file(s) for import", staged),
-		logging.Fields{"staged": staged, "missing": missing})
-}
-
-// plexAdvance records one file processed (staged or missing) for the progress poll.
-func (s *Server) plexAdvance(staged bool) {
-	s.plexMu.Lock()
-	s.plexJob.Done++
-	if staged {
-		s.plexJob.Staged++
-	} else {
-		s.plexJob.Missing++
-	}
-	s.plexMu.Unlock()
+	s.stageImport(ctx, pool, &s.plexStaging, items, db.OriginPlex, "Plex")
 }
 
 // plexSubsJSON applies the remap to each external subtitle, keeps the ones that

@@ -1,11 +1,13 @@
-// Package ffprobe extracts technical details from a media file by shelling out to
-// ffprobe. It is best-effort: when ffprobe is not on PATH or fails, Probe returns an
-// empty Technical and no error, so an import still succeeds without it.
+// Package ffprobe extracts media details by shelling out to ffprobe. Every variant runs
+// the same single `-show_format -show_streams` decode and reads a different slice of the
+// result: Probe for the durable technical block, ProbeStreams for the codec/duration the
+// transcode decision needs, SubtitleStreams for the embedded subtitle tracks.
 package ffprobe
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os/exec"
 	"strconv"
@@ -24,6 +26,14 @@ type Technical struct {
 // Empty reports whether nothing was collected (so callers can omit the section).
 func (t Technical) Empty() bool {
 	return t == Technical{}
+}
+
+// Streams is the codec/duration subset the transcode decision needs. Duration is the
+// container length in seconds (float, for precise HLS segment math).
+type Streams struct {
+	VideoCodec string
+	AudioCodec string
+	Duration   float64
 }
 
 type probeOutput struct {
@@ -51,20 +61,30 @@ type SubtitleStream struct {
 	Language string `json:"language"`
 }
 
-// Probe runs ffprobe on path and returns its technical details. A missing ffprobe
-// binary or any probe error yields an empty Technical, never an error.
-func Probe(ctx context.Context, path string) Technical {
-	bin, err := exec.LookPath("ffprobe")
-	if err != nil {
-		return Technical{}
+// decode runs the single shared ffprobe invocation and parses its JSON. bin falls back to
+// "ffprobe" on PATH when empty.
+func decode(ctx context.Context, bin, path string) (probeOutput, error) {
+	if bin == "" {
+		bin = "ffprobe"
 	}
 	out, err := exec.CommandContext(ctx, bin,
 		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path).Output()
 	if err != nil {
-		return Technical{}
+		return probeOutput{}, fmt.Errorf("ffprobe %s: %w", path, err)
 	}
 	var po probeOutput
-	if json.Unmarshal(out, &po) != nil {
+	if err := json.Unmarshal(out, &po); err != nil {
+		return probeOutput{}, fmt.Errorf("parse ffprobe output for %s: %w", path, err)
+	}
+	return po, nil
+}
+
+// Probe runs ffprobe on path and returns its technical details. A missing ffprobe
+// binary or any probe error yields an empty Technical, never an error - an import still
+// succeeds without it.
+func Probe(ctx context.Context, path string) Technical {
+	po, err := decode(ctx, "", path)
+	if err != nil {
 		return Technical{}
 	}
 	var t Technical
@@ -89,30 +109,55 @@ func Probe(ctx context.Context, path string) Technical {
 	return t
 }
 
-// SubtitleStreams lists the embedded subtitle tracks of path, in stream order, using
-// the given ffprobe binary (falling back to "ffprobe" on PATH when empty). It is
-// best-effort like Probe: a missing binary or any error yields no streams, never an
-// error.
-func SubtitleStreams(ctx context.Context, ffprobeBin, path string) []SubtitleStream {
-	bin := ffprobeBin
-	if bin == "" {
-		bin = "ffprobe"
+// ProbeStreams reports the first video/audio codec and the container duration of path. It
+// returns an error (unlike the best-effort Probe) because the transcode decision cannot
+// proceed without it.
+func ProbeStreams(ctx context.Context, ffprobeBin, path string) (Streams, error) {
+	po, err := decode(ctx, ffprobeBin, path)
+	if err != nil {
+		return Streams{}, err
 	}
-	out, err := exec.CommandContext(ctx, bin,
-		"-v", "quiet", "-print_format", "json", "-show_streams", path).Output()
+	var s Streams
+	for _, st := range po.Streams {
+		switch st.CodecType {
+		case "video":
+			if s.VideoCodec == "" {
+				s.VideoCodec = st.CodecName
+			}
+		case "audio":
+			if s.AudioCodec == "" {
+				s.AudioCodec = st.CodecName
+			}
+		}
+	}
+	s.Duration, _ = strconv.ParseFloat(po.Format.Duration, 64)
+	return s, nil
+}
+
+// SubtitleStreams lists the embedded subtitle tracks of path, in stream order, using the
+// given ffprobe binary (falling back to "ffprobe" on PATH when empty). It is best-effort
+// like Probe: a missing binary or any error yields no streams, never an error.
+func SubtitleStreams(ctx context.Context, ffprobeBin, path string) []SubtitleStream {
+	po, err := decode(ctx, ffprobeBin, path)
 	if err != nil {
 		return nil
 	}
-	return parseSubtitleStreams(out)
+	return subtitlesFrom(po)
 }
 
-// parseSubtitleStreams extracts the subtitle tracks from ffprobe's -show_streams JSON,
-// numbering them by their position among subtitle streams (the "0:s:N" index).
+// parseSubtitleStreams extracts the subtitle tracks from ffprobe JSON; malformed JSON
+// yields none.
 func parseSubtitleStreams(data []byte) []SubtitleStream {
 	var po probeOutput
 	if json.Unmarshal(data, &po) != nil {
 		return nil
 	}
+	return subtitlesFrom(po)
+}
+
+// subtitlesFrom numbers the subtitle streams by their position among subtitle streams
+// (the "0:s:N" index), ignoring all other stream types.
+func subtitlesFrom(po probeOutput) []SubtitleStream {
 	var subs []SubtitleStream
 	rel := 0
 	for _, s := range po.Streams {

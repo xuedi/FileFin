@@ -14,38 +14,24 @@ import (
 // folder.
 func MetaFromJellyfin(item jellyfin.Item) Meta {
 	d := item.Details
-	m := Meta{Title: item.Title, Year: item.Year, Description: strings.TrimSpace(d.Description)}
-
-	md := map[string]string{}
-	add := func(k, v string) {
-		if v = strings.TrimSpace(v); v != "" {
-			md[k] = v
-		}
-	}
+	b := newMetaBuilder(item.Title, item.Year, d.Description)
 	release := d.Release
 	if release == "" && item.Year > 0 {
 		release = strconv.Itoa(item.Year)
 	}
-	add("release", release)
+	b.add("release", release)
 	if d.Runtime > 0 {
-		add("runtime", strconv.Itoa(d.Runtime))
+		b.add("runtime", strconv.Itoa(d.Runtime))
 	}
-	add("directedBy", strings.Join(d.Directors, ", "))
-	add("writtenBy", strings.Join(d.Writers, ", "))
-	add("contentRating", d.ContentRating)
-	add("studio", d.Studio)
+	b.add("directedBy", strings.Join(d.Directors, ", "))
+	b.add("writtenBy", strings.Join(d.Writers, ", "))
+	b.add("contentRating", d.ContentRating)
+	b.add("studio", d.Studio)
 	for _, u := range d.UniqueIDs {
-		add(u.Type+"Id", u.Value)
+		b.add(u.Type+"Id", u.Value)
 	}
-	if len(md) > 0 {
-		m.Metadata = md
-	}
-	if r := strings.TrimSpace(d.Rating); r != "" {
-		m.Ratings = map[string]string{"nfo": r}
-	}
-	m.Actors = append(m.Actors, d.Actors...)
-	for _, g := range d.Genres {
-		m.Tags = append(m.Tags, strings.ToLower(g))
-	}
-	return m
+	b.rate("nfo", d.Rating)
+	b.m.Actors = append(b.m.Actors, d.Actors...)
+	b.addTags(d.Genres)
+	return b.build()
 }

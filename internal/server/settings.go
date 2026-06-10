@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,9 +19,43 @@ type settingRow struct {
 	Value string `json:"value"`
 }
 
+// settingsView is the typed read view of the app config returned by every settings
+// endpoint: the structured values the form edits plus a flat name/value list for display.
+type settingsView struct {
+	MediaFormat      string       `json:"mediaFormat"`
+	ImportFolder     string       `json:"importFolder"`
+	OMDBKey          string       `json:"omdbKey"`
+	LogLevel         string       `json:"logLevel"`
+	LogOutput        string       `json:"logOutput"`
+	TranscodeEnabled bool         `json:"transcodeEnabled"`
+	FFmpegPath       string       `json:"ffmpegPath"`
+	FFprobePath      string       `json:"ffprobePath"`
+	SubtitleLanguage string       `json:"subtitleLanguage"`
+	OptimizeMode     string       `json:"optimizeMode"`
+	Settings         []settingRow `json:"settings"`
+}
+
+// mutateConfig applies apply to a copy of the live config and persists it, publishing the
+// copy only after a successful save - so a failed write needs no manual rollback (the
+// live config was never touched). It returns the new config for rendering and post-save
+// side effects, or false (after writing a 500) when the save fails. Published configs are
+// never mutated in place, so the returned pointer is safe to read after the lock drops.
+func (s *Server) mutateConfig(w http.ResponseWriter, apply func(*config.Config)) (*config.Config, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *s.cfg
+	apply(&cp)
+	if err := config.Save(&cp); err != nil {
+		http.Error(w, "could not save settings", http.StatusInternalServerError)
+		return nil, false
+	}
+	s.cfg = &cp
+	return &cp, true
+}
+
 // settingsPayload is the read view of the app config: the chosen media format (empty
 // until permanently selected) plus a flat name/value list for display.
-func settingsPayload(cfg *config.Config) map[string]any {
+func settingsPayload(cfg *config.Config) settingsView {
 	users := make([]string, 0, len(cfg.Users))
 	for u := range cfg.Users {
 		users = append(users, u)
@@ -71,18 +104,18 @@ func settingsPayload(cfg *config.Config) map[string]any {
 		{"Subtitle language", cfg.SubLang()},
 		{"Optimizer", optimizeMode},
 	}
-	return map[string]any{
-		"mediaFormat":      cfg.MediaFormat,
-		"importFolder":     cfg.ImportFolder,
-		"omdbKey":          cfg.OMDBKey,
-		"logLevel":         logLevel,
-		"logOutput":        logOutput,
-		"transcodeEnabled": transcodeEnabled,
-		"ffmpegPath":       cfg.FFmpeg(),
-		"ffprobePath":      cfg.FFprobe(),
-		"subtitleLanguage": cfg.SubLang(),
-		"optimizeMode":     optimizeMode,
-		"settings":         rows,
+	return settingsView{
+		MediaFormat:      cfg.MediaFormat,
+		ImportFolder:     cfg.ImportFolder,
+		OMDBKey:          cfg.OMDBKey,
+		LogLevel:         logLevel,
+		LogOutput:        logOutput,
+		TranscodeEnabled: transcodeEnabled,
+		FFmpegPath:       cfg.FFmpeg(),
+		FFprobePath:      cfg.FFprobe(),
+		SubtitleLanguage: cfg.SubLang(),
+		OptimizeMode:     optimizeMode,
+		Settings:         rows,
 	}
 }
 
@@ -95,10 +128,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 // handleSetFormat permanently records the media-folder format. It can only be set
 // once; a config that already has one is rejected.
 func (s *Server) handleSetFormat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Format string `json:"format"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -125,10 +158,10 @@ func (s *Server) handleSetFormat(w http.ResponseWriter, r *http.Request) {
 // handleSetImportFolder records the path media is imported from. Unlike the media
 // format it is freely editable; it must be an existing absolute directory.
 func (s *Server) handleSetImportFolder(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Path string `json:"path"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -141,49 +174,38 @@ func (s *Server) handleSetImportFolder(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "import folder must be an existing directory", http.StatusBadRequest)
 		return
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prev := s.cfg.ImportFolder
-	s.cfg.ImportFolder = path
-	if err := config.Save(s.cfg); err != nil {
-		s.cfg.ImportFolder = prev
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.ImportFolder = path })
+	if !ok {
 		return
 	}
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }
 
 // handleSetOMDBKey records the OMDb API key used for assessment enrichment. An empty
 // key is allowed and disables enrichment.
 func (s *Server) handleSetOMDBKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prev := s.cfg.OMDBKey
-	s.cfg.OMDBKey = strings.TrimSpace(req.Key)
-	if err := config.Save(s.cfg); err != nil {
-		s.cfg.OMDBKey = prev
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.OMDBKey = strings.TrimSpace(req.Key) })
+	if !ok {
 		return
 	}
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }
 
 // handleSetLogging updates the log level and output, persists them, and reconfigures
 // the live logger so the change takes effect without a restart.
 func (s *Server) handleSetLogging(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Level  string `json:"level"`
 		Output string `json:"output"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -210,64 +232,48 @@ func (s *Server) handleSetLogging(w http.ResponseWriter, r *http.Request) {
 		f.Close()
 	}
 
-	s.mu.Lock()
-	prevLevel, prevOutput := s.cfg.LogLevel, s.cfg.LogOutput
-	s.cfg.LogLevel, s.cfg.LogOutput = level, output
-	cfg := s.cfg
-	if err := config.Save(cfg); err != nil {
-		s.cfg.LogLevel, s.cfg.LogOutput = prevLevel, prevOutput
-		s.mu.Unlock()
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) {
+		c.LogLevel, c.LogOutput = level, output
+	})
+	if !ok {
 		return
 	}
-	s.mu.Unlock()
-
 	s.configureLogger(cfg)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }
 
 // handleSetTranscoding records the ffmpeg/ffprobe paths and the transcode toggle, then
 // resets the live transcode manager so the new paths take effect without a restart.
 func (s *Server) handleSetTranscoding(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		FFmpegPath  string `json:"ffmpegPath"`
 		FFprobePath string `json:"ffprobePath"`
 		Enabled     bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	enabled := req.Enabled
-	s.mu.Lock()
-	prevFF, prevFP, prevEn := s.cfg.FFmpegPath, s.cfg.FFprobePath, s.cfg.TranscodeEnabled
-	s.cfg.FFmpegPath = strings.TrimSpace(req.FFmpegPath)
-	s.cfg.FFprobePath = strings.TrimSpace(req.FFprobePath)
-	s.cfg.TranscodeEnabled = &enabled
-	cfg := s.cfg
-	if err := config.Save(cfg); err != nil {
-		s.cfg.FFmpegPath, s.cfg.FFprobePath, s.cfg.TranscodeEnabled = prevFF, prevFP, prevEn
-		s.mu.Unlock()
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) {
+		c.FFmpegPath = strings.TrimSpace(req.FFmpegPath)
+		c.FFprobePath = strings.TrimSpace(req.FFprobePath)
+		c.TranscodeEnabled = &enabled
+	})
+	if !ok {
 		return
 	}
-	s.mu.Unlock()
-
 	s.resetHLS()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }
 
 // handleSetOptimizer records the background-optimizer mode and nudges the supervisor to
 // relaunch its agents under the new mode without a restart.
 func (s *Server) handleSetOptimizer(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -276,45 +282,27 @@ func (s *Server) handleSetOptimizer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "optimizer mode must be none, cpu, gpu, or all", http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	prev := s.cfg.OptimizeMode
-	s.cfg.OptimizeMode = mode
-	cfg := s.cfg
-	if err := config.Save(cfg); err != nil {
-		s.cfg.OptimizeMode = prev
-		s.mu.Unlock()
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.OptimizeMode = mode })
+	if !ok {
 		return
 	}
-	s.mu.Unlock()
-
 	s.signalReconfigOpt()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }
 
 // handleSetSubtitleLanguage records the preferred sidecar subtitle language. An empty
 // value falls back to the "en" default.
 func (s *Server) handleSetSubtitleLanguage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Language string `json:"language"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	prev := s.cfg.SubtitleLanguage
-	s.cfg.SubtitleLanguage = strings.TrimSpace(req.Language)
-	if err := config.Save(s.cfg); err != nil {
-		s.cfg.SubtitleLanguage = prev
-		s.mu.Unlock()
-		http.Error(w, "could not save settings", http.StatusInternalServerError)
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.SubtitleLanguage = strings.TrimSpace(req.Language) })
+	if !ok {
 		return
 	}
-	s.mu.Unlock()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, settingsPayload(cfg))
 }

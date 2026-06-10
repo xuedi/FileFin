@@ -1,12 +1,14 @@
 package importer
 
 import (
+	"context"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"filefin/internal/ffrun"
 	"filefin/internal/subtitle"
 )
 
@@ -91,7 +93,7 @@ func FindSidecarSubtitles(videoPath string) []Subtitle {
 // subtitle next to the placed video under "<video-base>.<lang>[.<n>].<ext>". Bitmap
 // subtitles (VobSub, PGS) are copied verbatim. It is best-effort: every failure is
 // swallowed so a subtitle never fails the import.
-func PlaceSubtitles(videoTarget, defaultLang, ffmpegPath string, subs []Subtitle) {
+func PlaceSubtitles(ctx context.Context, videoTarget, defaultLang, ffmpegPath string, subs []Subtitle) {
 	used := map[string]int{}
 	name := func(lang, ext string) string {
 		used[lang+ext]++
@@ -120,7 +122,7 @@ func PlaceSubtitles(videoTarget, defaultLang, ffmpegPath string, subs []Subtitle
 			_ = copySidecar(s.Path, name(lang, ".srt"))
 		default: // text subtitle (.ass/.ssa/.vtt/.smi/...) -> convert to SRT
 			dst := name(lang, ".srt")
-			if err := convertSubtitle(ffmpegPath, s.Path, dst); err != nil {
+			if err := runFFmpegToSRT(ctx, ffmpegPath, s.Path, dst); err != nil {
 				// ffmpeg missing or failed: keep the original verbatim under the same
 				// base but its real extension, so the track is not lost.
 				_ = copySidecar(s.Path, strings.TrimSuffix(dst, ".srt")+ext)
@@ -129,21 +131,28 @@ func PlaceSubtitles(videoTarget, defaultLang, ffmpegPath string, subs []Subtitle
 	}
 }
 
-// convertSubtitle transcodes a text subtitle to SRT with ffmpeg, keeping dialogue
-// and timing and dropping styling. It writes through a temp file so a crashed
-// conversion never leaves a partial .srt. An empty ffmpegPath, a missing binary, or
-// a non-zero exit is reported as an error for the caller to fall back on.
-func convertSubtitle(ffmpegPath, src, dst string) error {
-	if ffmpegPath == "" {
+// runFFmpegToSRT muxes/transcodes src to an SRT sidecar at dst through a temp .srt plus
+// atomic rename, so a crashed run never leaves a partial file. extraArgs select the
+// source content: none for a whole-file text-subtitle conversion, or a "-map 0:s:N -c:s
+// srt" track selector to externalise one embedded track. An empty ffmpeg path, a missing
+// binary, or a non-zero exit is an error the caller falls back on. It is the one ffmpeg
+// path shared by the sidecar converter and the embedded-track extractor.
+func runFFmpegToSRT(ctx context.Context, ffmpegBin, src, dst string, extraArgs ...string) error {
+	if ffmpegBin == "" {
 		return os.ErrNotExist
 	}
 	tmp := dst + ".tmp.srt" // ffmpeg picks the muxer by extension, so keep .srt
-	cmd := exec.Command(ffmpegPath, "-nostdin", "-y", "-i", src, tmp)
-	if err := cmd.Run(); err != nil {
+	args := append([]string{"-nostdin", "-y", "-i", src}, extraArgs...)
+	args = append(args, tmp)
+	if err := ffrun.Run(ctx, ffmpegBin, args...); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("rename subtitle %s: %w", dst, err)
+	}
+	return nil
 }
 
 // copySidecar copies src to dst. A missing source (e.g. half a VobSub pair) is

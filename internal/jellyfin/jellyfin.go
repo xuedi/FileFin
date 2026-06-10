@@ -11,10 +11,11 @@
 package jellyfin
 
 import (
+	"context"
 	"encoding/xml"
+	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -29,11 +30,6 @@ var videoExts = map[string]bool{
 var imageExts = map[string]bool{
 	".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".bmp": true, ".tbn": true,
 }
-
-var (
-	reYear   = regexp.MustCompile(`\((19\d{2}|20\d{2})\)`)
-	reSeason = regexp.MustCompile(`(?i)^(season\b|specials$|s\d+$)`)
-)
 
 // Item is one movie or show discovered in the library. Files are its video files (one
 // for a movie, many for a show or an in-folder multi-part movie); Season/Episode are
@@ -79,15 +75,19 @@ type UniqueID struct {
 }
 
 // Scan walks a Jellyfin library directory and returns one Item per movie or show. A
-// read error on the root is returned; per-entry read errors are skipped.
-func Scan(root string) ([]Item, error) {
+// read error on the root is returned; per-entry read errors are skipped. The scan honours
+// ctx cancellation, returning ctx.Err() between top-level entries.
+func Scan(ctx context.Context, root string) ([]Item, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read jellyfin library %s: %w", root, err)
 	}
 	var out []Item
 	var loose []string
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
@@ -104,20 +104,23 @@ func Scan(root string) ([]Item, error) {
 	return append(out, scanLooseMovies(root, loose)...), nil
 }
 
+// scanDir reads dir once and classifies it as a show (a season subfolder or a
+// tvshow.nfo) or a movie folder, handing the already-read entries to the matching scanner
+// so the directory is not read again.
 func scanDir(dir string) (Item, bool) {
-	if isShowDir(dir) {
-		return scanShow(dir)
-	}
-	return scanMovieDir(dir)
-}
-
-func isShowDir(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return Item{}, false
 	}
+	if isShowDir(entries) {
+		return scanShow(dir, entries)
+	}
+	return scanMovieDir(dir, entries)
+}
+
+func isShowDir(entries []os.DirEntry) bool {
 	for _, e := range entries {
-		if e.IsDir() && reSeason.MatchString(e.Name()) {
+		if e.IsDir() && recognize.IsSeasonDir(e.Name()) {
 			return true
 		}
 		if !e.IsDir() && strings.EqualFold(e.Name(), "tvshow.nfo") {
@@ -127,11 +130,7 @@ func isShowDir(dir string) bool {
 	return false
 }
 
-func scanMovieDir(dir string) (Item, bool) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return Item{}, false
-	}
+func scanMovieDir(dir string, entries []os.DirEntry) (Item, bool) {
 	var videos []string
 	for _, e := range entries {
 		if !e.IsDir() && videoExts[strings.ToLower(filepath.Ext(e.Name()))] {
@@ -141,7 +140,7 @@ func scanMovieDir(dir string) (Item, bool) {
 	if len(videos) == 0 {
 		return Item{}, false
 	}
-	folderTitle, folderYear := parseFolderName(filepath.Base(dir))
+	folderTitle, folderYear := folderTitleYear(filepath.Base(dir))
 
 	// NFO: prefer movie.nfo, else <video>.nfo for the first video.
 	var nfo movieNFO
@@ -154,7 +153,7 @@ func scanMovieDir(dir string) (Item, bool) {
 		Title:      title,
 		Year:       year,
 		Details:    toDetails(nfo.detailsNFO),
-		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
+		PosterPath: findImage(entries, dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
 	}
 	for _, v := range videos {
 		m.Files = append(m.Files, File{Path: filepath.Join(dir, v)})
@@ -169,7 +168,7 @@ func scanMovieDir(dir string) (Item, bool) {
 func scanLooseMovies(dir string, videos []string) []Item {
 	var out []Item
 	for _, v := range videos {
-		title, year := parseFolderName(stripExt(v))
+		title, year := folderTitleYear(stripExt(v))
 		var nfo movieNFO
 		readNFO(filepath.Join(dir, stripExt(v)+".nfo"), &nfo)
 		title, year = resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, title, year)
@@ -183,8 +182,8 @@ func scanLooseMovies(dir string, videos []string) []Item {
 	return out
 }
 
-func scanShow(dir string) (Item, bool) {
-	folderTitle, folderYear := parseFolderName(filepath.Base(dir))
+func scanShow(dir string, entries []os.DirEntry) (Item, bool) {
+	folderTitle, folderYear := folderTitleYear(filepath.Base(dir))
 	var nfo tvshowNFO
 	readNFO(filepath.Join(dir, "tvshow.nfo"), &nfo)
 	title, year := resolveTitleYear(nfo.Title, nfo.Year, nfo.Premiered, folderTitle, folderYear)
@@ -194,7 +193,7 @@ func scanShow(dir string) (Item, bool) {
 		Year:       year,
 		IsShow:     true,
 		Details:    toDetails(nfo.detailsNFO),
-		PosterPath: findImage(dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
+		PosterPath: findImage(entries, dir, []string{"poster", "folder", "cover", "default"}, []string{"-poster"}),
 	}
 	// Collect episode files anywhere under the show directory.
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
@@ -360,22 +359,15 @@ func resolveTitleYear(nfoTitle string, nfoYear int, premiered, folderTitle strin
 	return title, year
 }
 
-// parseFolderName extracts a title and year from a folder/file name that contains a
-// "(YYYY)" anywhere (e.g. "The Matrix (1999)" or "(1999) The Matrix").
-func parseFolderName(name string) (string, int) {
-	year := 0
-	if m := reYear.FindStringSubmatch(name); m != nil {
-		year, _ = strconv.Atoi(m[1])
-		name = reYear.ReplaceAllString(name, "")
-	}
-	return strings.Trim(strings.TrimSpace(name), " -"), year
+// folderTitleYear derives a title and year from a folder/file name using the shared
+// recognize parser (handling "The Matrix (1999)", "(1999) The Matrix", and bare-year
+// release names alike), so the Jellyfin scanner does not carry its own name regexes.
+func folderTitleYear(name string) (string, int) {
+	p := recognize.ParseName(name, false)
+	return p.Title, p.Year
 }
 
-func findImage(dir string, bases, suffixes []string) string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
+func findImage(entries []os.DirEntry, dir string, bases, suffixes []string) string {
 	for _, want := range bases {
 		for _, e := range entries {
 			if e.IsDir() {

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,7 +33,9 @@ func (s *Server) handleUploadBegin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create upload folder", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"session": filepath.Base(dir)})
+	writeJSON(w, struct {
+		Session string `json:"session"`
+	}{filepath.Base(dir)})
 }
 
 // uploadSessionDir validates a session token and returns its absolute dir. The token must
@@ -118,11 +119,11 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 // exactly like the folder assessment but rooted at the session's /tmp dir and with
 // delete_after forced on so the working files are cleaned up after import.
 func (s *Server) handleUploadAssess(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Session    string `json:"session"`
 		CategoryID int64  `json:"categoryId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

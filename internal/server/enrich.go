@@ -45,22 +45,28 @@ func (s *Server) handleEnrichScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read category flags", http.StatusInternalServerError)
 		return
 	}
-	queued := 0
+	queued, failed := 0, 0
 	for _, m := range media {
 		if flags[m.CategoryID] {
 			continue
 		}
-		_ = db.UpsertPendingEnrich(ctx, pool, m.ID)
+		if err := db.UpsertPendingEnrich(ctx, pool, m.ID); err != nil {
+			failed++
+			continue
+		}
 		queued++
 	}
-	_ = db.PruneEnrichedTasks(ctx, pool)
+	if failed > 0 {
+		s.elog().Error("some enrichment tasks could not be queued", logging.Fields{"failed": failed})
+	}
+	s.bestEffort(db.PruneEnrichedTasks(ctx, pool), "prune enriched tasks")
 	pending, err := db.CountPendingEnrich(ctx, pool)
 	if err != nil {
 		http.Error(w, "could not count enrichment tasks", http.StatusInternalServerError)
 		return
 	}
 	s.elog().Info("enrichment scan queued work", logging.Fields{"candidates": queued, "pending": pending})
-	writeJSON(w, map[string]any{"candidates": queued, "pending": pending})
+	writeJSON(w, scanResult{Candidates: queued, Pending: pending})
 }
 
 // handleActiveEnrich returns the in-flight enrichments and the count still waiting,
@@ -82,7 +88,7 @@ func (s *Server) handleActiveEnrich(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not count enrichment tasks", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"active": active, "pending": pending})
+	writeJSON(w, queueStatus[db.ActiveEnrich]{Active: active, Pending: pending})
 }
 
 // startEnrichAgent launches the single OMDb enrichment worker once per process.
@@ -141,7 +147,7 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 		_ = db.FinishEnrich(ctx, pool, task.ID)
 		return
 	}
-	mv, err := client.Lookup(m.Title, m.Year)
+	mv, err := client.Lookup(ctx, m.Title, m.Year)
 	if err != nil {
 		_ = db.FailEnrich(ctx, pool, task.ID, err.Error())
 		s.elog().Info("omdb lookup failed for "+m.Title,
@@ -168,7 +174,7 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 	// the import) is kept, never overwritten.
 	posterRel := folderPoster(m.Path)
 	if posterRel == "" && mv.ImdbID != "" && mv.ImdbID != "N/A" && mv.Poster != "" && mv.Poster != "N/A" {
-		if img, ct, err := client.Poster(mv.ImdbID, 600); err == nil && len(img) > 0 {
+		if img, ct, err := client.Poster(ctx, mv.ImdbID, 600); err == nil && len(img) > 0 {
 			name := "poster" + omdb.PosterExt(ct)
 			if os.WriteFile(filepath.Join(m.Path, name), img, 0o644) == nil {
 				posterRel = name

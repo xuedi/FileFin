@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -82,12 +81,12 @@ func (s *Server) mirrorCategories(ctx context.Context, pool *sql.DB) error {
 }
 
 func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Name     string `json:"name"`     // the new leaf folder name
 		Alias    string `json:"alias"`    // optional display alias
 		ParentID int64  `json:"parentId"` // 0 = top level
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -139,11 +138,11 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 	cat, err := library.Create(dataDir, parentRel, req.Name, alias, id)
 	if err != nil {
-		_ = db.DeleteCategory(r.Context(), pool, relName) // no orphan cache row
+		s.bestEffort(db.DeleteCategory(r.Context(), pool, relName), "delete orphan category row")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = s.mirrorCategories(r.Context(), pool) // fix parent ids + effective flag
+	s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories") // fix parent ids + effective flag
 	writeJSON(w, categoryDTO{
 		ID: cat.ID, Name: cat.Name, Leaf: cat.Leaf, Alias: cat.Alias,
 		ParentID: req.ParentID, OtherMedia: cat.OtherMedia, Empty: cat.Empty,
@@ -159,18 +158,18 @@ func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pool, err := s.ensureDB(r.Context()); err == nil {
-		_ = s.mirrorCategories(r.Context(), pool)
+		s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleSetAlias(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	var req struct {
+	req, err := decodeJSON[struct {
 		Alias      string `json:"alias"`
 		OtherMedia bool   `json:"otherMedia"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -202,7 +201,7 @@ func (s *Server) handleSetAlias(w http.ResponseWriter, r *http.Request) {
 	// Re-mirror so an other-media toggle re-propagates the effective flag across the
 	// whole subtree's cache rows.
 	if pool, err := s.ensureDB(r.Context()); err == nil {
-		_ = s.mirrorCategories(r.Context(), pool)
+		s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

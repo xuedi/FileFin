@@ -2,61 +2,23 @@ package transcode
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strconv"
+
+	"filefin/internal/ffprobe"
 )
 
 // Streams is the subset of ffprobe output we care about: the codecs present and the
 // container duration in seconds.
-type Streams struct {
-	VideoCodec string
-	AudioCodec string
-	Duration   float64
-}
+type Streams = ffprobe.Streams
 
 // Probe inspects inputPath with ffprobe and reports its video/audio codecs and duration.
+// The probe itself lives in the ffprobe package (one shared `-show_format -show_streams`
+// decode); this thin wrapper keeps the transcode-scoped error prefix.
 func Probe(ctx context.Context, ffprobePath, inputPath string) (Streams, error) {
-	cmd := exec.CommandContext(ctx, ffprobePath,
-		"-v", "error",
-		"-show_entries", "stream=codec_type,codec_name",
-		"-show_entries", "format=duration",
-		"-of", "json",
-		inputPath,
-	)
-	out, err := cmd.Output()
+	s, err := ffprobe.ProbeStreams(ctx, ffprobePath, inputPath)
 	if err != nil {
-		return Streams{}, fmt.Errorf("transcode: ffprobe %s: %w", inputPath, err)
+		return Streams{}, fmt.Errorf("transcode: %w", err)
 	}
-
-	var parsed struct {
-		Streams []struct {
-			CodecType string `json:"codec_type"`
-			CodecName string `json:"codec_name"`
-		} `json:"streams"`
-		Format struct {
-			Duration string `json:"duration"`
-		} `json:"format"`
-	}
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return Streams{}, fmt.Errorf("transcode: parse ffprobe output: %w", err)
-	}
-
-	var s Streams
-	for _, st := range parsed.Streams {
-		switch st.CodecType {
-		case "video":
-			if s.VideoCodec == "" {
-				s.VideoCodec = st.CodecName
-			}
-		case "audio":
-			if s.AudioCodec == "" {
-				s.AudioCodec = st.CodecName
-			}
-		}
-	}
-	s.Duration, _ = strconv.ParseFloat(parsed.Format.Duration, 64)
 	return s, nil
 }
 

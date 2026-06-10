@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -250,7 +249,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load home", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"continue": cont, "favorites": favs, "completed": done})
+	writeJSON(w, struct {
+		Continue  []db.MediaSummary `json:"continue"`
+		Favorites []db.MediaSummary `json:"favorites"`
+		Completed []db.MediaSummary `json:"completed"`
+	}{cont, favs, done})
 }
 
 // fileKeys builds the ordered state file keys for a media item's files.
@@ -398,10 +401,10 @@ func (s *Server) folderFor(w http.ResponseWriter, r *http.Request) (string, bool
 }
 
 func (s *Server) handleFavorite(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Favorite bool `json:"favorite"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -453,13 +456,13 @@ func (s *Server) handleClearWatched(w http.ResponseWriter, r *http.Request) {
 // handleProgress folds a playback report into the user's state in meta.json, logging a
 // watched event on the first crossing.
 func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		File     int     `json:"file"`
 		Position float64 `json:"position"`
 		Duration float64 `json:"duration"`
 		Event    string  `json:"event"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

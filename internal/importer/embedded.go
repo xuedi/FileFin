@@ -2,8 +2,6 @@ package importer
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -67,37 +65,21 @@ func chooseEmbeddedSubtitles(streams []ffprobe.SubtitleStream, present map[strin
 // recognised language. It runs after PlaceSubtitles so the just-placed sidecars are part
 // of the dedup set. Best-effort: a missing ffmpeg/ffprobe or a failed extract is a silent
 // no-op. Returns how many tracks were extracted.
-func ExtractEmbeddedSubtitles(videoTarget, ffmpegBin, ffprobeBin string) int {
+func ExtractEmbeddedSubtitles(ctx context.Context, videoTarget, ffmpegBin, ffprobeBin string) int {
 	present := map[string]bool{}
 	for _, s := range FindSidecarSubtitles(videoTarget) {
 		if lang := subtitle.NormalizeLang(s.Language, ""); lang != "" {
 			present[lang] = true
 		}
 	}
-	picks := chooseEmbeddedSubtitles(ffprobe.SubtitleStreams(context.Background(), ffprobeBin, videoTarget), present)
+	picks := chooseEmbeddedSubtitles(ffprobe.SubtitleStreams(ctx, ffprobeBin, videoTarget), present)
 	n := 0
 	for _, p := range picks {
 		dst := SubtitleTargetName(videoTarget, p.Lang, ".srt")
-		if err := extractSubtitleTrack(ffmpegBin, videoTarget, p.Index, dst); err == nil {
+		if err := runFFmpegToSRT(ctx, ffmpegBin, videoTarget, dst,
+			"-map", "0:s:"+strconv.Itoa(p.Index), "-c:s", "srt"); err == nil {
 			n++
 		}
 	}
 	return n
-}
-
-// extractSubtitleTrack muxes one subtitle track (by its 0:s:N index) out of src to dst as
-// SRT, through a temp file plus atomic rename so a crashed run never leaves a partial
-// .srt. An empty ffmpeg path, a missing binary, or a non-zero exit is an error.
-func extractSubtitleTrack(ffmpegBin, src string, index int, dst string) error {
-	if ffmpegBin == "" {
-		return os.ErrNotExist
-	}
-	tmp := dst + ".tmp.srt" // ffmpeg picks the muxer by extension, so keep .srt
-	cmd := exec.Command(ffmpegBin, "-nostdin", "-y", "-i", src,
-		"-map", "0:s:"+strconv.Itoa(index), "-c:s", "srt", tmp)
-	if err := cmd.Run(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dst)
 }

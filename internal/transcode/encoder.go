@@ -15,17 +15,26 @@ const (
 	hwAccelOff  = "off"
 )
 
+// Kind is an encoder family. The two paths the app supports are the libx264 CPU encoder
+// and the VAAPI GPU encoder; the empty Kind means "unset", treated as software.
+type Kind string
+
+const (
+	KindSoftware Kind = "software"
+	KindVAAPI    Kind = "vaapi"
+)
+
 // Encoder describes how startFFmpeg should encode video: software (libx264) or a
 // hardware path (VAAPI) bound to a specific DRM render node.
 type Encoder struct {
-	Kind   string // "software" | "vaapi"
+	Kind   Kind   // KindSoftware | KindVAAPI
 	Device string // render node path for vaapi, "" for software
 	Codec  string // ffmpeg encoder name, e.g. "libx264" or "h264_vaapi"
 }
 
 // softwareEncoder is the libx264 fallback used when no GPU is available or hardware
 // acceleration is disabled. It is also the zero-value-equivalent default.
-var softwareEncoder = Encoder{Kind: "software", Codec: "libx264"}
+var softwareEncoder = Encoder{Kind: KindSoftware, Codec: "libx264"}
 
 // SoftwareEncoder returns the libx264 CPU encoder.
 func SoftwareEncoder() Encoder { return softwareEncoder }
@@ -33,7 +42,7 @@ func SoftwareEncoder() Encoder { return softwareEncoder }
 // videoCodecArgs returns the pre-input global flags and the video-codec flags (no
 // keyframe or container options) for enc.
 func videoCodecArgs(enc Encoder) (preInput, vcodec []string) {
-	if enc.Kind == "vaapi" {
+	if enc.Kind == KindVAAPI {
 		return []string{"-vaapi_device", enc.Device}, []string{
 			"-vf", "format=nv12,hwupload",
 			"-c:v", "h264_vaapi", "-rc_mode", "CQP", "-qp", "23",
@@ -44,15 +53,20 @@ func videoCodecArgs(enc Encoder) (preInput, vcodec []string) {
 
 // OptimizeArgs builds the ffmpeg arguments to transcode inputPath into a browser
 // direct-play faststart MP4 at outputPath, using enc (GPU when vaapi). Unlike the HLS
-// encoder this is a plain single-file encode: no segmenting or forced keyframes.
-func OptimizeArgs(enc Encoder, inputPath, outputPath string) []string {
+// encoder this is a plain single-file encode: no segmenting or forced keyframes. extra
+// holds any flags the caller wants placed just before the output path (e.g. the
+// optimizer's `-progress pipe:1 -nostats`); ffmpeg rejects options after the output file,
+// so threading them here avoids the caller splicing the slice by index.
+func OptimizeArgs(enc Encoder, inputPath, outputPath string, extra ...string) []string {
 	preInput, vcodec := videoCodecArgs(enc)
 	args := append([]string{"-nostdin", "-y"}, preInput...)
 	args = append(args, "-i", inputPath)
 	args = append(args, vcodec...)
 	// -f mp4 is explicit because the worker writes to a ".tmp" path ffmpeg cannot infer.
-	return append(args, "-c:a", "aac", "-b:a", "160k", "-ac", "2",
-		"-movflags", "+faststart", "-sn", "-f", "mp4", outputPath)
+	args = append(args, "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+		"-movflags", "+faststart", "-sn", "-f", "mp4")
+	args = append(args, extra...)
+	return append(args, outputPath)
 }
 
 // DetectEncoder probes for a usable VAAPI H.264 encoder, honoring the hardware-accel
@@ -77,7 +91,7 @@ func DetectEncoder(ctx context.Context, opts Options) Encoder {
 	}
 	for _, node := range nodes {
 		if probeVAAPIEncode(ctx, ffmpeg, node) {
-			return Encoder{Kind: "vaapi", Device: node, Codec: "h264_vaapi"}
+			return Encoder{Kind: KindVAAPI, Device: node, Codec: "h264_vaapi"}
 		}
 	}
 	return softwareEncoder

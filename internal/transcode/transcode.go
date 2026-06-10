@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // OptimizedExt is the suffix of a pre-transcoded, browser-direct-play copy of a source
@@ -52,30 +51,4 @@ func NeedsTranscode(ext string) bool {
 		ext = "." + ext
 	}
 	return !directPlay[ext]
-}
-
-// ringBuffer keeps only the last n bytes written to it, for capturing ffmpeg stderr
-// without unbounded growth.
-type ringBuffer struct {
-	mu   sync.Mutex
-	buf  []byte
-	size int
-}
-
-func newRingBuffer(size int) *ringBuffer { return &ringBuffer{size: size} }
-
-func (b *ringBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.buf = append(b.buf, p...)
-	if len(b.buf) > b.size {
-		b.buf = b.buf[len(b.buf)-b.size:]
-	}
-	return len(p), nil
-}
-
-func (b *ringBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return string(b.buf)
 }

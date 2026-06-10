@@ -64,10 +64,10 @@ func (s *Server) omdbClient() *omdb.Client {
 // row per video file. Rows are returned for the assessment table; OMDb enrichment happens
 // later via the dedicated agent, not here.
 func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		CategoryID int64 `json:"categoryId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -114,6 +114,7 @@ func (s *Server) stageFolder(ctx context.Context, pool *sql.DB, cat library.Cate
 	if err != nil {
 		return nil, err
 	}
+	failed := 0
 	for _, f := range files {
 		rel, err := filepath.Rel(root, f)
 		if err != nil {
@@ -126,12 +127,20 @@ func (s *Server) stageFolder(ctx context.Context, pool *sql.DB, cat library.Cate
 				subsJSON = string(b)
 			}
 		}
-		_, _ = db.InsertImport(ctx, pool, db.Import{
+		// A dropped insert means this file silently never imports, so the failures are
+		// counted and surfaced rather than swallowed.
+		if _, err := db.InsertImport(ctx, pool, db.Import{
 			CategoryID: cat.ID, SourcePath: f, Filename: filepath.Base(f),
 			Title: p.Title, Year: p.Year, Season: p.Season, Episode: p.Episode,
 			Subtitles: subsJSON, Poster: importer.FindSidecarPoster(f),
 			Status: db.StatusPreCheck, DeleteAfter: deleteAfter, Origin: origin,
-		})
+		}); err != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		s.logger().For(logging.Import).Error("some files could not be staged for import",
+			logging.Fields{"failed": failed, "scanned": len(files), "category": cat.Name})
 	}
 	return db.ListImports(ctx, pool, db.StatusPreCheck)
 }
@@ -202,12 +211,12 @@ func (s *Server) handleUpdateImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	req, err := decodeJSON[struct {
 		Title      string `json:"title"`
 		Year       int    `json:"year"`
 		CategoryID int64  `json:"categoryId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -269,11 +278,10 @@ func (s *Server) handleDeleteImport(w http.ResponseWriter, r *http.Request) {
 // handleStartImport records the per-batch delete-after choice on the staged rows,
 // then flips preCheck to import; the poller does the rest on its next tick.
 func (s *Server) handleStartImport(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeleteAfter bool `json:"deleteAfter"`
-	}
 	// The body is optional; default deleteAfter to false when absent.
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	req, _ := decodeJSON[struct {
+		DeleteAfter bool `json:"deleteAfter"`
+	}](w, r)
 
 	pool, err := s.ensureDB(r.Context())
 	if err != nil {
@@ -290,7 +298,9 @@ func (s *Server) handleStartImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not start import", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"started": n})
+	writeJSON(w, struct {
+		Started int64 `json:"started"`
+	}{n})
 }
 
 // handleActiveImports returns rows still importing (with live copy progress) for the
@@ -367,7 +377,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		s.setProgress(row.ID, copied, total)
 		if now := time.Now(); now.Sub(lastMirror) >= time.Second {
 			lastMirror = now
-			_ = db.UpdateImportProgress(ctx, pool, row.ID, db.StatusImporting, copied, total, "")
+			s.bestEffort(db.UpdateImportProgress(ctx, pool, row.ID, db.StatusImporting, copied, total, ""), "import progress mirror")
 		}
 	})
 	if err != nil {
@@ -380,13 +390,13 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	if row.Subtitles != "" {
 		var subs []importer.Subtitle
 		if json.Unmarshal([]byte(row.Subtitles), &subs) == nil && len(subs) > 0 {
-			importer.PlaceSubtitles(target, subLang, ffmpeg, subs)
+			importer.PlaceSubtitles(ctx, target, subLang, ffmpeg, subs)
 		}
 	}
 
 	// Then externalise any embedded text subtitle tracks the player can show, skipping
 	// languages already covered by the sidecars just placed. Best-effort like the above.
-	if n := importer.ExtractEmbeddedSubtitles(target, ffmpeg, ffprobeBin); n > 0 {
+	if n := importer.ExtractEmbeddedSubtitles(ctx, target, ffmpeg, ffprobeBin); n > 0 {
 		s.logger().For(logging.Import).Info("extracted embedded subtitles for "+row.Filename,
 			logging.Fields{"count": n})
 	}

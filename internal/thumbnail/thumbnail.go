@@ -6,13 +6,12 @@
 package thumbnail
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
-	"strings"
+
+	"filefin/internal/ffrun"
 )
 
 // Fixed pixel targets (Standard 1x). The detail poster preserves aspect at this width;
@@ -69,25 +68,13 @@ func encode(ctx context.Context, ffmpeg string, preInput []string, src, vf, dst 
 	args := append([]string{"-y", "-nostdin"}, preInput...)
 	args = append(args, "-i", src, "-vf", vf, "-frames:v", "1", "-an", "-f", "webp", tmp)
 
-	cmd := exec.CommandContext(ctx, ffmpeg, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("ffmpeg: %w: %s", err, lastLine(stderr.Bytes()))
-	}
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := ffrun.Run(ctx, ffmpeg, args...); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return nil
-}
-
-// lastLine returns the last non-empty line of ffmpeg output for a compact error.
-func lastLine(b []byte) string {
-	s := strings.TrimRight(string(b), "\r\n")
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("rename thumbnail %s: %w", dst, err)
 	}
-	return s
+	return nil
 }

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // Media is one row of the media cache: a media folder written by the importer. The
@@ -38,7 +39,10 @@ func InsertMedia(ctx context.Context, pool *sql.DB, m Media) error {
             (id, category_id, path, year, title, description, plot, poster, enriched)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.CategoryID, m.Path, m.Year, m.Title, m.Description, m.Plot, m.Poster, m.Enriched)
-	return err
+	if err != nil {
+		return fmt.Errorf("insert media %s: %w", m.ID, err)
+	}
+	return nil
 }
 
 // SetMediaEnriched records the agent's enrichment of a folder into the cache row:
@@ -47,7 +51,10 @@ func SetMediaEnriched(ctx context.Context, pool *sql.DB, id, description, plot, 
 	_, err := pool.ExecContext(ctx,
 		`UPDATE media SET description = ?, plot = ?, poster = ?, enriched = 1 WHERE id = ?`,
 		description, plot, poster, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("set media enriched %s: %w", id, err)
+	}
+	return nil
 }
 
 // UnenrichedMedia returns the media rows still carrying stub metadata (enriched = 0),
@@ -57,14 +64,14 @@ func UnenrichedMedia(ctx context.Context, pool *sql.DB) ([]Media, error) {
 	rows, err := pool.QueryContext(ctx,
 		`SELECT id, category_id, path, year, title FROM media WHERE enriched = 0 ORDER BY id`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query unenriched media: %w", err)
 	}
 	defer rows.Close()
 	out := []Media{}
 	for rows.Next() {
 		var m Media
 		if err := rows.Scan(&m.ID, &m.CategoryID, &m.Path, &m.Year, &m.Title); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan media: %w", err)
 		}
 		out = append(out, m)
 	}
@@ -79,7 +86,10 @@ func CategoryOtherMedia(ctx context.Context, pool *sql.DB, id int64) (bool, erro
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
-	return other, err
+	if err != nil {
+		return false, fmt.Errorf("query category other_media %d: %w", id, err)
+	}
+	return other, nil
 }
 
 // InsertMediaFile inserts one file row for a media item.
@@ -88,7 +98,10 @@ func InsertMediaFile(ctx context.Context, pool *sql.DB, f MediaFile) error {
 		`INSERT INTO media_files (media_id, idx, path, name, season, episode, ext)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		f.MediaID, f.Idx, f.Path, f.Name, f.Season, f.Episode, f.Ext)
-	return err
+	if err != nil {
+		return fmt.Errorf("insert media file %s/%d: %w", f.MediaID, f.Idx, err)
+	}
+	return nil
 }
 
 // CountMediaFiles returns how many file rows a media item already has, so the
@@ -96,31 +109,39 @@ func InsertMediaFile(ctx context.Context, pool *sql.DB, f MediaFile) error {
 // existing folder.
 func CountMediaFiles(ctx context.Context, pool *sql.DB, mediaID string) (int, error) {
 	var n int
-	err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_files WHERE media_id = ?`, mediaID).Scan(&n)
-	return n, err
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_files WHERE media_id = ?`, mediaID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count media files %s: %w", mediaID, err)
+	}
+	return n, nil
 }
 
 // CountMedia returns the total number of media items in the cache (the dashboard's
 // library tally).
 func CountMedia(ctx context.Context, pool *sql.DB) (int, error) {
 	var n int
-	err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&n)
-	return n, err
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count media: %w", err)
+	}
+	return n, nil
 }
 
 // CountFiles returns the total number of media files across all items (the dashboard's
 // file tally).
 func CountFiles(ctx context.Context, pool *sql.DB) (int, error) {
 	var n int
-	err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_files`).Scan(&n)
-	return n, err
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_files`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count media files: %w", err)
+	}
+	return n, nil
 }
 
 // ClearMedia empties the media cache (both tables), for a full rebuild from disk.
 func ClearMedia(ctx context.Context, pool *sql.DB) error {
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media_files`); err != nil {
-		return err
+		return fmt.Errorf("clear media files: %w", err)
 	}
-	_, err := pool.ExecContext(ctx, `DELETE FROM media`)
-	return err
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media`); err != nil {
+		return fmt.Errorf("clear media: %w", err)
+	}
+	return nil
 }

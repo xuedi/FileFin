@@ -3,10 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"filefin/internal/db"
@@ -31,8 +29,8 @@ type jellyfinPrepareReq struct {
 // NFO fields (no OMDb), and writes a preCheck row per video file; the frontend polls
 // /jellyfin/progress and redirects to the preCheck page when it finishes.
 func (s *Server) handleJellyfinPrepare(w http.ResponseWriter, r *http.Request) {
-	var req jellyfinPrepareReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.SourceDir) == "" {
+	req, err := decodeJSON[jellyfinPrepareReq](w, r)
+	if err != nil || strings.TrimSpace(req.SourceDir) == "" {
 		http.Error(w, "a source folder is required", http.StatusBadRequest)
 		return
 	}
@@ -44,14 +42,10 @@ func (s *Server) handleJellyfinPrepare(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "select a category", http.StatusBadRequest)
 		return
 	}
-	s.jellyfinMu.Lock()
-	if s.jellyfinJob.running {
-		s.jellyfinMu.Unlock()
+	if !s.jellyfinStaging.begin() {
 		http.Error(w, "a Jellyfin import is already in progress", http.StatusConflict)
 		return
 	}
-	s.jellyfinJob = stagingJobState{running: true}
-	s.jellyfinMu.Unlock()
 
 	go s.runJellyfinStaging(req)
 	w.WriteHeader(http.StatusAccepted)
@@ -59,25 +53,17 @@ func (s *Server) handleJellyfinPrepare(w http.ResponseWriter, r *http.Request) {
 
 // handleJellyfinProgress returns the live staging job state for the polling frontend.
 func (s *Server) handleJellyfinProgress(w http.ResponseWriter, r *http.Request) {
-	s.jellyfinMu.Lock()
-	job := s.jellyfinJob
-	s.jellyfinMu.Unlock()
-	writeJSON(w, job)
+	writeJSON(w, s.jellyfinStaging.snapshot())
 }
 
 // runJellyfinStaging is the background staging walk. It resolves the target category
-// (creating it from the typed name when asked), scans the NFO library, counts files for
-// the progress denominator, then stages a preCheck row per locatable file with the
-// item's NFO metadata blob and any sidecar subtitles. Originals are never touched:
-// delete_after is forced off, like Plex.
+// (creating it from the typed name when asked), scans the NFO library into source-neutral
+// staged items (the item's NFO metadata blob and sidecar subtitles), then hands them to
+// the shared stageImport driver.
 func (s *Server) runJellyfinStaging(req jellyfinPrepareReq) {
 	ctx := context.Background()
 	finishErr := func(msg string) {
-		s.jellyfinMu.Lock()
-		s.jellyfinJob.Error = msg
-		s.jellyfinJob.Finished = true
-		s.jellyfinJob.running = false
-		s.jellyfinMu.Unlock()
+		s.jellyfinStaging.fail(msg)
 		s.logger().For(logging.Import).Error("Jellyfin import staging failed", logging.Fields{"error": msg})
 	}
 
@@ -103,65 +89,30 @@ func (s *Server) runJellyfinStaging(req jellyfinPrepareReq) {
 		}
 	}
 
-	items, err := jellyfin.Scan(req.SourceDir)
+	scanned, err := jellyfin.Scan(ctx, req.SourceDir)
 	if err != nil {
 		finishErr("could not read the Jellyfin library: " + err.Error())
 		return
 	}
-	total := 0
-	for _, it := range items {
-		total += len(it.Files)
-	}
-	s.jellyfinMu.Lock()
-	s.jellyfinJob.Total = total
-	s.jellyfinMu.Unlock()
 
-	staged, missing := 0, 0
-	for _, it := range items {
+	var items []stagedItem
+	for _, it := range scanned {
 		blob := ""
 		if b, err := json.Marshal(importer.MetaFromJellyfin(it)); err == nil {
 			blob = string(b)
 		}
 		for _, f := range it.Files {
-			if !fileExists(f.Path) {
-				missing++
-				s.jellyfinAdvance(false)
-				continue
-			}
-			_, _ = db.InsertImport(ctx, pool, db.Import{
-				CategoryID: cat.ID,
-				SourcePath: f.Path, Filename: filepath.Base(f.Path),
-				Title: it.Title, Year: it.Year, Season: f.Season, Episode: f.Episode,
-				Subtitles: jellyfinSubsJSON(f.Path), Poster: it.PosterPath,
-				APIJSON: blob, Origin: db.OriginJellyfin,
-				Status: db.StatusPreCheck, DeleteAfter: false,
+			items = append(items, stagedItem{
+				categoryID: cat.ID,
+				sourcePath: f.Path,
+				title:      it.Title, year: it.Year, season: f.Season, episode: f.Episode,
+				subtitles: jellyfinSubsJSON(f.Path), poster: it.PosterPath,
+				metaBlob: blob,
 			})
-			staged++
-			s.jellyfinAdvance(true)
 		}
 	}
 
-	s.jellyfinMu.Lock()
-	s.jellyfinJob.Done = total
-	s.jellyfinJob.Staged = staged
-	s.jellyfinJob.Missing = missing
-	s.jellyfinJob.Finished = true
-	s.jellyfinJob.running = false
-	s.jellyfinMu.Unlock()
-	s.logger().For(logging.Import).Info(fmt.Sprintf("staged %d Jellyfin file(s) for import", staged),
-		logging.Fields{"staged": staged, "missing": missing})
-}
-
-// jellyfinAdvance records one file processed (staged or missing) for the progress poll.
-func (s *Server) jellyfinAdvance(staged bool) {
-	s.jellyfinMu.Lock()
-	s.jellyfinJob.Done++
-	if staged {
-		s.jellyfinJob.Staged++
-	} else {
-		s.jellyfinJob.Missing++
-	}
-	s.jellyfinMu.Unlock()
+	s.stageImport(ctx, pool, &s.jellyfinStaging, items, db.OriginJellyfin, "Jellyfin")
 }
 
 // jellyfinSubsJSON encodes the sidecar subtitles beside a source video as the

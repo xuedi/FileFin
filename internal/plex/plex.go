@@ -4,7 +4,10 @@
 package plex
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -87,17 +90,18 @@ func Open(dbPath, metadataDir string) (*DB, error) {
 	uri := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro&immutable=1"}).String()
 	d, err := sql.Open("sqlite", uri)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open plex db (uri): %w", err)
 	}
-	if err := d.Ping(); err != nil {
+	if uriErr := d.Ping(); uriErr != nil {
 		// Fall back to a plain read-only open if the URI form is rejected.
 		d.Close()
-		if d, err = sql.Open("sqlite", dbPath); err != nil {
-			return nil, err
+		d, err = sql.Open("sqlite", dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("open plex db: %w", errors.Join(uriErr, err))
 		}
-		if err := d.Ping(); err != nil {
+		if pingErr := d.Ping(); pingErr != nil {
 			d.Close()
-			return nil, err
+			return nil, fmt.Errorf("ping plex db: %w", errors.Join(uriErr, pingErr))
 		}
 	}
 	return &DB{db: d, metadataDir: metadataDir}, nil
@@ -109,8 +113,8 @@ func (d *DB) Close() error { return d.db.Close() }
 // Sections returns the movie and show libraries with a cheap item count each, for
 // the check step. The count is the number of top-level items (movies, or shows)
 // the section holds.
-func (d *DB) Sections() ([]Section, error) {
-	rows, err := d.db.Query(`SELECT ls.name, ls.section_type,
+func (d *DB) Sections(ctx context.Context) ([]Section, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT ls.name, ls.section_type,
 		(SELECT COUNT(*) FROM metadata_items mi
 		   WHERE mi.library_section_id = ls.id
 		     AND mi.metadata_type IN (?, ?) AND mi.deleted_at IS NULL)
@@ -118,7 +122,7 @@ func (d *DB) Sections() ([]Section, error) {
 		WHERE ls.section_type IN (?, ?)
 		ORDER BY ls.name`, typeMovie, typeShow, typeMovie, typeShow)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query plex sections: %w", err)
 	}
 	defer rows.Close()
 	var out []Section
@@ -126,7 +130,7 @@ func (d *DB) Sections() ([]Section, error) {
 		var name string
 		var stype, count int
 		if err := rows.Scan(&name, &stype, &count); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan plex section: %w", err)
 		}
 		kind := "movie"
 		if stype == typeShow {
@@ -142,13 +146,13 @@ func (d *DB) Sections() ([]Section, error) {
 // representative set rather than many files from one directory. The spread is
 // achieved by taking one file per top-level item and round-robining across
 // sections.
-func (d *DB) SampleFiles(sections []string, n int) ([]string, error) {
+func (d *DB) SampleFiles(ctx context.Context, sections []string, n int) ([]string, error) {
 	if n <= 0 || len(sections) == 0 {
 		return nil, nil
 	}
 	perSection := make(map[string][]string, len(sections))
 	for _, sec := range sections {
-		files, err := d.sectionSampleFiles(sec, n)
+		files, err := d.sectionSampleFiles(ctx, sec, n)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +182,7 @@ func (d *DB) SampleFiles(sections []string, n int) ([]string, error) {
 // sectionSampleFiles returns one representative file per top-level item in a
 // section (one per movie, one per show), deduplicated by parent directory so the
 // sample spreads across folders. It caps work with a generous LIMIT.
-func (d *DB) sectionSampleFiles(section string, want int) ([]string, error) {
+func (d *DB) sectionSampleFiles(ctx context.Context, section string, want int) ([]string, error) {
 	const cap = 500
 	// One file per movie, and one file per show (the first episode found), so a
 	// show contributes a single folder probe rather than many sibling episodes.
@@ -199,9 +203,9 @@ func (d *DB) sectionSampleFiles(section string, want int) ([]string, error) {
 		  AND show.deleted_at IS NULL AND ep.deleted_at IS NULL AND mp.deleted_at IS NULL
 		GROUP BY show.id
 		LIMIT ?`
-	rows, err := d.db.Query(q, section, typeMovie, section, typeShow, typeEpisode, cap)
+	rows, err := d.db.QueryContext(ctx, q, section, typeMovie, section, typeShow, typeEpisode, cap)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query sample files %q: %w", section, err)
 	}
 	defer rows.Close()
 	seenDir := map[string]bool{}
@@ -209,7 +213,7 @@ func (d *DB) sectionSampleFiles(section string, want int) ([]string, error) {
 	for rows.Next() {
 		var f string
 		if err := rows.Scan(&f); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan sample file: %w", err)
 		}
 		if strings.TrimSpace(f) == "" {
 			continue
@@ -228,12 +232,12 @@ func (d *DB) sectionSampleFiles(section string, want int) ([]string, error) {
 }
 
 // Items returns all movies and shows, optionally limited to one section by name.
-func (d *DB) Items(section string) ([]Item, error) {
-	movies, err := d.query(false, section)
+func (d *DB) Items(ctx context.Context, section string) ([]Item, error) {
+	movies, err := d.query(ctx, false, section)
 	if err != nil {
 		return nil, err
 	}
-	shows, err := d.query(true, section)
+	shows, err := d.query(ctx, true, section)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +251,7 @@ const itemCols = `mi.id, ls.name, COALESCE(mi.title,''), mi.year,
 	COALESCE(mi.tags_writer,''), COALESCE(mi.tags_star,''),
 	COALESCE(mi.hash,''), COALESCE(mi.user_thumb_url,'')`
 
-func (d *DB) query(shows bool, section string) ([]Item, error) {
+func (d *DB) query(ctx context.Context, shows bool, section string) ([]Item, error) {
 	mtype, typeDir := typeMovie, "Movies"
 	if shows {
 		mtype, typeDir = typeShow, "TV Shows"
@@ -262,9 +266,9 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 	}
 	q += ` ORDER BY ls.name, mi.title`
 
-	rows, err := d.db.Query(q, args...)
+	rows, err := d.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query plex items: %w", err)
 	}
 	defer rows.Close()
 
@@ -288,7 +292,7 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 		)
 		if err := rows.Scan(&id, &section, &title, &year, &summary, &oad, &duration, &rating,
 			&contentRating, &genre, &director, &writer, &star, &hash, &thumb); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan plex item: %w", err)
 		}
 		it := Item{
 			Section:       section,
@@ -316,7 +320,7 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 	}
 
 	for i := range out {
-		files, err := d.files(raws[i].id, shows)
+		files, err := d.files(ctx, raws[i].id, shows)
 		if err != nil {
 			return nil, err
 		}
@@ -325,7 +329,7 @@ func (d *DB) query(shows bool, section string) ([]Item, error) {
 	return out, nil
 }
 
-func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
+func (d *DB) files(ctx context.Context, itemID int64, shows bool) ([]SourceFile, error) {
 	var q string
 	if shows {
 		q = `SELECT COALESCE(season."index",0), COALESCE(ep."index",0), mp.file, mp.id
@@ -342,9 +346,9 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 			WHERE m.metadata_item_id = ? AND mp.deleted_at IS NULL
 			ORDER BY mp."index", mp.file`
 	}
-	rows, err := d.db.Query(q, itemID)
+	rows, err := d.db.QueryContext(ctx, q, itemID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query plex files %d: %w", itemID, err)
 	}
 	defer rows.Close()
 	var files []SourceFile
@@ -353,7 +357,7 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 		var f SourceFile
 		var partID int64
 		if err := rows.Scan(&f.Season, &f.Episode, &f.Path, &partID); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan plex file: %w", err)
 		}
 		if strings.TrimSpace(f.Path) != "" {
 			files = append(files, f)
@@ -364,7 +368,7 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 		return nil, err
 	}
 	for i := range files {
-		subs, err := d.subtitles(partIDs[i])
+		subs, err := d.subtitles(ctx, partIDs[i])
 		if err != nil {
 			return nil, err
 		}
@@ -375,19 +379,19 @@ func (d *DB) files(itemID int64, shows bool) ([]SourceFile, error) {
 
 // subtitles returns the external subtitle streams (those carrying a file url) for
 // one media part, with the url decoded to a local path.
-func (d *DB) subtitles(partID int64) ([]Subtitle, error) {
-	rows, err := d.db.Query(`SELECT COALESCE(url,''), COALESCE(language,''), COALESCE(codec,'')
+func (d *DB) subtitles(ctx context.Context, partID int64) ([]Subtitle, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT COALESCE(url,''), COALESCE(language,''), COALESCE(codec,'')
 		FROM media_streams
 		WHERE stream_type_id = 3 AND url <> '' AND media_part_id = ?`, partID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query plex subtitles %d: %w", partID, err)
 	}
 	defer rows.Close()
 	var out []Subtitle
 	for rows.Next() {
 		var rawURL, lang, codec string
 		if err := rows.Scan(&rawURL, &lang, &codec); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan plex subtitle: %w", err)
 		}
 		path := decodeFileURL(rawURL)
 		if path == "" {

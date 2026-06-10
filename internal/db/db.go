@@ -5,6 +5,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -16,7 +17,7 @@ import (
 func Path() (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("user cache dir: %w", err)
 	}
 	return filepath.Join(dir, "filefin", "cache.db"), nil
 }
@@ -50,12 +51,12 @@ func Open() (*sql.DB, error) {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
 	pool, err := sql.Open("sqlite",
 		"file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open cache db: %w", err)
 	}
 	pool.SetMaxOpenConns(1)
 	return pool, nil

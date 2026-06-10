@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -59,13 +58,13 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // handleCreateUser adds an account: it mints the id from the SQLite cache, writes the
 // user into the config (the source of truth), and returns the new row.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Email    string `json:"email"`
 		Alias    string `json:"alias"`
 		Password string `json:"password"`
 		Admin    bool   `json:"admin"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -88,7 +87,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	pool, err := s.ensureDB(r.Context())
 	if err != nil {
-		http.Error(w, "cache unavailable", http.StatusInternalServerError)
+		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -126,13 +125,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad user id", http.StatusBadRequest)
 		return
 	}
-	var req struct {
+	req, err := decodeJSON[struct {
 		Alias    *string `json:"alias"`
 		Admin    *bool   `json:"admin"`
 		Blocked  *bool   `json:"blocked"`
 		Password *string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -204,7 +203,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pool != nil {
-		_ = db.UpsertUser(r.Context(), pool, dbUser(name, updated))
+		s.bestEffort(db.UpsertUser(r.Context(), pool, dbUser(name, updated)), "user mirror")
 	}
 	if nowBlocked {
 		s.sessions.deleteUser(name)
@@ -240,7 +239,7 @@ func (s *Server) stampLogin(username string) {
 	pool := s.db
 	s.mu.Unlock()
 	if ok && pool != nil {
-		_ = db.TouchUserLogin(context.Background(), pool, username, now)
+		s.bestEffort(db.TouchUserLogin(context.Background(), pool, username, now), "user login mirror")
 	}
 }
 

@@ -2,11 +2,14 @@ package importer
 
 import (
 	"encoding/json"
-	"os"
+	"errors"
+	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"filefin/internal/fsutil"
 	"filefin/internal/state"
 )
 
@@ -44,7 +47,7 @@ func (m *Manager) Update(folder string, fn func(Meta) Meta) (Meta, error) {
 
 	meta, err := ReadMeta(folder)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return Meta{}, err
 		}
 		meta = Meta{}
@@ -76,7 +79,7 @@ func (m *Manager) UpdateState(folder, user string, fn func(state.UserState) stat
 func LoadState(folder string) (map[string]state.UserState, error) {
 	meta, err := ReadMeta(folder)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -89,26 +92,7 @@ func LoadState(folder string) (map[string]state.UserState, error) {
 func writeMetaAtomic(folder string, meta Meta) error {
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal meta: %w", err)
 	}
-	dst := filepath.Join(folder, "meta.json")
-	tmp, err := os.CreateTemp(folder, "meta.json.*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, dst); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return fsutil.WriteFileAtomic(filepath.Join(folder, "meta.json"), data, 0o644)
 }

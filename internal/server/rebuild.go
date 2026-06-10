@@ -75,7 +75,10 @@ func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 
 	s.logger().For(logging.Backend).Info("cache rebuilt from disk",
 		logging.Fields{"categories": len(cats), "media": mediaCount})
-	writeJSON(w, map[string]any{"categories": len(cats), "media": mediaCount})
+	writeJSON(w, struct {
+		Categories int `json:"categories"`
+		Media      int `json:"media"`
+	}{len(cats), mediaCount})
 }
 
 // scannedMedia pairs a media row with its file rows during a rebuild.

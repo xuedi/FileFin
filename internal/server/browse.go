@@ -91,5 +91,9 @@ func writeBrowse(w http.ResponseWriter, r *http.Request, def string, includeFile
 	if path != "/" {
 		parent = filepath.Dir(path)
 	}
-	writeJSON(w, map[string]any{"path": path, "parent": parent, "entries": entries})
+	writeJSON(w, struct {
+		Path    string        `json:"path"`
+		Parent  string        `json:"parent"`
+		Entries []browseEntry `json:"entries"`
+	}{path, parent, entries})
 }

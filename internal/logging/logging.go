@@ -1,7 +1,7 @@
 // Package logging is the app's small structured logger: a single level (error, info,
 // debug) and output (STDOUT, STDERR, or a file), with per-category events. info renders
 // one human line per event; debug renders the same events as enriched JSON. The guiding
-// rule lives in CLAUDE.md: log what the app does, minimally, never internal mechanics.
+// rule: log what the app does, minimally, never internal mechanics.
 package logging
 
 import (

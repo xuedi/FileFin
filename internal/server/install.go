@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,7 +19,9 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	needsSetup := s.cfg == nil
 	s.mu.RUnlock()
-	writeJSON(w, map[string]any{"needsSetup": needsSetup})
+	writeJSON(w, struct {
+		NeedsSetup bool `json:"needsSetup"`
+	}{needsSetup})
 }
 
 // handleInstall is the first-run setup: it creates the admin user and the config on
@@ -35,13 +36,13 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
+	req, err := decodeJSON[struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Port     int    `json:"port"`
 		DataDir  string `json:"dataDir"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -88,7 +89,9 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 			logging.Fields{"error": err.Error()})
 	}
 
-	writeJSON(w, map[string]any{"port": req.Port})
+	writeJSON(w, struct {
+		Port int `json:"port"`
+	}{req.Port})
 	select {
 	case s.reload <- struct{}{}:
 	default:

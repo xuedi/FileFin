@@ -53,14 +53,20 @@ func (s *Server) handleThumbnailScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read category flags", http.StatusInternalServerError)
 		return
 	}
-	candidates := 0
+	candidates, failed := 0, 0
 	for _, m := range media {
 		if s.thumbnailCandidate(m, flags[m.CategoryID]) {
-			_ = db.UpsertPendingThumbnail(ctx, pool, m.ID, flags[m.CategoryID])
+			if err := db.UpsertPendingThumbnail(ctx, pool, m.ID, flags[m.CategoryID]); err != nil {
+				failed++
+				continue
+			}
 			candidates++
 		} else {
-			_ = db.PruneThumbnail(ctx, pool, m.ID)
+			s.bestEffort(db.PruneThumbnail(ctx, pool, m.ID), "prune thumbnail task")
 		}
+	}
+	if failed > 0 {
+		s.tlog().Error("some thumbnail tasks could not be queued", logging.Fields{"failed": failed})
 	}
 	pending, err := db.CountPendingThumbnail(ctx, pool)
 	if err != nil {
@@ -68,7 +74,7 @@ func (s *Server) handleThumbnailScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.tlog().Info("thumbnail scan queued work", logging.Fields{"candidates": candidates, "pending": pending})
-	writeJSON(w, map[string]any{"candidates": candidates, "pending": pending})
+	writeJSON(w, scanResult{Candidates: candidates, Pending: pending})
 }
 
 // thumbnailCandidate decides whether a media folder needs (re)generation: a folder with a
@@ -117,7 +123,7 @@ func (s *Server) handleActiveThumbnail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not count thumbnail tasks", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"active": active, "pending": pending})
+	writeJSON(w, queueStatus[db.ActiveThumbnail]{Active: active, Pending: pending})
 }
 
 // startThumbnailAgent launches the single thumbnail worker once per process.

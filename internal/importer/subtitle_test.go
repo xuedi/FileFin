@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,7 +77,7 @@ func TestPlaceSubtitles(t *testing.T) {
 	dst := t.TempDir()
 	videoTarget := filepath.Join(dst, "Movie.mkv")
 	// ffmpegPath "" forces the conversion fallback for the .ass file.
-	PlaceSubtitles(videoTarget, "en", "", subs)
+	PlaceSubtitles(context.Background(), videoTarget, "en", "", subs)
 
 	want := []string{
 		"Movie.en.2.srt", // second untagged subtitle, deduped

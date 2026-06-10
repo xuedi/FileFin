@@ -4,6 +4,7 @@
 package omdb
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -76,7 +77,7 @@ func New(key string) *Client {
 }
 
 // Lookup finds a title by name and (optional) year.
-func (c *Client) Lookup(title string, year int) (*Movie, error) {
+func (c *Client) Lookup(ctx context.Context, title string, year int) (*Movie, error) {
 	q := url.Values{}
 	q.Set("t", title)
 	if year > 0 {
@@ -85,9 +86,13 @@ func (c *Client) Lookup(title string, year int) (*Movie, error) {
 	q.Set("plot", "full")
 	q.Set("apikey", c.key)
 
-	resp, err := c.http.Get("https://www.omdbapi.com/?" + q.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.omdbapi.com/?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("omdb lookup %q: %w", title, err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("omdb lookup %q: %w", title, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -95,7 +100,7 @@ func (c *Client) Lookup(title string, year int) (*Movie, error) {
 	}
 	var m Movie
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("omdb decode %q: %w", title, err)
 	}
 	if m.Response != "True" {
 		if m.Error != "" {
@@ -108,7 +113,7 @@ func (c *Client) Lookup(title string, year int) (*Movie, error) {
 
 // Poster downloads the poster image for an imdb id at the requested height. It
 // returns the image bytes and the content type.
-func (c *Client) Poster(imdbID string, height int) ([]byte, string, error) {
+func (c *Client) Poster(ctx context.Context, imdbID string, height int) ([]byte, string, error) {
 	q := url.Values{}
 	q.Set("i", imdbID)
 	if height > 0 {
@@ -116,9 +121,13 @@ func (c *Client) Poster(imdbID string, height int) ([]byte, string, error) {
 	}
 	q.Set("apikey", c.key)
 
-	resp, err := c.http.Get("https://img.omdbapi.com/?" + q.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://img.omdbapi.com/?"+q.Encode(), nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("omdb poster %s: %w", imdbID, err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("omdb poster %s: %w", imdbID, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -126,7 +135,7 @@ func (c *Client) Poster(imdbID string, height int) ([]byte, string, error) {
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("omdb poster read %s: %w", imdbID, err)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
 }

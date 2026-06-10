@@ -6,18 +6,16 @@ package optimize
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"filefin/internal/db"
+	"filefin/internal/ffrun"
 	"filefin/internal/transcode"
 )
 
@@ -48,33 +46,29 @@ func Candidates(files []db.MediaFile) []Candidate {
 	return out
 }
 
-// Encode transcodes src into a faststart H.264+AAC MP4 at tmp using enc, reporting
-// progress percent (out_time vs duration) through onProgress as it runs and finishing at
-// 100 on ffmpeg's progress=end. duration is the probed source length in seconds; a
-// non-positive duration disables the percentage (onProgress is still called with 100 at
-// the end).
-func Encode(ctx context.Context, ffmpeg string, enc transcode.Encoder, src, tmp string, duration float64, onProgress func(pct int)) error {
-	base := transcode.OptimizeArgs(enc, src, tmp)
-	// Insert the progress flags before the output path (the last arg); ffmpeg rejects
-	// options placed after the output file.
-	out := base[len(base)-1]
-	args := append(base[:len(base)-1:len(base)-1], "-progress", "pipe:1", "-nostats", out)
+// EncodeOptions configures one optimize encode. Source/Output are the input file and the
+// (temp) output path; Duration is the probed source length in seconds (non-positive
+// disables the percentage); OnProgress, if non-nil, receives the running percent and a
+// final 100 on ffmpeg's progress=end.
+type EncodeOptions struct {
+	FFmpeg     string
+	Encoder    transcode.Encoder
+	Source     string
+	Output     string
+	Duration   float64
+	OnProgress func(pct int)
+}
 
-	cmd := exec.CommandContext(ctx, ffmpeg, args...)
-	stdout, err := cmd.StdoutPipe()
+// Encode transcodes opts.Source into a faststart H.264+AAC MP4 at opts.Output using the
+// configured encoder, reporting progress through opts.OnProgress as it runs.
+func Encode(ctx context.Context, opts EncodeOptions) error {
+	args := transcode.OptimizeArgs(opts.Encoder, opts.Source, opts.Output, "-progress", "pipe:1", "-nostats")
+	p, err := ffrun.Start(ctx, opts.FFmpeg, args...)
 	if err != nil {
 		return err
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	scanProgress(stdout, duration, onProgress)
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("ffmpeg: %w: %s", err, lastLine(stderr.Bytes()))
-	}
-	return nil
+	scanProgress(p.Stdout, opts.Duration, opts.OnProgress)
+	return p.Wait()
 }
 
 // scanProgress reads ffmpeg's `-progress pipe:1` key=value stream, emitting a percent
@@ -141,13 +135,4 @@ func SweepStaleLocks(dataDir string) (int, error) {
 		return nil
 	})
 	return n, err
-}
-
-// lastLine returns the last non-empty line of ffmpeg output for a compact error.
-func lastLine(b []byte) string {
-	s := strings.TrimRight(string(b), "\r\n")
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
 }

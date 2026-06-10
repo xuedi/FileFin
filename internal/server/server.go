@@ -67,13 +67,11 @@ type Server struct {
 	// thumbnailStart guards the single thumbnail agent goroutine.
 	thumbnailStart sync.Once
 
-	// plexMu/jellyfinMu each guard a single in-flight library staging job's live
-	// progress (one job at a time per source, like the optimizer percent map). The
+	// plexStaging/jellyfinStaging each track a single in-flight library staging job's
+	// live progress (one job at a time per source, like the optimizer percent map). The
 	// frontend polls them.
-	plexMu      sync.Mutex
-	plexJob     stagingJobState
-	jellyfinMu  sync.Mutex
-	jellyfinJob stagingJobState
+	plexStaging     stagingTracker
+	jellyfinStaging stagingTracker
 }
 
 func New() *Server {
@@ -283,6 +281,53 @@ func (s *Server) spa() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
 	})
+}
+
+// bestEffort logs and swallows the error of a deliberately best-effort write: a cache
+// mirror of the config (the source of truth) or a throttled progress update. These never
+// gate whether work happens, so a failure is noted at debug level and never surfaced. The
+// named helper makes that intent greppable instead of a bare "_ = db.X(...)".
+func (s *Server) bestEffort(err error, what string) {
+	if err == nil {
+		return
+	}
+	s.logger().For(logging.Backend).Debug("best-effort "+what+" failed", logging.Fields{"error": err.Error()})
+}
+
+// maxBodyBytes caps a decoded JSON request body. The admin API takes only small JSON
+// payloads, so a generous 1 MiB ceiling guards a public server against a giant body
+// without rejecting anything legitimate. (File uploads use their own streaming path.)
+const maxBodyBytes = 1 << 20
+
+// decodeJSON reads and decodes a JSON request body into T, capping the body size so a
+// hostile client cannot stream an unbounded body into memory. A decode error is the
+// caller's cue to reply 400; any field-level validation happens on the returned value.
+func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, error) {
+	var v T
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	err := json.NewDecoder(r.Body).Decode(&v)
+	return v, err
+}
+
+// scanResult is the response of the enrich/optimize/thumbnail scan endpoints: how many
+// candidates the scan found and how many tasks are now pending.
+type scanResult struct {
+	Candidates int `json:"candidates"`
+	Pending    int `json:"pending"`
+}
+
+// queueStatus is the response of the enrich/optimize/thumbnail "active" endpoints: the
+// in-flight jobs and the count still waiting. T is the queue's active-row type.
+type queueStatus[T any] struct {
+	Active  []T `json:"active"`
+	Pending int `json:"pending"`
+}
+
+// authResult is the response of login and /me: the authenticated user and its flags.
+type authResult struct {
+	User  string `json:"user"`
+	Admin bool   `json:"admin"`
+	Alias string `json:"alias"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

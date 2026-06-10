@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"filefin/internal/ffrun"
 	"filefin/internal/logging"
 )
 
@@ -63,8 +63,22 @@ type session struct {
 	duration   float64
 	startSeg   int // first segment the current encoder was launched at
 	cancel     context.CancelFunc
+	run        *ffmpegRun // currently active encoder run; replaced on a seek relaunch
 	lastAccess time.Time
 }
+
+// ffmpegRun tracks one encoder process so a segment wait can react to the process dying
+// instead of grinding through the full timeout. done is closed when the process exits;
+// err is the exit error of a genuine failure (a cancelled/repositioned run leaves it
+// nil) and is safe to read once done is closed.
+type ffmpegRun struct {
+	done chan struct{}
+	err  error
+}
+
+// failed reports whether the run ended in a genuine encoder failure (not our own cancel
+// for a reposition). Read only after the run's done channel is closed.
+func (r *ffmpegRun) failed() bool { return r != nil && r.err != nil }
 
 // NewManager constructs a Manager and starts its idle-session reaper.
 func NewManager(opts Options) *Manager {
@@ -121,8 +135,10 @@ func (m *Manager) Playlist(key, inputPath, title string) ([]byte, error) {
 }
 
 // Segment returns the on-disk path of a named segment for an existing session,
-// waiting briefly for the encoder to produce it. name must match seg<N>.ts.
-func (m *Manager) Segment(key, name string) (string, error) {
+// waiting briefly for the encoder to produce it. name must match seg<N>.ts. The wait
+// ends as soon as the segment appears, the request's ctx is cancelled, the encoder
+// process dies, or the timeout elapses - whichever comes first.
+func (m *Manager) Segment(ctx context.Context, key, name string) (string, error) {
 	if !segmentName.MatchString(name) {
 		return "", fmt.Errorf("transcode: invalid segment name %q", name)
 	}
@@ -145,15 +161,39 @@ func (m *Manager) Segment(key, name string) (string, error) {
 	// relaunched to seek there rather than grinding forward to it.
 	m.maybeReposition(s, segIndex(name))
 
-	deadline := time.Now().Add(segmentWaitTimeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(segmentWaitTimeout)
+	// consumed remembers a run whose exit we already handled, so a finished encoder's
+	// closed done channel does not busy-spin the select. A reposition swaps in a new run,
+	// which is != consumed and so is waited on afresh.
+	var consumed *ffmpegRun
 	for {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
+		m.mu.Lock()
+		run := s.run
+		m.mu.Unlock()
+		var doneCh <-chan struct{}
+		if run != nil && run != consumed {
+			doneCh = run.done
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-deadline:
 			return "", fmt.Errorf("transcode: segment %s not ready", name)
+		case <-ticker.C:
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
+		case <-doneCh:
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
+			if run.failed() {
+				return "", fmt.Errorf("transcode: encoder for %s exited: %w", name, run.err)
+			}
+			consumed = run // clean or cancelled exit: stop selecting this run's done
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -212,12 +252,14 @@ func (m *Manager) maybeReposition(s *session, n int) {
 	// the session encoding rather than dead. Segments already on disk stay valid; the
 	// two processes write disjoint segment numbers, and +temp_file hides partials.
 	runCtx, cancel := context.WithCancel(context.Background())
-	if err := m.startFFmpeg(runCtx, s.dir, s.inputPath, s.remux, target); err != nil {
+	run, err := m.startFFmpeg(runCtx, s.dir, s.inputPath, s.title, s.remux, target)
+	if err != nil {
 		cancel()
 		return
 	}
 	s.cancel()
 	s.cancel = cancel
+	s.run = run
 	s.startSeg = target
 	pos := target * segmentSeconds
 	m.log.Info(fmt.Sprintf("seek in %s to %s", s.title, clock(pos)), logging.Fields{
@@ -257,13 +299,14 @@ func (m *Manager) ensure(key, inputPath, title string) (*session, error) {
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	remux := RemuxEligible(streams)
-	if err := m.startFFmpeg(runCtx, dir, inputPath, remux, 0); err != nil {
+	run, err := m.startFFmpeg(runCtx, dir, inputPath, title, remux, 0)
+	if err != nil {
 		cancel()
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 
-	s := &session{dir: dir, inputPath: inputPath, title: title, remux: remux, duration: streams.Duration, cancel: cancel, lastAccess: time.Now()}
+	s := &session{dir: dir, inputPath: inputPath, title: title, remux: remux, duration: streams.Duration, cancel: cancel, run: run, lastAccess: time.Now()}
 
 	m.mu.Lock()
 	// Another request may have created the session while we were probing.
@@ -293,7 +336,7 @@ func videoEncodeArgs(enc Encoder, startSeg int) (preInput, codec []string) {
 	return preInput, codec
 }
 
-func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux bool, startSeg int) error {
+func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath, title string, remux bool, startSeg int) (*ffmpegRun, error) {
 	args := []string{"-nostdin"}
 	var codec []string
 	if !remux {
@@ -325,13 +368,25 @@ func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath string, remux 
 		filepath.Join(dir, "index.m3u8"),
 	)
 
-	cmd := exec.CommandContext(ctx, m.opts.FFmpegPath, args...)
-	cmd.Stderr = newRingBuffer(4096)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("transcode: start ffmpeg: %w", err)
+	p, err := ffrun.Start(ctx, m.opts.FFmpegPath, args...)
+	if err != nil {
+		return nil, fmt.Errorf("transcode: %w", err)
 	}
-	go func() { _ = cmd.Wait() }() // reaped by ctx cancel; exit code surfaced via missing segments
-	return nil
+	run := &ffmpegRun{done: make(chan struct{})}
+	go func() {
+		err := p.Wait()
+		// A cancelled run (idle reap, Close, or a seek relaunch) is expected, not a
+		// failure; only a non-context exit is recorded and logged, so the segment wait
+		// fails fast instead of stalling for the full timeout.
+		if err != nil && ctx.Err() == nil {
+			run.err = err
+			m.log.Error("transcode encoder failed for "+title, logging.Fields{
+				"title": title, "error": err.Error(),
+			})
+		}
+		close(run.done)
+	}()
+	return run, nil
 }
 
 func (m *Manager) reap() {

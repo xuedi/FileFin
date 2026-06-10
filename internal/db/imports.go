@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 )
 
 // Import status values. preCheck rows are produced by an assessment (a producer)
@@ -76,7 +77,7 @@ func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) 
 		imp.Status, imp.APIJSON, imp.Poster, imp.Copied, imp.Total, imp.Error, imp.DeleteAfter,
 		imp.Season, imp.Episode, imp.Subtitles, imp.Origin)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("insert import %q: %w", imp.SourcePath, err)
 	}
 	return res.LastInsertId()
 }
@@ -127,14 +128,14 @@ func ListImports(ctx context.Context, pool *sql.DB, status string) ([]Import, er
 	q += ` ORDER BY i.id`
 	rows, err := pool.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query imports: %w", err)
 	}
 	defer rows.Close()
 	out := []Import{}
 	for rows.Next() {
 		imp, err := scanImport(rows)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan import: %w", err)
 		}
 		out = append(out, imp)
 	}
@@ -148,14 +149,14 @@ func ListActiveImports(ctx context.Context, pool *sql.DB) ([]Import, error) {
 		importSelect+` WHERE i.status IN (?, ?) ORDER BY i.id`,
 		StatusImport, StatusImporting)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query active imports: %w", err)
 	}
 	defer rows.Close()
 	out := []Import{}
 	for rows.Next() {
 		imp, err := scanImport(rows)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan import: %w", err)
 		}
 		out = append(out, imp)
 	}
@@ -165,21 +166,34 @@ func ListActiveImports(ctx context.Context, pool *sql.DB) ([]Import, error) {
 // GetImport returns a single import row by id.
 func GetImport(ctx context.Context, pool *sql.DB, id int64) (Import, error) {
 	row := pool.QueryRowContext(ctx, importSelect+` WHERE i.id = ?`, id)
-	return scanImport(row)
+	imp, err := scanImport(row)
+	if err == sql.ErrNoRows {
+		return Import{}, err
+	}
+	if err != nil {
+		return Import{}, fmt.Errorf("get import %d: %w", id, err)
+	}
+	return imp, nil
 }
 
 // UpdateImportFields updates the user-editable title/year of a staged row.
 func UpdateImportFields(ctx context.Context, pool *sql.DB, id int64, title string, year int) error {
 	_, err := pool.ExecContext(ctx,
 		`UPDATE imports SET title = ?, year = ? WHERE id = ?`, title, year, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("update import fields %d: %w", id, err)
+	}
+	return nil
 }
 
 // UpdateImportCategory moves a staged row to a different category.
 func UpdateImportCategory(ctx context.Context, pool *sql.DB, id, categoryID int64) error {
 	_, err := pool.ExecContext(ctx,
 		`UPDATE imports SET category_id = ? WHERE id = ?`, categoryID, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("update import category %d: %w", id, err)
+	}
+	return nil
 }
 
 // UpdateImportProgress records the worker's progress and terminal state for a row.
@@ -187,7 +201,10 @@ func UpdateImportProgress(ctx context.Context, pool *sql.DB, id int64, status st
 	_, err := pool.ExecContext(ctx,
 		`UPDATE imports SET status = ?, copied = ?, total = ?, error = ? WHERE id = ?`,
 		status, copied, total, errMsg, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("update import progress %d: %w", id, err)
+	}
+	return nil
 }
 
 // ResetInterruptedImports flips rows left mid-copy (importing) back to import so the
@@ -200,7 +217,7 @@ func ResetInterruptedImports(ctx context.Context, pool *sql.DB) (int64, error) {
 		`UPDATE imports SET status = ?, copied = 0, total = 0, error = '' WHERE status = ?`,
 		StatusImport, StatusImporting)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("reset interrupted imports: %w", err)
 	}
 	return res.RowsAffected()
 }
@@ -210,7 +227,7 @@ func ResetInterruptedImports(ctx context.Context, pool *sql.DB) (int64, error) {
 func SetImportStatus(ctx context.Context, pool *sql.DB, from, to string) (int64, error) {
 	res, err := pool.ExecContext(ctx, `UPDATE imports SET status = ? WHERE status = ?`, to, from)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("set import status %s->%s: %w", from, to, err)
 	}
 	return res.RowsAffected()
 }
@@ -219,27 +236,39 @@ func SetImportStatus(ctx context.Context, pool *sql.DB, from, to string) (int64,
 // admin's per-batch choice is recorded just before the rows are started.
 func SetDeleteAfterForStatus(ctx context.Context, pool *sql.DB, status string, value bool) error {
 	_, err := pool.ExecContext(ctx, `UPDATE imports SET delete_after = ? WHERE status = ?`, value, status)
-	return err
+	if err != nil {
+		return fmt.Errorf("set delete_after for status %s: %w", status, err)
+	}
+	return nil
 }
 
 // DeleteImport removes a single import row.
 func DeleteImport(ctx context.Context, pool *sql.DB, id int64) error {
 	_, err := pool.ExecContext(ctx, `DELETE FROM imports WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete import %d: %w", id, err)
+	}
+	return nil
 }
 
 // ClearImports removes import rows for a category and status (used to wipe stale
 // preCheck rows before a fresh assessment).
 func ClearImports(ctx context.Context, pool *sql.DB, categoryID int64, status string) error {
 	_, err := pool.ExecContext(ctx, `DELETE FROM imports WHERE category_id = ? AND status = ?`, categoryID, status)
-	return err
+	if err != nil {
+		return fmt.Errorf("clear imports category %d status %s: %w", categoryID, status, err)
+	}
+	return nil
 }
 
 // ClearImportsAll removes every import row. Imports are transient state that cannot
 // be rebuilt from the filesystem, so a full cache rebuild simply drops them.
 func ClearImportsAll(ctx context.Context, pool *sql.DB) error {
 	_, err := pool.ExecContext(ctx, `DELETE FROM imports`)
-	return err
+	if err != nil {
+		return fmt.Errorf("clear all imports: %w", err)
+	}
+	return nil
 }
 
 // CountUnfinishedImportsUnder counts rows whose source still lives under pathPrefix and
@@ -251,5 +280,8 @@ func CountUnfinishedImportsUnder(ctx context.Context, pool *sql.DB, pathPrefix s
 	err := pool.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM imports WHERE source_path LIKE ? AND status IN (?, ?, ?)`,
 		pathPrefix+"%", StatusPreCheck, StatusImport, StatusImporting).Scan(&n)
-	return n, err
+	if err != nil {
+		return 0, fmt.Errorf("count unfinished imports under %q: %w", pathPrefix, err)
+	}
+	return n, nil
 }

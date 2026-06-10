@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // schema is the cache layout. CREATE TABLE IF NOT EXISTS keeps Build idempotent.
@@ -111,7 +112,7 @@ type Category struct {
 // on every admin entry.
 func Build(ctx context.Context, pool *sql.DB) error {
 	if _, err := pool.ExecContext(ctx, schema); err != nil {
-		return err
+		return fmt.Errorf("create schema: %w", err)
 	}
 	return migrate(ctx, pool)
 }
@@ -137,7 +138,7 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		}
 		if !has {
 			if _, err := pool.ExecContext(ctx, c.ddl); err != nil {
-				return err
+				return fmt.Errorf("add column %s.%s: %w", c.table, c.name, err)
 			}
 		}
 	}
@@ -157,7 +158,7 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		}
 		if has {
 			if _, err := pool.ExecContext(ctx, `ALTER TABLE `+d.table+` DROP COLUMN `+d.name); err != nil {
-				return err
+				return fmt.Errorf("drop column %s.%s: %w", d.table, d.name, err)
 			}
 		}
 	}
@@ -168,7 +169,7 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 func hasColumn(ctx context.Context, pool *sql.DB, table, column string) (bool, error) {
 	rows, err := pool.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("table_info %s: %w", table, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -177,7 +178,7 @@ func hasColumn(ctx context.Context, pool *sql.DB, table, column string) (bool, e
 		var notnull, pk int
 		var dflt any
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return false, err
+			return false, fmt.Errorf("scan table_info %s: %w", table, err)
 		}
 		if name == column {
 			return true, nil
@@ -189,8 +190,10 @@ func hasColumn(ctx context.Context, pool *sql.DB, table, column string) (bool, e
 // CountCategories returns the number of cached category rows.
 func CountCategories(ctx context.Context, pool *sql.DB) (int, error) {
 	var n int
-	err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM categories`).Scan(&n)
-	return n, err
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM categories`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count categories: %w", err)
+	}
+	return n, nil
 }
 
 // InsertCategory inserts a category under parentID (0 = top level) and returns the
@@ -199,7 +202,7 @@ func InsertCategory(ctx context.Context, pool *sql.DB, name, alias string, paren
 	res, err := pool.ExecContext(ctx,
 		`INSERT INTO categories (name, alias, parent_id) VALUES (?, ?, ?)`, name, alias, nullID(parentID))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("insert category %q: %w", name, err)
 	}
 	return res.LastInsertId()
 }
@@ -216,13 +219,19 @@ func nullID(id int64) any {
 func UpdateCategoryAlias(ctx context.Context, pool *sql.DB, name, alias string, otherMedia bool) error {
 	_, err := pool.ExecContext(ctx,
 		`UPDATE categories SET alias = ?, other_media = ? WHERE name = ?`, alias, otherMedia, name)
-	return err
+	if err != nil {
+		return fmt.Errorf("update category alias %q: %w", name, err)
+	}
+	return nil
 }
 
 // DeleteCategory removes a category from the cache.
 func DeleteCategory(ctx context.Context, pool *sql.DB, name string) error {
 	_, err := pool.ExecContext(ctx, `DELETE FROM categories WHERE name = ?`, name)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete category %q: %w", name, err)
+	}
+	return nil
 }
 
 // ReplaceCategories rebuilds the cache from the filesystem: it wipes the table and
@@ -237,20 +246,23 @@ func ReplaceCategories(ctx context.Context, pool *sql.DB, cats []Category) error
 	}
 	tx, err := pool.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin replace categories: %w", err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM categories`); err != nil {
-		return err
+		return fmt.Errorf("clear categories: %w", err)
 	}
 	for _, c := range cats {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO categories (id, name, alias, other_media, parent_id) VALUES (?, ?, ?, ?, ?)`,
 			c.ID, c.Name, c.Alias, effectiveOtherMedia(c, own), nullID(c.ParentID)); err != nil {
-			return err
+			return fmt.Errorf("insert category %q: %w", c.Name, err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace categories: %w", err)
+	}
+	return nil
 }
 
 // effectiveOtherMedia walks c up to its root through the own map and returns the root's

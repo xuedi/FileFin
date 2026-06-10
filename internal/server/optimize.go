@@ -22,6 +22,13 @@ import (
 	"filefin/internal/transcode"
 )
 
+// Optimizer worker labels, shown on the Progress page and recorded as the claiming agent
+// on each task: the always-on GPU agent and the load-gated CPU pool.
+const (
+	workerGPU = "GPU"
+	workerCPU = "CPU"
+)
+
 // handleActiveOptimize returns the in-flight encodes (with live percent overlaid from
 // memory) and the count still waiting, for the Progress page.
 func (s *Server) handleActiveOptimize(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +55,7 @@ func (s *Server) handleActiveOptimize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not count optimize tasks", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"active": active, "pending": pending})
+	writeJSON(w, queueStatus[db.ActiveTask]{Active: active, Pending: pending})
 }
 
 const (
@@ -182,7 +189,7 @@ func (s *Server) handleOptimizeScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.olog().Info("optimizer scan queued work", logging.Fields{"candidates": candidates, "pending": pending})
-	writeJSON(w, map[string]any{"candidates": candidates, "pending": pending})
+	writeJSON(w, scanResult{Candidates: candidates, Pending: pending})
 }
 
 // optimizeRefill upserts a pending task per candidate and prunes pending/error tasks for
@@ -199,14 +206,21 @@ func (s *Server) optimizeRefill(ctx context.Context) (int, error) {
 	}
 	cands := optimize.Candidates(files)
 	wanted := make(map[string]bool, len(cands))
+	failed := 0
 	for _, c := range cands {
-		_ = db.UpsertPendingTask(ctx, pool, c.MediaID, c.FileIdx, c.Source, c.Optimized)
+		if err := db.UpsertPendingTask(ctx, pool, c.MediaID, c.FileIdx, c.Source, c.Optimized); err != nil {
+			failed++
+			continue
+		}
 		wanted[c.MediaID+"|"+strconv.Itoa(c.FileIdx)] = true
 	}
 	for _, f := range files {
 		if !wanted[f.MediaID+"|"+strconv.Itoa(f.Idx)] {
-			_ = db.PruneTask(ctx, pool, f.MediaID, f.Idx)
+			s.bestEffort(db.PruneTask(ctx, pool, f.MediaID, f.Idx), "prune optimize task")
 		}
+	}
+	if failed > 0 {
+		s.olog().Error("some optimize tasks could not be queued", logging.Fields{"failed": failed})
 	}
 	return len(cands), nil
 }
@@ -219,7 +233,7 @@ func (s *Server) optimizeGPUAgent(ctx context.Context, enc transcode.Encoder, wg
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.optimizeOnce(ctx, "GPU", enc) {
+		if !s.optimizeOnce(ctx, workerGPU, enc) {
 			if !sleepCtx(ctx, optimizeBusyPoll) {
 				return
 			}
@@ -269,7 +283,7 @@ func (s *Server) optimizeCPUPool(ctx context.Context, wg *sync.WaitGroup) {
 				active.Add(-1)
 				wg.Done()
 			}()
-			for s.optimizeOnce(ctx, "CPU", enc) {
+			for s.optimizeOnce(ctx, workerCPU, enc) {
 				if ctx.Err() != nil {
 					return
 				}
@@ -342,12 +356,15 @@ func (s *Server) runOptimizeTask(ctx context.Context, pool *sql.DB, task db.Opti
 
 	start := time.Now()
 	var lastMirror time.Time
-	err = optimize.Encode(ctx, ffmpeg, enc, task.SourcePath, tmp, streams.Duration, func(pct int) {
-		s.setOptPercent(task.ID, pct)
-		if now := time.Now(); now.Sub(lastMirror) >= time.Second {
-			lastMirror = now
-			_ = db.UpdateTaskPercent(ctx, pool, task.ID, pct)
-		}
+	err = optimize.Encode(ctx, optimize.EncodeOptions{
+		FFmpeg: ffmpeg, Encoder: enc, Source: task.SourcePath, Output: tmp, Duration: streams.Duration,
+		OnProgress: func(pct int) {
+			s.setOptPercent(task.ID, pct)
+			if now := time.Now(); now.Sub(lastMirror) >= time.Second {
+				lastMirror = now
+				s.bestEffort(db.UpdateTaskPercent(ctx, pool, task.ID, pct), "optimize percent mirror")
+			}
+		},
 	})
 	s.clearOptPercent(task.ID)
 	if err != nil {

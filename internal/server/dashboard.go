@@ -63,11 +63,45 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	mode := s.cfg.OptimizeModeOr()
 	s.mu.RUnlock()
 
-	writeJSON(w, map[string]any{
-		"library":   map[string]int{"categories": categories, "media": media, "files": files},
-		"users":     map[string]int{"total": total, "admins": admins},
-		"optimizer": map[string]any{"mode": mode, "pending": optPending, "active": len(optActive)},
-		"enrich":    map[string]int{"pending": enrichPending},
-		"imports":   map[string]int{"active": len(importsActive)},
+	writeJSON(w, dashboardView{
+		Library:   libraryStats{Categories: categories, Media: media, Files: files},
+		Users:     userStats{Total: total, Admins: admins},
+		Optimizer: optimizerStats{Mode: mode, Pending: optPending, Active: len(optActive)},
+		Enrich:    pendingStat{Pending: enrichPending},
+		Imports:   activeStat{Active: len(importsActive)},
 	})
+}
+
+// dashboardView is the typed admin-dashboard summary, replacing the nested map payload.
+type dashboardView struct {
+	Library   libraryStats   `json:"library"`
+	Users     userStats      `json:"users"`
+	Optimizer optimizerStats `json:"optimizer"`
+	Enrich    pendingStat    `json:"enrich"`
+	Imports   activeStat     `json:"imports"`
+}
+
+type libraryStats struct {
+	Categories int `json:"categories"`
+	Media      int `json:"media"`
+	Files      int `json:"files"`
+}
+
+type userStats struct {
+	Total  int `json:"total"`
+	Admins int `json:"admins"`
+}
+
+type optimizerStats struct {
+	Mode    string `json:"mode"`
+	Pending int    `json:"pending"`
+	Active  int    `json:"active"`
+}
+
+type pendingStat struct {
+	Pending int `json:"pending"`
+}
+
+type activeStat struct {
+	Active int `json:"active"`
 }

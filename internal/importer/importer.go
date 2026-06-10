@@ -46,9 +46,12 @@ type Meta struct {
 func WriteMeta(folder string, m Meta) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal meta: %w", err)
 	}
-	return os.WriteFile(filepath.Join(folder, "meta.json"), data, 0o644)
+	if err := os.WriteFile(filepath.Join(folder, "meta.json"), data, 0o644); err != nil {
+		return fmt.Errorf("write meta.json: %w", err)
+	}
+	return nil
 }
 
 // ReadMeta parses a media folder's meta.json. A cache rebuild uses it to recover the
@@ -56,11 +59,11 @@ func WriteMeta(folder string, m Meta) error {
 func ReadMeta(folder string) (Meta, error) {
 	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
 	if err != nil {
-		return Meta{}, err
+		return Meta{}, fmt.Errorf("read meta.json: %w", err)
 	}
 	var m Meta
 	if err := json.Unmarshal(data, &m); err != nil {
-		return Meta{}, err
+		return Meta{}, fmt.Errorf("parse meta.json in %s: %w", folder, err)
 	}
 	return m, nil
 }
@@ -74,56 +77,85 @@ func StubMeta(title string, year int) Meta {
 	return m
 }
 
+// metaBuilder collects the metadata/ratings maps, actors, and tags that the three
+// source-specific Meta builders (OMDb, Plex, Jellyfin) each assembled with their own
+// copy of the "trim, skip empty, lowercase genres, omit empty maps" boilerplate. Values
+// are trimmed and empties dropped, so callers pass already-cleaned strings (the OMDb path
+// wraps with clean() to also drop "N/A").
+type metaBuilder struct {
+	m  Meta
+	md map[string]string
+	rt map[string]string
+}
+
+func newMetaBuilder(title string, year int, description string) *metaBuilder {
+	return &metaBuilder{
+		m:  Meta{Title: title, Year: year, Description: strings.TrimSpace(description)},
+		md: map[string]string{},
+		rt: map[string]string{},
+	}
+}
+
+// add records a metadata field, skipping it when blank after trimming.
+func (b *metaBuilder) add(key, val string) {
+	if v := strings.TrimSpace(val); v != "" {
+		b.md[key] = v
+	}
+}
+
+// rate records a rating, skipping it when blank after trimming.
+func (b *metaBuilder) rate(key, val string) {
+	if v := strings.TrimSpace(val); v != "" {
+		b.rt[key] = v
+	}
+}
+
+// addTags appends each non-empty genre, lowercased.
+func (b *metaBuilder) addTags(genres []string) {
+	for _, g := range genres {
+		if g = strings.TrimSpace(g); g != "" {
+			b.m.Tags = append(b.m.Tags, strings.ToLower(g))
+		}
+	}
+}
+
+// build finalises the Meta, attaching the maps only when non-empty (omitempty).
+func (b *metaBuilder) build() Meta {
+	if len(b.md) > 0 {
+		b.m.Metadata = b.md
+	}
+	if len(b.rt) > 0 {
+		b.m.Ratings = b.rt
+	}
+	return b.m
+}
+
 // MetaFromOMDb maps an OMDb result into a Meta. The caller's title/year always win
 // over OMDb's so the file matches its folder name. "N/A" values are dropped, genres
 // are lowercased into tags.
 func MetaFromOMDb(mv *omdb.Movie, title string, year int) Meta {
-	m := Meta{Title: title, Year: year, Description: clean(mv.Plot), Enriched: true}
-
-	md := map[string]string{}
-	add := func(k, v string) {
-		if v := clean(v); v != "" {
-			md[k] = v
-		}
-	}
+	b := newMetaBuilder(title, year, clean(mv.Plot))
+	b.m.Enriched = true
 	release := clean(mv.Released)
 	if release == "" && year > 0 {
 		release = strconv.Itoa(year)
 	}
-	add("release", release)
-	add("runtime", strings.TrimSuffix(clean(mv.Runtime), " min"))
-	add("language", mv.Language)
-	add("origin", mv.Country)
-	add("directedBy", mv.Director)
-	add("writtenBy", mv.Writer)
-	add("contentRating", mv.Rated)
-	add("awards", mv.Awards)
-	add("boxOffice", mv.BoxOffice)
-	add("imdbID", mv.ImdbID)
-	if len(md) > 0 {
-		m.Metadata = md
-	}
-
-	rt := map[string]string{}
-	rate := func(k, v string) {
-		if v := clean(v); v != "" {
-			rt[k] = v
-		}
-	}
-	rate("imdb", imdbRatingWithVotes(mv))
-	rate("rottenTomatoes", mv.RatingBySource("Rotten Tomatoes"))
-	rate("metacritic", metacritic(mv))
-	if len(rt) > 0 {
-		m.Ratings = rt
-	}
-
-	for _, a := range splitList(mv.Actors) {
-		m.Actors = append(m.Actors, a)
-	}
-	for _, g := range splitList(mv.Genre) {
-		m.Tags = append(m.Tags, strings.ToLower(g))
-	}
-	return m
+	b.add("release", release)
+	b.add("runtime", strings.TrimSuffix(clean(mv.Runtime), " min"))
+	b.add("language", clean(mv.Language))
+	b.add("origin", clean(mv.Country))
+	b.add("directedBy", clean(mv.Director))
+	b.add("writtenBy", clean(mv.Writer))
+	b.add("contentRating", clean(mv.Rated))
+	b.add("awards", clean(mv.Awards))
+	b.add("boxOffice", clean(mv.BoxOffice))
+	b.add("imdbID", clean(mv.ImdbID))
+	b.rate("imdb", imdbRatingWithVotes(mv))
+	b.rate("rottenTomatoes", mv.RatingBySource("Rotten Tomatoes"))
+	b.rate("metacritic", metacritic(mv))
+	b.m.Actors = append(b.m.Actors, splitList(mv.Actors)...)
+	b.addTags(splitList(mv.Genre))
+	return b.build()
 }
 
 // MetaFromPlex maps a Plex item into a Meta from Plex's own fields. It is left
@@ -131,36 +163,22 @@ func MetaFromOMDb(mv *omdb.Movie, title string, year int) Meta {
 // enricher later fills any gaps additively (never overwriting these values). The
 // caller's title/year are applied by the importer so the file matches its folder.
 func MetaFromPlex(item plex.Item) Meta {
-	m := Meta{Title: item.Title, Year: item.Year, Description: strings.TrimSpace(item.Summary)}
-
-	md := map[string]string{}
-	add := func(k, v string) {
-		if v = strings.TrimSpace(v); v != "" {
-			md[k] = v
-		}
-	}
+	b := newMetaBuilder(item.Title, item.Year, item.Summary)
 	release := item.Release
 	if release == "" && item.Year > 0 {
 		release = strconv.Itoa(item.Year)
 	}
-	add("release", release)
+	b.add("release", release)
 	if item.Runtime > 0 {
-		add("runtime", strconv.Itoa(item.Runtime))
+		b.add("runtime", strconv.Itoa(item.Runtime))
 	}
-	add("directedBy", strings.Join(item.Directors, ", "))
-	add("writtenBy", strings.Join(item.Writers, ", "))
-	add("contentRating", item.ContentRating)
-	if len(md) > 0 {
-		m.Metadata = md
-	}
-	if r := strings.TrimSpace(item.Rating); r != "" {
-		m.Ratings = map[string]string{"plex": r}
-	}
-	m.Actors = append(m.Actors, item.Actors...)
-	for _, g := range item.Genres {
-		m.Tags = append(m.Tags, strings.ToLower(g))
-	}
-	return m
+	b.add("directedBy", strings.Join(item.Directors, ", "))
+	b.add("writtenBy", strings.Join(item.Writers, ", "))
+	b.add("contentRating", item.ContentRating)
+	b.rate("plex", item.Rating)
+	b.m.Actors = append(b.m.Actors, item.Actors...)
+	b.addTags(item.Genres)
+	return b.build()
 }
 
 // MergeMeta returns base with any fields it is missing filled in from add. It is
@@ -255,7 +273,7 @@ func clean(s string) string {
 func CopyFile(src, dst string, progress func(copied, total int64)) error {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source %s: %w", src, err)
 	}
 	defer in.Close()
 
@@ -267,7 +285,7 @@ func CopyFile(src, dst string, progress func(copied, total int64)) error {
 	tmp := dst + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return fmt.Errorf("create %s: %w", tmp, err)
 	}
 	var w io.Writer = out
 	if progress != nil {
@@ -276,13 +294,16 @@ func CopyFile(src, dst string, progress func(copied, total int64)) error {
 	if _, err := io.Copy(w, in); err != nil {
 		out.Close()
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
-		return err
+		return fmt.Errorf("close %s: %w", tmp, err)
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", tmp, dst, err)
+	}
+	return nil
 }
 
 type progressWriter struct {

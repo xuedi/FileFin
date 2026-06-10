@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -101,11 +100,11 @@ func (s *Server) admin(next http.HandlerFunc) http.Handler {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
+	req, err := decodeJSON[struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}](w, r)
+	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -132,7 +131,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, map[string]any{"user": req.Username, "admin": u.Admin, "alias": u.Alias})
+	writeJSON(w, authResult{User: req.Username, Admin: u.Admin, Alias: u.Alias})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -152,5 +151,5 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, map[string]any{"user": user, "admin": u.Admin, "alias": u.Alias})
+	writeJSON(w, authResult{User: user, Admin: u.Admin, Alias: u.Alias})
 }

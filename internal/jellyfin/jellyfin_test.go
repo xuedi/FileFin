@@ -1,6 +1,7 @@
 package jellyfin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,7 +58,7 @@ func TestScan(t *testing.T) {
 	// Loose movie file directly under the root, no NFO.
 	write(t, filepath.Join(root, "(1980) The Gods Must Be Crazy.mp4"), "x")
 
-	items, err := Scan(root)
+	items, err := Scan(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestScan(t *testing.T) {
 }
 
 func TestScanEmpty(t *testing.T) {
-	items, err := Scan(t.TempDir())
+	items, err := Scan(context.Background(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

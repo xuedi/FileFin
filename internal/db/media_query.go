@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 )
 
@@ -24,7 +25,7 @@ func ListMediaByCategory(ctx context.Context, pool *sql.DB, categoryID int64) ([
 		`SELECT id, title, year, (poster <> ''), path FROM media WHERE category_id = ? ORDER BY year, title`,
 		categoryID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query media by category %d: %w", categoryID, err)
 	}
 	return scanSummaries(rows)
 }
@@ -37,7 +38,7 @@ func AllMedia(ctx context.Context, pool *sql.DB) ([]MediaSummary, error) {
 	rows, err := pool.QueryContext(ctx,
 		`SELECT id, title, year, (poster <> ''), path FROM media ORDER BY year, title`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query all media: %w", err)
 	}
 	return scanSummaries(rows)
 }
@@ -49,7 +50,7 @@ func scanSummaries(rows *sql.Rows) ([]MediaSummary, error) {
 		var ms MediaSummary
 		var hasPoster int
 		if err := rows.Scan(&ms.ID, &ms.Title, &ms.Year, &hasPoster, &ms.FolderPath); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan media summary: %w", err)
 		}
 		ms.HasPoster = hasPoster != 0
 		out = append(out, ms)
@@ -64,46 +65,34 @@ func GetMedia(ctx context.Context, pool *sql.DB, id string) (Media, error) {
 		`SELECT id, category_id, path, year, title, description, plot, poster, enriched
          FROM media WHERE id = ?`, id).
 		Scan(&m.ID, &m.CategoryID, &m.Path, &m.Year, &m.Title, &m.Description, &m.Plot, &m.Poster, &m.Enriched)
-	return m, err
+	if err == sql.ErrNoRows {
+		return Media{}, err
+	}
+	if err != nil {
+		return Media{}, fmt.Errorf("get media %s: %w", id, err)
+	}
+	return m, nil
+}
+
+// scanMediaFile scans one media_files row in the canonical column order.
+func scanMediaFile(r *sql.Rows) (MediaFile, error) {
+	var f MediaFile
+	return f, r.Scan(&f.MediaID, &f.Idx, &f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext)
 }
 
 // MediaFiles returns a media item's files, ordered by idx.
 func MediaFiles(ctx context.Context, pool *sql.DB, id string) ([]MediaFile, error) {
-	rows, err := pool.QueryContext(ctx,
-		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files WHERE media_id = ? ORDER BY idx`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []MediaFile{}
-	for rows.Next() {
-		var f MediaFile
-		if err := rows.Scan(&f.MediaID, &f.Idx, &f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return queryRows(ctx, pool,
+		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files WHERE media_id = ? ORDER BY idx`,
+		scanMediaFile, id)
 }
 
 // AllFiles returns every media file across the cache, for the optimizer planner to
 // derive its candidate list.
 func AllFiles(ctx context.Context, pool *sql.DB) ([]MediaFile, error) {
-	rows, err := pool.QueryContext(ctx,
-		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files ORDER BY media_id, idx`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []MediaFile{}
-	for rows.Next() {
-		var f MediaFile
-		if err := rows.Scan(&f.MediaID, &f.Idx, &f.Path, &f.Name, &f.Season, &f.Episode, &f.Ext); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
+	return queryRows(ctx, pool,
+		`SELECT media_id, idx, path, name, season, episode, ext FROM media_files ORDER BY media_id, idx`,
+		scanMediaFile)
 }
 
 // FolderPath returns the on-disk media folder for an item, for the live meta.json
@@ -114,7 +103,10 @@ func FolderPath(ctx context.Context, pool *sql.DB, id string) (string, error) {
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
-	return p, err
+	if err != nil {
+		return "", fmt.Errorf("query folder path %s: %w", id, err)
+	}
+	return p, nil
 }
 
 // PosterPath returns the absolute poster path for a media item, or "" when none (or the
@@ -126,7 +118,7 @@ func PosterPath(ctx context.Context, pool *sql.DB, id string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("query poster path %s: %w", id, err)
 	}
 	if poster == "" {
 		return "", nil
@@ -142,5 +134,8 @@ func FilePath(ctx context.Context, pool *sql.DB, id string, n int) (path, ext st
 	if err == sql.ErrNoRows {
 		return "", "", nil
 	}
-	return path, ext, err
+	if err != nil {
+		return "", "", fmt.Errorf("query file path %s/%d: %w", id, n, err)
+	}
+	return path, ext, nil
 }

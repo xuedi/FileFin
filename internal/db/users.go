@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 // User is one row of the users cache. The cache mirrors the authoritative config
@@ -26,7 +27,7 @@ func InsertUser(ctx context.Context, pool *sql.DB, u User) (int64, error) {
          VALUES (?, ?, ?, ?, ?, ?)`,
 		u.Username, u.Alias, u.Admin, u.Blocked, u.CreatedAt, u.LastLoginAt)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("insert user %q: %w", u.Username, err)
 	}
 	return res.LastInsertId()
 }
@@ -38,7 +39,10 @@ func UpsertUser(ctx context.Context, pool *sql.DB, u User) error {
 		`INSERT OR REPLACE INTO users (id, username, alias, admin, blocked, created_at, last_login_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Username, u.Alias, u.Admin, u.Blocked, u.CreatedAt, u.LastLoginAt)
-	return err
+	if err != nil {
+		return fmt.Errorf("upsert user %q: %w", u.Username, err)
+	}
+	return nil
 }
 
 // TouchUserLogin records a user's last-login time in the mirror (best-effort; the
@@ -46,14 +50,20 @@ func UpsertUser(ctx context.Context, pool *sql.DB, u User) error {
 func TouchUserLogin(ctx context.Context, pool *sql.DB, username string, ts int64) error {
 	_, err := pool.ExecContext(ctx,
 		`UPDATE users SET last_login_at = ? WHERE username = ?`, ts, username)
-	return err
+	if err != nil {
+		return fmt.Errorf("touch user login %q: %w", username, err)
+	}
+	return nil
 }
 
 // DeleteUserByID removes a mirror row by id, used to prune accounts the config no longer
 // has (e.g. a stale row left in the disposable cache after a reinstall).
 func DeleteUserByID(ctx context.Context, pool *sql.DB, id int64) error {
 	_, err := pool.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("delete user %d: %w", id, err)
+	}
+	return nil
 }
 
 // ListUsers returns the mirrored users ordered by id. The admin page reads accounts
@@ -62,14 +72,14 @@ func ListUsers(ctx context.Context, pool *sql.DB) ([]User, error) {
 	rows, err := pool.QueryContext(ctx,
 		`SELECT id, username, alias, admin, blocked, created_at, last_login_at FROM users ORDER BY id`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query users: %w", err)
 	}
 	defer rows.Close()
 	out := []User{}
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Username, &u.Alias, &u.Admin, &u.Blocked, &u.CreatedAt, &u.LastLoginAt); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		out = append(out, u)
 	}
