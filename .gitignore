@@ -32,3 +32,4 @@ Thumbs.db
 
 # Local runtime log
 /app.log
+/app.log.json
