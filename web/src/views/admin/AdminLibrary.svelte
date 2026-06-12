@@ -11,6 +11,7 @@
     <tr>
       <th>Folder</th>
       <th>Alias</th>
+      <th title="Media items in this category (each a movie or one TV show), with total media files in parentheses.">Media</th>
       <th title="Other media (home videos / recordings): skips OMDb lookups and derives posters from a video frame instead.">Other media</th>
       <th></th>
     </tr>
@@ -26,6 +27,7 @@
             {c.alias}
           {/if}
         </td>
+        <td>{c.media ?? 0} ({c.files ?? 0})</td>
         <td class="has-text-centered">
           {#if c._depth === 0}
             <input type="checkbox" checked={c.otherMedia} onchange={(e) => app.toggleOtherMedia(c, e.currentTarget.checked)} />
@@ -49,7 +51,7 @@
       </tr>
     {/each}
     {#if app.categories.length === 0}
-      <tr><td colspan="4" class="has-text-grey">No categories yet.</td></tr>
+      <tr><td colspan="5" class="has-text-grey">No categories yet.</td></tr>
     {/if}
   </tbody>
 </table>

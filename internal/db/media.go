@@ -156,6 +156,37 @@ func CountFiles(ctx context.Context, pool *sql.DB) (int, error) {
 	return n, nil
 }
 
+// CategoryCounts is a per-category tally: Media items (each a movie or one TV show)
+// and Files (the media files across those items).
+type CategoryCounts struct {
+	Media int
+	Files int
+}
+
+// MediaCountsByCategory returns, keyed by category id, how many media items and media
+// files each category holds, for the admin library tally. The left join keeps a media
+// item with no files at zero files rather than dropping it.
+func MediaCountsByCategory(ctx context.Context, pool *sql.DB) (map[int64]CategoryCounts, error) {
+	rows, err := pool.QueryContext(ctx,
+		`SELECT m.category_id, COUNT(DISTINCT m.id), COUNT(mf.media_id)
+         FROM media m LEFT JOIN media_files mf ON mf.media_id = m.id
+         GROUP BY m.category_id`)
+	if err != nil {
+		return nil, fmt.Errorf("count media by category: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]CategoryCounts{}
+	for rows.Next() {
+		var id int64
+		var c CategoryCounts
+		if err := rows.Scan(&id, &c.Media, &c.Files); err != nil {
+			return nil, fmt.Errorf("scan category counts: %w", err)
+		}
+		out[id] = c
+	}
+	return out, rows.Err()
+}
+
 // DeleteMedia removes one media item and its file rows from the cache, used by the
 // discovery reconcile when a folder has vanished from disk. The caller also prunes the
 // item's health row and any pending/error queue tasks.

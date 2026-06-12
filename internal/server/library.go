@@ -30,6 +30,8 @@ type categoryDTO struct {
 	ParentID   int64  `json:"parentId"`
 	OtherMedia bool   `json:"otherMedia"`
 	Empty      bool   `json:"empty"`
+	Media      int    `json:"media"` // media items in this category (each a movie or one TV show)
+	Files      int    `json:"files"` // media files across those items
 }
 
 // categoryDTOs maps the on-disk categories to the wire shape, resolving each category's
@@ -55,7 +57,18 @@ func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, categoryDTOs(cats))
+	dtos := categoryDTOs(cats)
+	// Annotate each category with its media/file tally; a cache that is unavailable just
+	// leaves the counts at zero rather than failing the listing.
+	if pool, err := s.ensureDB(r.Context()); err == nil {
+		if counts, err := db.MediaCountsByCategory(r.Context(), pool); err == nil {
+			for i := range dtos {
+				c := counts[dtos[i].ID]
+				dtos[i].Media, dtos[i].Files = c.Media, c.Files
+			}
+		}
+	}
+	writeJSON(w, dtos)
 }
 
 // mirrorCategories re-derives the categories cache from disk (the source of truth),
