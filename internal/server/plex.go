@@ -293,11 +293,15 @@ func (s *Server) createCategoryFromName(ctx context.Context, pool *sql.DB, secti
 			return cat, nil // idempotent: a re-prepare reuses the folder
 		}
 	}
+	pos, err := library.NextPosition(dataDir, "")
+	if err != nil {
+		return library.Category{}, err
+	}
 	id, err := db.InsertCategory(ctx, pool, name, section, 0)
 	if err != nil {
 		return library.Category{}, err
 	}
-	cat, err := library.Create(dataDir, "", name, section, id)
+	cat, err := library.Create(dataDir, "", name, section, id, pos)
 	if err != nil {
 		_ = db.DeleteCategory(ctx, pool, name)
 		return library.Category{}, err

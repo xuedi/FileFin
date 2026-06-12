@@ -42,7 +42,8 @@ function treeOrder(cats) {
     if (!byParent.has(p)) byParent.set(p, [])
     byParent.get(p).push(c)
   }
-  for (const list of byParent.values()) list.sort((a, b) => (a.leaf ?? a.name).localeCompare(b.leaf ?? b.name))
+  for (const list of byParent.values())
+    list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || (a.leaf ?? a.name).localeCompare(b.leaf ?? b.name))
   const out = []
   const walk = (parentId, depth) => {
     for (const c of byParent.get(parentId) ?? []) {
@@ -152,6 +153,7 @@ export class AppState {
   catAlias = $state('')
   catParentId = $state(0) // 0 = create a top-level category
   catError = $state('')
+  dragName = $state('') // category being dragged to reorder; '' when not dragging
 
   // admin settings (media-format gate + read-only config list)
   mediaFormat = $state('')
@@ -216,24 +218,17 @@ export class AppState {
   formatBoxes = [
     {
       id: 'filefin',
-      title: 'FileFin',
-      desc: 'Year first, in parentheses.',
+      title: 'FileFin (chronological)',
+      desc: 'Year first, so titles sort by date.',
       movie: '(1999) The Matrix/(1999) The Matrix.mkv',
       episode: '(2002) Firefly/(2002) Firefly - 1x1.mkv',
     },
     {
       id: 'jellyfin',
-      title: 'Jellyfin',
+      title: 'Plex / Jellyfin',
       desc: 'Year last; episodes as SxxEyy.',
       movie: 'The Matrix (1999)/The Matrix (1999).mkv',
       episode: 'Firefly (2002)/Firefly (2002) S01E01.mkv',
-    },
-    {
-      id: 'plex',
-      title: 'Plex',
-      desc: 'Year last; episodes as sNNeNN.',
-      movie: 'The Matrix (1999)/The Matrix (1999).mkv',
-      episode: 'Firefly (2002)/Firefly (2002) - s01e01.mkv',
     },
   ]
 
@@ -1100,6 +1095,32 @@ export class AppState {
 
   categoryAlias(name) {
     return this.categories.find((c) => c.name === name)?.alias ?? name
+  }
+
+  // reorderCategory moves the dragged category to the dropped-on target's slot, but only
+  // when both share a parent: ordering is per sibling group, so a drop onto another level is
+  // ignored. It renumbers that group and persists the new order; the server re-validates.
+  async reorderCategory(target) {
+    const dragged = this.categories.find((c) => c.name === this.dragName)
+    this.dragName = ''
+    if (!dragged || !target || dragged.name === target.name) return
+    if ((dragged.parentId || 0) !== (target.parentId || 0)) return
+    const siblings = this.categories
+      .filter((c) => (c.parentId || 0) === (dragged.parentId || 0))
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || (a.leaf ?? a.name).localeCompare(b.leaf ?? b.name))
+    const rest = siblings.filter((c) => c.name !== dragged.name)
+    const at = rest.findIndex((c) => c.name === target.name)
+    rest.splice(at, 0, dragged)
+    try {
+      await api('/api/admin/categories/reorder', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ parentId: dragged.parentId || 0, order: rest.map((c) => c.id) }),
+      })
+      await this.loadCategories()
+    } catch (e) {
+      this.catError = (await errText(e)) || 'Could not reorder categories'
+    }
   }
 
   async deleteCategory(name) {

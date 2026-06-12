@@ -35,7 +35,7 @@ func importServer(t *testing.T, importFolder string) (*Server, http.Handler, *ht
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := library.Create(dataDir, "", "Movies", "Films", id); err != nil {
+	if _, err := library.Create(dataDir, "", "Movies", "Films", id, 0); err != nil {
 		t.Fatal(err)
 	}
 	return s, h, admin, id
@@ -438,7 +438,7 @@ func TestUploadImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := library.Create(dataDir, "", "Movies", "Films", catID); err != nil {
+	if _, err := library.Create(dataDir, "", "Movies", "Films", catID, 0); err != nil {
 		t.Fatal(err)
 	}
 

@@ -232,6 +232,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/media/{id}/file/{n}/sub/{k}", s.auth(s.handleSubtitle))
 		mux.Handle("GET /api/admin/categories", s.admin(s.handleListCategories))
 		mux.Handle("POST /api/admin/categories", s.admin(s.handleCreateCategory))
+		mux.Handle("POST /api/admin/categories/reorder", s.admin(s.handleReorderCategories))
 		mux.Handle("PUT /api/admin/categories/{name}", s.admin(s.handleSetAlias))
 		mux.Handle("DELETE /api/admin/categories/{name}", s.admin(s.handleDeleteCategory))
 		mux.Handle("GET /api/admin/browse", s.admin(s.handleAdminBrowse))

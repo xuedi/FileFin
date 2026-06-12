@@ -14,7 +14,8 @@ const schema = `CREATE TABLE IF NOT EXISTS categories (
     name         TEXT NOT NULL UNIQUE,
     alias        TEXT NOT NULL,
     other_media  INTEGER NOT NULL DEFAULT 0,
-    parent_id    INTEGER
+    parent_id    INTEGER,
+    position     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS imports (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,6 +125,7 @@ type Category struct {
 	ParentID   int64
 	Alias      string
 	OtherMedia bool
+	Position   int
 }
 
 // Build runs the schema and any column migrations. It is idempotent and safe to call
@@ -148,6 +150,7 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"media", "enriched", `ALTER TABLE media ADD COLUMN enriched INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "other_media", `ALTER TABLE categories ADD COLUMN other_media INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "parent_id", `ALTER TABLE categories ADD COLUMN parent_id INTEGER`},
+		{"categories", "position", `ALTER TABLE categories ADD COLUMN position INTEGER NOT NULL DEFAULT 0`},
 		// Probed format, set at import and refreshed by the probe agent. An existing cache
 		// upgrades with empty columns; an un-probed row reads as empty and the decisions
 		// fall back to the filename extension until the probe agent backfills it.
@@ -278,8 +281,8 @@ func ReplaceCategories(ctx context.Context, pool *sql.DB, cats []Category) error
 	}
 	for _, c := range cats {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO categories (id, name, alias, other_media, parent_id) VALUES (?, ?, ?, ?, ?)`,
-			c.ID, c.Name, c.Alias, effectiveOtherMedia(c, own), nullID(c.ParentID)); err != nil {
+			`INSERT INTO categories (id, name, alias, other_media, parent_id, position) VALUES (?, ?, ?, ?, ?, ?)`,
+			c.ID, c.Name, c.Alias, effectiveOtherMedia(c, own), nullID(c.ParentID), c.Position); err != nil {
 			return fmt.Errorf("insert category %q: %w", c.Name, err)
 		}
 	}

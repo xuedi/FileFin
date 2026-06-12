@@ -29,6 +29,7 @@ type categoryDTO struct {
 	Alias      string `json:"alias"`
 	ParentID   int64  `json:"parentId"`
 	OtherMedia bool   `json:"otherMedia"`
+	Position   int    `json:"position"` // sort order among siblings (same parent)
 	Empty      bool   `json:"empty"`
 	Media      int    `json:"media"` // media items in this category (each a movie or one TV show)
 	Files      int    `json:"files"` // media files across those items
@@ -45,7 +46,7 @@ func categoryDTOs(cats []library.Category) []categoryDTO {
 	for _, c := range cats {
 		out = append(out, categoryDTO{
 			ID: c.ID, Name: c.Name, Leaf: c.Leaf, Alias: c.Alias,
-			ParentID: idByName[c.Parent], OtherMedia: c.OtherMedia, Empty: c.Empty,
+			ParentID: idByName[c.Parent], OtherMedia: c.OtherMedia, Position: c.Position, Empty: c.Empty,
 		})
 	}
 	return out
@@ -87,7 +88,7 @@ func (s *Server) mirrorCategories(ctx context.Context, pool *sql.DB) error {
 	for _, c := range cats {
 		rows = append(rows, db.Category{
 			ID: c.ID, Name: c.Name, ParentID: idByName[c.Parent],
-			Alias: c.Alias, OtherMedia: c.OtherMedia,
+			Alias: c.Alias, OtherMedia: c.OtherMedia, Position: c.Position,
 		})
 	}
 	return db.ReplaceCategories(ctx, pool, rows)
@@ -137,6 +138,13 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 	if parentRel != "" {
 		relName = parentRel + "/" + req.Name
 	}
+	// Append after the existing siblings: a new category sorts last in its group.
+	nextPos := 0
+	for _, c := range cats {
+		if c.Parent == parentRel && c.Position >= nextPos {
+			nextPos = c.Position + 1
+		}
+	}
 	// The id is minted by the cache so it is unique and monotonic; it is then stored
 	// in config.json, which remains the source of truth.
 	pool, err := s.ensureDB(r.Context())
@@ -149,7 +157,7 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create category", http.StatusInternalServerError)
 		return
 	}
-	cat, err := library.Create(dataDir, parentRel, req.Name, alias, id)
+	cat, err := library.Create(dataDir, parentRel, req.Name, alias, id, nextPos)
 	if err != nil {
 		s.bestEffort(db.DeleteCategory(r.Context(), pool, relName), "delete orphan category row")
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -158,7 +166,7 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 	s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories") // fix parent ids + effective flag
 	writeJSON(w, categoryDTO{
 		ID: cat.ID, Name: cat.Name, Leaf: cat.Leaf, Alias: cat.Alias,
-		ParentID: req.ParentID, OtherMedia: cat.OtherMedia, Empty: cat.Empty,
+		ParentID: req.ParentID, OtherMedia: cat.OtherMedia, Position: cat.Position, Empty: cat.Empty,
 	})
 }
 
@@ -213,6 +221,62 @@ func (s *Server) handleSetAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-mirror so an other-media toggle re-propagates the effective flag across the
 	// whole subtree's cache rows.
+	if pool, err := s.ensureDB(r.Context()); err == nil {
+		s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleReorderCategories renumbers one parent's children to the given order. The request
+// carries a parent id and the full ordered list of that parent's child ids; the order must
+// be exactly that sibling set (no missing, extra, or duplicate ids), which confines a
+// reorder to a single level - a category can never move to another parent this way. Each
+// child's config.json gets its new dense position, then the cache is re-mirrored.
+func (s *Server) handleReorderCategories(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		ParentID int64   `json:"parentId"` // 0 = top level
+		Order    []int64 `json:"order"`    // child ids in their new order
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	dataDir := s.dataDir()
+	cats, err := library.List(dataDir)
+	if err != nil {
+		http.Error(w, "could not read categories", http.StatusInternalServerError)
+		return
+	}
+	idByName := make(map[string]int64, len(cats))
+	for _, c := range cats {
+		idByName[c.Name] = c.ID
+	}
+	// Collect the parent's actual children and index them by id, so we can both validate the
+	// request against the real sibling set and resolve each id back to its relpath.
+	siblings := map[int64]library.Category{}
+	for _, c := range cats {
+		if idByName[c.Parent] == req.ParentID {
+			siblings[c.ID] = c
+		}
+	}
+	if len(req.Order) != len(siblings) {
+		http.Error(w, "order must list exactly this parent's children", http.StatusBadRequest)
+		return
+	}
+	seen := map[int64]bool{}
+	for _, id := range req.Order {
+		if _, ok := siblings[id]; !ok || seen[id] {
+			http.Error(w, "order must list exactly this parent's children", http.StatusBadRequest)
+			return
+		}
+		seen[id] = true
+	}
+	for pos, id := range req.Order {
+		if err := library.SetPosition(dataDir, siblings[id].Name, pos); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	if pool, err := s.ensureDB(r.Context()); err == nil {
 		s.bestEffort(s.mirrorCategories(r.Context(), pool), "mirror categories")
 	}

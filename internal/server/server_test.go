@@ -306,7 +306,7 @@ func TestCategoryAPI(t *testing.T) {
 // freshly built cache when an admin page is entered.
 func TestReconcileOnAdminEntry(t *testing.T) {
 	dataDir := t.TempDir()
-	if _, err := library.Create(dataDir, "", "Movies", "Films", 42); err != nil {
+	if _, err := library.Create(dataDir, "", "Movies", "Films", 42, 0); err != nil {
 		t.Fatal(err)
 	}
 	s, h, admin, _ := installedServer(t, dataDir)

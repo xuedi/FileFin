@@ -69,6 +69,9 @@ body { min-height: 100vh; }
 .ff-advanced summary { cursor: pointer; }
 .ff-plex-base { min-width: 18rem; }
 .ff-cat-tree { white-space: pre; color: var(--bulma-text-weak); }
+.ff-drag-handle { cursor: grab; color: var(--bulma-text-weak); text-align: center; user-select: none; }
+.ff-drag-handle:active { cursor: grabbing; }
+.ff-drag-over > td { border-top: 2px solid var(--bulma-link); }
 
 .ff-page-head, .ff-cat-head {
   display: flex;

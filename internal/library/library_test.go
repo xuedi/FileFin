@@ -24,7 +24,7 @@ func TestValidName(t *testing.T) {
 func TestCreateListRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 
-	cat, err := Create(dir, "", "Movies", "Films", 1)
+	cat, err := Create(dir, "", "Movies", "Films", 1, 0)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestCreateListRoundTrip(t *testing.T) {
 	}
 
 	// Blank alias defaults to the folder name.
-	if _, err := Create(dir, "", "Shows", "  ", 2); err != nil {
+	if _, err := Create(dir, "", "Shows", "  ", 2, 1); err != nil {
 		t.Fatalf("create shows: %v", err)
 	}
 
@@ -62,12 +62,48 @@ func TestCreateListRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPositionOrderingAndReorder(t *testing.T) {
+	dir := t.TempDir()
+	// Append three siblings; NextPosition should hand out 0, 1, 2 in turn.
+	for i, name := range []string{"Movies", "Shows", "Music"} {
+		pos, err := NextPosition(dir, "")
+		if err != nil {
+			t.Fatalf("next position %s: %v", name, err)
+		}
+		if pos != i {
+			t.Fatalf("NextPosition for %s = %d, want %d", name, pos, i)
+		}
+		if _, err := Create(dir, "", name, name, int64(i+1), pos); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	// List orders by position, not by name: creation order, not alphabetical.
+	cats, _ := List(dir)
+	if got := []string{cats[0].Leaf, cats[1].Leaf, cats[2].Leaf}; got[0] != "Movies" || got[1] != "Shows" || got[2] != "Music" {
+		t.Fatalf("order by position = %v, want [Movies Shows Music]", got)
+	}
+	// Reorder to Music, Movies, Shows by renumbering each config.json.
+	for pos, name := range []string{"Music", "Movies", "Shows"} {
+		if err := SetPosition(dir, name, pos); err != nil {
+			t.Fatalf("set position %s: %v", name, err)
+		}
+	}
+	cats, _ = List(dir)
+	if got := []string{cats[0].Leaf, cats[1].Leaf, cats[2].Leaf}; got[0] != "Music" || got[1] != "Movies" || got[2] != "Shows" {
+		t.Fatalf("order after reorder = %v, want [Music Movies Shows]", got)
+	}
+	// SetPosition preserves id and alias.
+	if cats[0].ID != 3 || cats[0].Alias != "Music" {
+		t.Errorf("after reorder cats[0] = %+v, want id 3 alias Music", cats[0])
+	}
+}
+
 func TestSubCategoryNesting(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Create(dir, "", "Movies", "Films", 1); err != nil {
+	if _, err := Create(dir, "", "Movies", "Films", 1, 0); err != nil {
 		t.Fatal(err)
 	}
-	sub, err := Create(dir, "Movies", "Action", "Action films", 2)
+	sub, err := Create(dir, "Movies", "Action", "Action films", 2, 0)
 	if err != nil {
 		t.Fatalf("create sub: %v", err)
 	}
@@ -98,17 +134,17 @@ func TestSubCategoryNesting(t *testing.T) {
 
 func TestCreateRejectsDuplicate(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+	if _, err := Create(dir, "", "Movies", "", 1, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Create(dir, "", "Movies", "", 1); err == nil {
+	if _, err := Create(dir, "", "Movies", "", 1, 0); err == nil {
 		t.Fatal("expected error creating duplicate category")
 	}
 }
 
 func TestEmptyDetectionIgnoresConfig(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+	if _, err := Create(dir, "", "Movies", "", 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	cats, _ := List(dir)
@@ -128,7 +164,7 @@ func TestEmptyDetectionIgnoresConfig(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := Create(dir, "", "Movies", "", 1); err != nil {
+	if _, err := Create(dir, "", "Movies", "", 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := Delete(dir, "Movies"); err != nil {
@@ -139,7 +175,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Non-empty folder must not be deletable.
-	if _, err := Create(dir, "", "Shows", "", 2); err != nil {
+	if _, err := Create(dir, "", "Shows", "", 2, 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Shows", "ep.mkv"), []byte("x"), 0o644); err != nil {

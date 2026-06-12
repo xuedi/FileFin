@@ -48,14 +48,20 @@ folders and sub-category folders, never loose video files.
 - `config.json` holds the stable **id** (minted by the cache at creation) and the **alias**.
   The **other-media** flag is stored only on a **top-level** category; sub-categories never
   carry it and inherit the root's flag (see below).
+- `config.json` also holds a **position**: the category's manual sort order **among its
+  siblings** (the children of one parent). Categories are listed with each sibling group in
+  position order, falling back to leaf name when positions tie (so legacy configs with no
+  position keep alphabetical order). Position is meaningful only within a sibling group; it is
+  never compared across parents. See `library.md` for the reorder flow.
 - **Global leaf-name uniqueness:** creating any category requires its leaf to differ from
   every existing category's leaf anywhere in the tree, so indented labels and dropdowns are
   never ambiguous (media folder names are unaffected).
-- **CRUD:** create-under-parent (optional parentId; writes the folder + alias-only config and
-  inserts the cache row), **empty-only delete** (a category with media folders or
-  sub-categories is non-empty, so a parent cannot be removed before its children), and alias
-  edit (other-media accepted only on a top-level category). The `config.json` files are the
-  source of truth; the cache is re-mirrored after every change.
+- **CRUD:** create-under-parent (optional parentId; writes the folder + config and inserts the
+  cache row; a new category is appended last in its sibling group), **empty-only delete** (a
+  category with media folders or sub-categories is non-empty, so a parent cannot be removed
+  before its children), alias edit (other-media accepted only on a top-level category), and
+  **reorder** (renumber one parent's children to a new order; siblings only). The `config.json`
+  files are the source of truth; the cache is re-mirrored after every change.
 
 ## Effective other-media flag (root-down propagation)
 
@@ -88,7 +94,7 @@ required no data migration.
 
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
-| `config.json` (id, alias, top-level other-media) | `categories` rows (parent_id, effective other_media) |
+| `config.json` (id, alias, top-level other-media, position) | `categories` rows (parent_id, effective other_media, position) |
 | `meta.json` (title, year, rich fields, technical, per-user state) | `media` / `media_files` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
 

@@ -21,7 +21,7 @@ built entirely from a filesystem scan and exists only to make listing and lookup
 
 | table | holds | written by |
 |-------|-------|------------|
-| `categories` | id / name (relpath) / parent_id / alias / effective other_media | rebuild, category admin |
+| `categories` | id / name (relpath) / parent_id / alias / effective other_media / position | rebuild, category admin |
 | `media` | one row per media folder (title, year, description, poster, enriched) | importer, rebuild, enricher, thumbnail agent |
 | `media_files` | one row per video file (index, season/episode, ext, path) | importer, rebuild |
 | `imports` | the transient import interface | producers + importer (see `import.md`) |
@@ -77,6 +77,23 @@ per-user updated time).
 (The separate `browse` endpoints that walk the raw server filesystem are for the installer and
 the import source picker, not library browsing.)
 
+Categories themselves render with each sibling group (the children of one parent) in its stored
+**position** order, leaf name breaking ties. An admin reorders a group from the library page by
+dragging a category's handle onto another category **at the same level**; a drop across levels
+is rejected. The reorder request carries the parent and the full new order of that parent's
+children, so the change is confined to one sibling group and a category can never move to a
+different parent this way. The server renumbers each child's `config.json` and re-mirrors the
+cache (see `mediaformat.md` for what `config.json` stores).
+
+```mermaid
+flowchart LR
+    DRAG[admin drags a category onto a sibling] --> REQ[POST /api/admin/categories/reorder<br/>parentId + ordered child ids]
+    REQ --> VAL{ids = exactly that parent's children?}
+    VAL -->|no| REJECT[400: reject]
+    VAL -->|yes| RENUM[renumber each child's config.json position]
+    RENUM --> MIRROR[re-mirror categories cache]
+```
+
 ## Naming formats
 
 The media-folder naming style is chosen once in Settings (the `mediafmt` set of valid formats)
@@ -93,4 +110,5 @@ format only dictates how the importer names media folders and their files.
 | `GET /api/media/{id}/poster`           | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
 | `GET /api/home`                        | continue / favorites / completed buckets      |
 | `POST/PUT/DELETE /api/admin/categories`| create / re-alias / delete (empty only)       |
+| `POST /api/admin/categories/reorder`   | renumber one parent's children (siblings only) |
 | `POST /api/admin/rebuild`              | flush and rebuild the cache from disk          |

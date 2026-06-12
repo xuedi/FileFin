@@ -30,15 +30,18 @@ type Category struct {
 	Leaf       string `json:"leaf"`
 	Alias      string `json:"alias"`
 	OtherMedia bool   `json:"otherMedia"`
+	Position   int    `json:"position"`
 	Empty      bool   `json:"empty"`
 }
 
-// categoryConfig is the on-disk config.json inside a category folder - the
-// authoritative record of a category's id, alias, and (top-level only) other-media flag.
+// categoryConfig is the on-disk config.json inside a category folder - the authoritative
+// record of a category's id, alias, (top-level only) other-media flag, and sort position
+// among its siblings.
 type categoryConfig struct {
 	ID         int64  `json:"id"`
 	Alias      string `json:"alias"`
 	OtherMedia bool   `json:"otherMedia"`
+	Position   int    `json:"position"`
 }
 
 // ValidName checks that name is usable as a single Linux directory name (one leaf, not a
@@ -62,16 +65,44 @@ func ValidName(name string) error {
 	return nil
 }
 
-// List returns every category under dataDir at any depth, sorted by relpath. A folder is
-// a category exactly when it contains config.json; the walk descends only into
-// categories, so media folders (and any stray folders) are never treated as categories.
+// List returns every category under dataDir at any depth, ordered so siblings (same parent)
+// run by their stored position, falling back to leaf name when positions tie (e.g. legacy
+// configs with no position). A folder is a category exactly when it contains config.json;
+// the walk descends only into categories, so media folders (and any stray folders) are
+// never treated as categories.
 func List(dataDir string) ([]Category, error) {
 	cats := []Category{}
 	if err := walkCategories(dataDir, "", &cats); err != nil {
 		return nil, err
 	}
-	sort.Slice(cats, func(i, j int) bool { return cats[i].Name < cats[j].Name })
+	sort.Slice(cats, func(i, j int) bool {
+		a, b := cats[i], cats[j]
+		if a.Parent != b.Parent {
+			return a.Parent < b.Parent
+		}
+		if a.Position != b.Position {
+			return a.Position < b.Position
+		}
+		return a.Leaf < b.Leaf
+	})
 	return cats, nil
+}
+
+// NextPosition returns the position a new category should take to sort last among the
+// siblings under parentRel (a parent relpath, "" for top level): one past the highest
+// existing sibling position, or 0 when the group is empty.
+func NextPosition(dataDir, parentRel string) (int, error) {
+	cats, err := List(dataDir)
+	if err != nil {
+		return 0, err
+	}
+	next := 0
+	for _, c := range cats {
+		if c.Parent == parentRel && c.Position >= next {
+			next = c.Position + 1
+		}
+	}
+	return next, nil
 }
 
 // walkCategories appends every category folder directly under parentRel (relative to
@@ -101,10 +132,10 @@ func walkCategories(dataDir, parentRel string, cats *[]Category) error {
 		if err != nil {
 			return err
 		}
-		id, alias, other := readConfig(childDir, e.Name())
+		id, alias, other, position := readConfig(childDir, e.Name())
 		*cats = append(*cats, Category{
 			ID: id, Name: rel, Parent: parentRel, Leaf: e.Name(),
-			Alias: alias, OtherMedia: other, Empty: empty,
+			Alias: alias, OtherMedia: other, Position: position, Empty: empty,
 		})
 		if err := walkCategories(dataDir, rel, cats); err != nil {
 			return err
@@ -126,11 +157,11 @@ func Exists(dataDir, relpath string) bool {
 }
 
 // Create makes a new category folder <parentRel>/<leaf> under dataDir and writes its
-// config.json with the given id. parentRel is "" for a top-level category; a non-empty
-// parentRel must already be a category. A blank alias defaults to the leaf name. New
-// categories are never other-media at creation (the flag is toggled afterward, and only
-// on a top-level category). It fails if the folder already exists.
-func Create(dataDir, parentRel, leaf, alias string, id int64) (Category, error) {
+// config.json with the given id and sibling position. parentRel is "" for a top-level
+// category; a non-empty parentRel must already be a category. A blank alias defaults to the
+// leaf name. New categories are never other-media at creation (the flag is toggled
+// afterward, and only on a top-level category). It fails if the folder already exists.
+func Create(dataDir, parentRel, leaf, alias string, id int64, position int) (Category, error) {
 	if err := ValidName(leaf); err != nil {
 		return Category{}, err
 	}
@@ -152,16 +183,16 @@ func Create(dataDir, parentRel, leaf, alias string, id int64) (Category, error) 
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return Category{}, err
 	}
-	if err := writeConfig(dir, id, alias, false); err != nil {
+	if err := writeConfig(dir, id, alias, false, position); err != nil {
 		return Category{}, err
 	}
-	return Category{ID: id, Name: name, Parent: parentRel, Leaf: leaf, Alias: alias, Empty: true}, nil
+	return Category{ID: id, Name: name, Parent: parentRel, Leaf: leaf, Alias: alias, Position: position, Empty: true}, nil
 }
 
 // SetAlias rewrites a category's config.json with a new alias and other-media flag,
-// preserving its id. relpath addresses the category. A blank alias falls back to the leaf
-// name. The caller is responsible for forcing otherMedia false on a sub-category (the
-// flag is inherited from the root, never stored below it).
+// preserving its id and sibling position. relpath addresses the category. A blank alias
+// falls back to the leaf name. The caller is responsible for forcing otherMedia false on a
+// sub-category (the flag is inherited from the root, never stored below it).
 func SetAlias(dataDir, relpath, alias string, otherMedia bool) error {
 	if !Exists(dataDir, relpath) {
 		return fmt.Errorf("no category named %q", relpath)
@@ -171,8 +202,20 @@ func SetAlias(dataDir, relpath, alias string, otherMedia bool) error {
 		alias = filepath.Base(relpath)
 	}
 	dir := filepath.Join(dataDir, relpath)
-	id, _, _ := readConfig(dir, filepath.Base(relpath))
-	return writeConfig(dir, id, alias, otherMedia)
+	id, _, _, position := readConfig(dir, filepath.Base(relpath))
+	return writeConfig(dir, id, alias, otherMedia, position)
+}
+
+// SetPosition rewrites a category's config.json with a new sibling position, preserving its
+// id, alias, and other-media flag. relpath addresses the category. The caller is responsible
+// for keeping positions consistent within a sibling group (it renumbers the whole group).
+func SetPosition(dataDir, relpath string, position int) error {
+	if !Exists(dataDir, relpath) {
+		return fmt.Errorf("no category named %q", relpath)
+	}
+	dir := filepath.Join(dataDir, relpath)
+	id, alias, other, _ := readConfig(dir, filepath.Base(relpath))
+	return writeConfig(dir, id, alias, other, position)
 }
 
 // Delete removes a category folder, but only when it is empty (no media folders and no
@@ -214,27 +257,27 @@ func isEmpty(dir string) (bool, error) {
 	return true, nil
 }
 
-// readConfig returns the id, alias, and other-media flag from the folder's config.json.
-// The alias falls back to leaf when the file is missing, unreadable, or has a blank
-// alias; a missing id reads as 0 and a missing flag as false.
-func readConfig(dir, leaf string) (int64, string, bool) {
+// readConfig returns the id, alias, other-media flag, and sort position from the folder's
+// config.json. The alias falls back to leaf when the file is missing, unreadable, or has a
+// blank alias; a missing id reads as 0, a missing flag as false, and a missing position as 0.
+func readConfig(dir, leaf string) (int64, string, bool, int) {
 	data, err := os.ReadFile(filepath.Join(dir, configName))
 	if err != nil {
-		return 0, leaf, false
+		return 0, leaf, false, 0
 	}
 	var c categoryConfig
 	if json.Unmarshal(data, &c) != nil {
-		return 0, leaf, false
+		return 0, leaf, false, 0
 	}
 	alias := c.Alias
 	if strings.TrimSpace(alias) == "" {
 		alias = leaf
 	}
-	return c.ID, alias, c.OtherMedia
+	return c.ID, alias, c.OtherMedia, c.Position
 }
 
-func writeConfig(dir string, id int64, alias string, otherMedia bool) error {
-	data, err := json.MarshalIndent(categoryConfig{ID: id, Alias: alias, OtherMedia: otherMedia}, "", "  ")
+func writeConfig(dir string, id int64, alias string, otherMedia bool, position int) error {
+	data, err := json.MarshalIndent(categoryConfig{ID: id, Alias: alias, OtherMedia: otherMedia, Position: position}, "", "  ")
 	if err != nil {
 		return err
 	}
