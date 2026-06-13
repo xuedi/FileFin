@@ -110,8 +110,9 @@ export class AppState {
   booting = $state(true)
   needsSetup = $state(false)
   me = $state(null) // { user, admin }
-  view = $state('library') // 'library' | 'admin'
+  view = $state('library') // 'library' | 'admin' | 'settings'
   adminView = $state('dashboard') // 'dashboard' | 'library' | 'users' | 'settings' | 'progress'
+  userMenuOpen = $state(false) // navbar username dropdown
 
   // install form
   iuser = $state('')
@@ -432,6 +433,7 @@ export class AppState {
     this.me = null
     this.luser = ''
     this.lpass = ''
+    this.userMenuOpen = false
     this.view = 'library'
     this.adminView = 'dashboard'
     this.homeCategory = ''
@@ -646,6 +648,11 @@ export class AppState {
       this.applyAdmin(page, segs[2])
       return
     }
+    if (segs[0] === 'settings') {
+      this.view = 'settings'
+      this.playing = false
+      return
+    }
     // Library (also the fallback for non-admins hitting /admin).
     this.view = 'library'
     await this.loadHomeCategories()
@@ -713,6 +720,10 @@ export class AppState {
 
   goAdmin() {
     this.go('/admin/' + this.adminView)
+  }
+
+  goSettings() {
+    this.go('/settings')
   }
 
   async loadCategories() {

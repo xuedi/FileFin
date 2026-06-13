@@ -20,18 +20,15 @@ body { min-height: 100vh; }
 
 .ff-loading { margin-top: 3rem; }
 
-/* app shell: top bar + sidebar + content */
+/* app shell: top bar (Bulma navbar) + sidebar + content */
 .ff-navbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.6rem 1.25rem;
+  padding: 0 0.75rem;
   background: var(--bulma-scheme-main-bis);
   border-bottom: 1px solid var(--bulma-border-weak);
 }
+/* keep the menu horizontal at every width (no burger; this is a desktop appliance) */
+.ff-navbar .navbar-menu { display: flex; flex-grow: 1; background: transparent; box-shadow: none; padding: 0; }
 .ff-brand { font-weight: 700; font-size: 1.1rem; }
-.ff-navbar-actions { display: flex; align-items: center; gap: 1rem; }
-.ff-toggle { margin: 0; }
 
 .ff-layout { display: flex; min-height: calc(100vh - 53px); }
 .ff-sidebar {

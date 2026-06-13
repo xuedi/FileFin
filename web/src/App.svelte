@@ -13,6 +13,7 @@
   import AdminUsers from './views/admin/AdminUsers.svelte'
   import AdminProgress from './views/admin/AdminProgress.svelte'
   import AdminDashboard from './views/admin/AdminDashboard.svelte'
+  import UserSettings from './views/settings/UserSettings.svelte'
   import Toast from './components/Toast.svelte'
 
   const app = new AppState()
@@ -20,6 +21,7 @@
 
   onMount(async () => {
     window.addEventListener('popstate', () => app.route()) // browser back/forward restores the view
+    window.addEventListener('click', () => { if (app.userMenuOpen) app.userMenuOpen = false }) // outside-click closes the user menu
     // A tab/page close cannot await a fetch, so flush the last position via sendBeacon.
     const flush = () => {
       if (app.playing && app.detail) app.reportProgress(app.detail.id, app.currentFile, 'pagehide', true)
@@ -62,16 +64,24 @@
 {:else if !app.me}
   <Login />
 {:else}
-  <nav class="ff-navbar">
-    <span class="ff-brand">FileFin</span>
-    <div class="ff-navbar-actions">
-      {#if app.me.admin}
-        <div class="buttons has-addons ff-toggle">
-          <button class="button is-small" class:is-link={app.view === 'library'} onclick={() => app.showLibrary()}>Library</button>
-          <button class="button is-small" class:is-link={app.view === 'admin'} onclick={() => app.goAdmin()}>Admin</button>
+  <nav class="navbar ff-navbar" aria-label="main navigation">
+    <div class="navbar-brand">
+      <a href={null} class="navbar-item ff-brand" onclick={() => app.showLibrary()}>FileFin</a>
+    </div>
+    <div class="navbar-menu">
+      <div class="navbar-end">
+        <div class="navbar-item has-dropdown" class:is-active={app.userMenuOpen}>
+          <a href={null} class="navbar-link" onclick={(e) => { e.stopPropagation(); app.userMenuOpen = !app.userMenuOpen }}>{app.me.alias || app.me.user}</a>
+          <div class="navbar-dropdown is-right">
+            <a href={null} class="navbar-item" class:is-active={app.view === 'settings'} onclick={() => { app.userMenuOpen = false; app.goSettings() }}>Settings</a>
+            {#if app.me.admin}
+              <a href={null} class="navbar-item" class:is-active={app.view === 'admin'} onclick={() => { app.userMenuOpen = false; app.goAdmin() }}>Admin</a>
+            {/if}
+            <hr class="navbar-divider" />
+            <a href={null} class="navbar-item" onclick={() => { app.userMenuOpen = false; app.signOut() }}>Sign out</a>
+          </div>
         </div>
-      {/if}
-      <button class="button is-ghost is-small" onclick={() => app.signOut()}>Sign out</button>
+      </div>
     </div>
   </nav>
   <div class="ff-layout">
@@ -82,6 +92,8 @@
           {#each app.homeTree as c}
             <li><a href={null} class:is-active={app.homeCategory === c.name} onclick={() => app.go('/category/' + c.id)}>{treeMarker(c._depth)}{c.alias}</a></li>
           {/each}
+        {:else if app.view === 'settings'}
+          <li><a href={null} class="is-active">Account</a></li>
         {:else}
           <li><a href={null} class:is-active={app.adminView === 'dashboard'} onclick={() => app.go('/admin/dashboard')}>Dashboard</a></li>
           <li><a href={null} class:is-active={app.adminView === 'library'} onclick={() => app.openAdminLibrary()}>Library</a></li>
@@ -94,6 +106,8 @@
     <main class="ff-main">
       {#if app.view === 'library'}
         <LibraryView />
+      {:else if app.view === 'settings'}
+        <UserSettings />
       {:else if app.adminView === 'library' && app.importPage === ''}
         <AdminLibrary />
       {:else if app.adminView === 'library'}

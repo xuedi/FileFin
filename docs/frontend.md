@@ -46,6 +46,7 @@ flowchart TD
   App --> Users["admin/AdminUsers"]
   App --> Progress["admin/AdminProgress"]
   App --> Dash["admin/AdminDashboard"]
+  App --> UserSet["settings/UserSettings"]
   App --> ToastC["components/Toast"]
 
   Lib --> Home["library/Home"]
@@ -73,7 +74,17 @@ Client routing uses the History API and lives entirely on `AppState`: `go(path)`
 applies a URL, `route()` applies the current URL without pushing, and `applyAdmin()` selects the
 admin sub-view and coordinates its pollers. `App.svelte` wires `popstate` and the page-teardown
 progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}` chain over
-`view` / `adminView` / `importPage` that mounts the matching view component.
+`view` / `adminView` / `importPage` that mounts the matching view component. The top-level `view`
+is `library`, `admin`, or `settings`; `/settings` is available to every authenticated user, while
+`/admin/*` falls back to the library for non-admins.
+
+The top bar is a Bulma `navbar`: the **FileFin** brand on the left, which is a link back to the
+library home, and a right-aligned `navbar-end` holding a username dropdown. The dropdown's trigger
+is the current user's display name; its items are **Settings** (routes to `/settings`), **Admin**
+(admin-only, routes to the admin area), and **Sign out**, with `is-active` marking the current
+view. It is a click-toggle backed by `AppState.userMenuOpen` and closes on an outside click (a
+window listener) or on item select. The per-user settings page (`settings/UserSettings.svelte`) is
+distinct from the admin Settings page and is where the per-user account view lives.
 
 ## Shared components
 
