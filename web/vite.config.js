@@ -19,7 +19,7 @@ function keepGitkeep() {
 // running backend so the SPA and API share an origin.
 export default defineConfig({
   plugins: [svelte(), keepGitkeep()],
-  build: { outDir: 'dist', emptyOutDir: true },
+  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 650 },
   server: {
     proxy: { '/api': 'http://localhost:8080' },
   },
