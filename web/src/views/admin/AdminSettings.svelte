@@ -11,6 +11,14 @@
     { id: 'logging', label: 'Logging' },
     { id: 'maintenance', label: 'Maintenance' },
   ]
+
+  const taskTypes = [
+    { key: 'imports', label: 'Imports' },
+    { key: 'optimize', label: 'Optimizer' },
+    { key: 'enrich', label: 'Metadata' },
+    { key: 'thumbnail', label: 'Thumbnails' },
+    { key: 'probe', label: 'Probe' },
+  ]
 </script>
 
 <h1 class="title is-4">Settings</h1>
@@ -19,27 +27,53 @@
   <ul>
     {#each tabs as t}
       <li class:is-active={app.settingsTab === t.id}>
-        <a href={null} onclick={() => (app.settingsTab = t.id)}>{t.label}</a>
+        <a href={null} onclick={() => app.go('/admin/settings/' + t.id)}>{t.label}</a>
       </li>
     {/each}
   </ul>
 </div>
 
 {#if app.settingsTab === 'system'}
-  <div class="box ff-settings-card ff-settings-readonly">
-    <table class="table is-fullwidth ff-sys-table">
-      <tbody>
+  <div class="ff-sys-grid">
+    <div class="box ff-settings-readonly ff-sys-box">
+      <h2 class="title is-5">Dashboard</h2>
+      <table class="table is-fullwidth ff-sys-table">
+        <tbody>
         <tr><td>Port</td><td>{app.sysPort}</td></tr>
         <tr><td>Data folder</td><td>{app.sysDataDir}</td></tr>
+        <tr><td>Import folder</td><td>{app.importFolder || '(not set)'}</td></tr>
         <tr><td>Cache</td><td>SQLite ({app.sysCachePath})</td></tr>
         <tr><td>Media format</td><td>{app.formatBoxes.find((b) => b.id === app.mediaFormat)?.title ?? app.mediaFormat}</td></tr>
         <tr>
           <td>Users</td>
           <td>{app.sysUsers} account{app.sysUsers === 1 ? '' : 's'} <a href={null} onclick={() => app.go('/admin/users')}>Manage</a></td>
         </tr>
-      </tbody>
-    </table>
-    <p class="help">These were set during installation and are read-only here.</p>
+        <tr>
+          <td>Discovery</td>
+          <td>
+            {app.discoveryStatus}
+            {#if app.discoveryRunning}
+              <span class="has-text-grey ff-force-now">running...</span>
+            {:else}
+              <a href={null} class="ff-force-now" onclick={() => app.runDiscovery()}>force now</a>
+            {/if}
+          </td>
+        </tr>
+        </tbody>
+      </table>
+      <p class="help">These were set during installation and are read-only here.</p>
+    </div>
+    <div class="box ff-sys-box">
+      <h2 class="title is-5">Tasks</h2>
+      <table class="table is-fullwidth ff-sys-table">
+        <tbody>
+          {#each taskTypes as t}
+            <tr><td>{t.label}</td><td class="ff-task-count">{app.tasks ? app.tasks[t.key] : '-'}</td></tr>
+          {/each}
+        </tbody>
+      </table>
+      <p class="help">Outstanding background tasks per type (queued + running).</p>
+    </div>
   </div>
 {:else if app.settingsTab === 'library'}
   <div class="box ff-settings-card">

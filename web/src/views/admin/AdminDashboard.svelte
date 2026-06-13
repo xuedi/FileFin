@@ -11,7 +11,6 @@
     </button>
   </div>
 </div>
-{#if app.discoveryMsg}<p class="has-text-link">{app.discoveryMsg}</p>{/if}
 {#if app.summary}
   {@const s = app.summary}
   <div class="ff-dash">

@@ -103,6 +103,44 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// taskBacklog is the per-type count of outstanding background tasks (queued + running) for
+// the Settings -> System "Tasks" box.
+type taskBacklog struct {
+	Imports   int `json:"imports"`
+	Optimize  int `json:"optimize"`
+	Enrich    int `json:"enrich"`
+	Thumbnail int `json:"thumbnail"`
+	Probe     int `json:"probe"`
+}
+
+// handleTaskBacklog returns how many background tasks are outstanding per agent type. It is
+// a cheap overview (a handful of COUNTs); per-type reads are best-effort so one failing
+// query degrades a single number to zero rather than failing the whole box.
+func (s *Server) handleTaskBacklog(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pool, err := s.ensureDB(ctx)
+	if err != nil {
+		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	imports, _ := db.CountUnfinishedImports(ctx, pool)
+	optP, _ := db.CountPending(ctx, pool)
+	optA, _ := db.ListActiveTasks(ctx, pool)
+	enrP, _ := db.CountPendingEnrich(ctx, pool)
+	enrA, _ := db.ListActiveEnrich(ctx, pool)
+	thP, _ := db.CountPendingThumbnail(ctx, pool)
+	thA, _ := db.ListActiveThumbnail(ctx, pool)
+	prP, _ := db.CountPendingProbe(ctx, pool)
+	prA, _ := db.ListActiveProbe(ctx, pool)
+	writeJSON(w, taskBacklog{
+		Imports:   imports,
+		Optimize:  optP + len(optA),
+		Enrich:    enrP + len(enrA),
+		Thumbnail: thP + len(thA),
+		Probe:     prP + len(prA),
+	})
+}
+
 // handleHealth returns the items currently flagged with issues (each issue decoded for the
 // wire), for the admin health panel.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

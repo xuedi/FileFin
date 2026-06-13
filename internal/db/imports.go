@@ -271,6 +271,18 @@ func ClearImportsAll(ctx context.Context, pool *sql.DB) error {
 	return nil
 }
 
+// CountUnfinishedImports counts import rows queued or copying (status import/importing) -
+// the import task backlog for the admin tasks overview.
+func CountUnfinishedImports(ctx context.Context, pool *sql.DB) (int, error) {
+	var n int
+	err := pool.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM imports WHERE status IN (?, ?)`, StatusImport, StatusImporting).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count unfinished imports: %w", err)
+	}
+	return n, nil
+}
+
 // CountUnfinishedImportsUnder counts rows whose source still lives under pathPrefix and
 // that have not finished (preCheck/import/importing). Upload cleanup uses it to know when a
 // /tmp working dir is safe to remove. The prefix should end in a path separator so it cannot

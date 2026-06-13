@@ -31,6 +31,7 @@ type settingsView struct {
 	SubtitleLanguage  string `json:"subtitleLanguage"`
 	OptimizeMode      string `json:"optimizeMode"`
 	DiscoveryInterval int    `json:"discoveryInterval"`
+	DiscoveryNextRun  int64  `json:"discoveryNextRun"` // unix seconds of the next scheduled sweep; 0 when off
 }
 
 // discoveryLabel renders a discovery interval (seconds) as the human label shown in
@@ -68,9 +69,9 @@ func (s *Server) mutateConfig(w http.ResponseWriter, apply func(*config.Config))
 	return &cp, true
 }
 
-// settingsPayload is the read view of the app config: the chosen media format (empty
-// until permanently selected) plus a flat name/value list for display.
-func settingsPayload(cfg *config.Config) settingsView {
+// settingsPayload is the typed read view of the app config plus the live discovery
+// next-run time (read from the scheduler), for the settings tabs to render.
+func (s *Server) settingsPayload(cfg *config.Config) settingsView {
 	cachePath, _ := db.Path()
 	logLevel := cfg.LogLevel
 	if logLevel == "" {
@@ -80,6 +81,9 @@ func settingsPayload(cfg *config.Config) settingsView {
 	if logOutput == "" {
 		logOutput = "STDOUT"
 	}
+	s.discMu.Lock()
+	nextRun := s.discNextRun
+	s.discMu.Unlock()
 	return settingsView{
 		Port:              cfg.Port,
 		DataDir:           cfg.DataDir,
@@ -96,13 +100,14 @@ func settingsPayload(cfg *config.Config) settingsView {
 		SubtitleLanguage:  cfg.SubLang(),
 		OptimizeMode:      cfg.OptimizeModeOr(),
 		DiscoveryInterval: cfg.DiscoveryInterval,
+		DiscoveryNextRun:  nextRun,
 	}
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, s.settingsPayload(s.cfg))
 }
 
 // handleSetFormat permanently records the media-folder format. It can only be set
@@ -132,7 +137,7 @@ func (s *Server) handleSetFormat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not save settings", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, settingsPayload(s.cfg))
+	writeJSON(w, s.settingsPayload(s.cfg))
 }
 
 // handleSetImportFolder records the path media is imported from. Unlike the media
@@ -158,7 +163,7 @@ func (s *Server) handleSetImportFolder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetOMDBKey records the OMDb API key used for assessment enrichment. An empty
@@ -175,7 +180,7 @@ func (s *Server) handleSetOMDBKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetLogging updates the log level and output, persists them, and reconfigures
@@ -219,7 +224,7 @@ func (s *Server) handleSetLogging(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.configureLogger(cfg)
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetTranscoding records the ffmpeg/ffprobe paths and the transcode toggle, then
@@ -244,7 +249,7 @@ func (s *Server) handleSetTranscoding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.resetHLS()
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetOptimizer records the background-optimizer mode and nudges the supervisor to
@@ -267,7 +272,7 @@ func (s *Server) handleSetOptimizer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signalReconfigOpt()
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetDiscovery records the background discovery sweep interval and nudges the
@@ -290,7 +295,7 @@ func (s *Server) handleSetDiscovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.signalReconfigDisc()
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }
 
 // handleSetSubtitleLanguage records the preferred sidecar subtitle language. An empty
@@ -307,5 +312,5 @@ func (s *Server) handleSetSubtitleLanguage(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	writeJSON(w, settingsPayload(cfg))
+	writeJSON(w, s.settingsPayload(cfg))
 }

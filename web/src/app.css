@@ -96,9 +96,13 @@ body { min-height: 100vh; }
   border-top: 1px solid var(--bulma-border-weak);
 }
 .ff-narrow { max-width: 8rem; }
-.ff-settings-readonly .ff-sys-table td:first-child { width: 200px; color: var(--bulma-text-weak); }
-.ff-settings-readonly .ff-sys-table td { border: 0; padding: 0.35rem 0.5rem; }
-.ff-settings-readonly .ff-sys-table { margin-bottom: 0.75rem; }
+.ff-sys-grid { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+.ff-sys-box { flex: 1; min-width: 300px; margin-bottom: 0; }
+.ff-sys-table td:first-child { width: 200px; color: var(--bulma-text-weak); }
+.ff-sys-table td { border: 0; padding: 0.35rem 0.5rem; }
+.ff-sys-table { margin-bottom: 0.75rem; }
+.ff-task-count { font-variant-numeric: tabular-nums; }
+.ff-force-now { margin-left: 0.6rem; font-size: 0.85rem; }
 
 /* maintenance rows + danger zone */
 .ff-maint-row {

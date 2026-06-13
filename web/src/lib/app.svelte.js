@@ -61,6 +61,17 @@ export function treeMarker(depth) {
   return '  '.repeat(depth - 1) + '└─ '
 }
 
+// humanDuration renders a span of seconds as a short "2h 5m" / "5m 10s" / "10s" label.
+function humanDuration(secs) {
+  secs = Math.max(0, Math.floor(secs))
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const s = secs % 60
+  if (h) return `${h}h ${m}m`
+  if (m) return `${m}m ${s}s`
+  return `${s}s`
+}
+
 export function fmtTime(ts) {
   if (!ts) return 'never'
   const d = new Date(ts * 1000)
@@ -174,6 +185,10 @@ export class AppState {
   subtitleLanguage = $state('en')
   optimizeMode = $state('none')
   discoveryInterval = $state(0)
+  discoveryNextRun = $state(0) // unix seconds of the next scheduled discovery sweep (0 = off)
+  nowTs = $state(0) // wall clock (ms), ticked while on Settings, for the discovery countdown
+  settingsClock = 0 // interval id for the countdown ticker
+  tasks = $state(null) // { imports, optimize, enrich, thumbnail, probe } backlog, or null
   settingsBaseline = $state({}) // snapshot of saved editable values, for dirty detection
   formatChoice = $state('')
 
@@ -192,7 +207,6 @@ export class AppState {
   ]
 
   discoveryRunning = $state(false)
-  discoveryMsg = $state('')
   health = $state(null) // { items: [{id, title, issues:[{code,detail}], lastChecked}] }
 
   // import-folder picker (settings)
@@ -656,7 +670,9 @@ export class AppState {
   // applyAdmin sets the admin sub-view and loads its data, without touching history.
   // sub is the optional third path segment ("import" resumes a prepared import).
   applyAdmin(page, sub) {
+    const prev = this.adminView
     if (page !== 'progress') this.stopProgressPoll() // leaving Progress stops its poller
+    if (page !== 'settings') this.stopSettingsClock() // leaving Settings stops its countdown
     this.adminView = page
     if (page === 'library') {
       clearInterval(this.plexTimer) // stop any orphaned Plex staging poll
@@ -670,10 +686,16 @@ export class AppState {
         if (sub === 'import' && this.pendingImports.length > 0) this.continueImport()
       })
     } else if (page === 'settings') {
-      this.settingsTab = 'system'
-      this.formatChoice = ''
-      this.ifBrowseOpen = false
-      this.loadSettings()
+      const tabs = ['system', 'library', 'playback', 'automation', 'logging', 'maintenance']
+      this.settingsTab = tabs.includes(sub) ? sub : 'system'
+      this.startSettingsClock()
+      // Switching tabs (already on Settings, with a tab segment) keeps the working copies and
+      // any unsaved edits; a fresh entry from the sidebar (no tab segment) reloads from server.
+      if (prev !== 'settings' || !sub) {
+        this.formatChoice = ''
+        this.ifBrowseOpen = false
+        this.loadSettings()
+      }
     } else if (page === 'users') {
       this.editUserId = 0
       this.loadUsers()
@@ -729,6 +751,7 @@ export class AppState {
     this.subtitleLanguage = r.subtitleLanguage
     this.optimizeMode = r.optimizeMode
     this.discoveryInterval = r.discoveryInterval
+    this.discoveryNextRun = r.discoveryNextRun
     this.settingsBaseline = {
       importFolder: r.importFolder,
       omdbKey: r.omdbKey,
@@ -850,12 +873,11 @@ export class AppState {
 
   async runDiscovery() {
     this.discoveryRunning = true
-    this.discoveryMsg = ''
     try {
       await api('/api/admin/discovery/run', { method: 'POST' })
-      this.discoveryMsg = 'Discovery sweep started; results appear as it runs.'
+      this.toast('success', 'Discovery sweep started; results appear as it runs.')
     } catch (e) {
-      this.discoveryMsg = (await errText(e)) || 'Could not start a discovery sweep'
+      this.toast('error', (await errText(e)) || 'Could not start a discovery sweep')
     } finally {
       this.discoveryRunning = false
     }
@@ -901,6 +923,43 @@ export class AppState {
 
   openSettings() {
     this.go('/admin/settings')
+  }
+
+  // The countdown clock ticks only while the Settings page is open: every second for the
+  // discovery "next run in ..." countdown, and every five seconds it refreshes the task
+  // backlog so the System tab's Tasks box stays roughly live without an app-wide timer.
+  startSettingsClock() {
+    this.nowTs = Date.now()
+    this.loadTaskBacklog()
+    clearInterval(this.settingsClock)
+    let ticks = 0
+    this.settingsClock = setInterval(() => {
+      this.nowTs = Date.now()
+      if (++ticks % 5 === 0) this.loadTaskBacklog()
+    }, 1000)
+  }
+
+  stopSettingsClock() {
+    clearInterval(this.settingsClock)
+    this.settingsClock = 0
+  }
+
+  async loadTaskBacklog() {
+    try {
+      this.tasks = await api('/api/admin/tasks')
+    } catch {
+      this.tasks = null
+    }
+  }
+
+  // discoveryStatus is the System tab's discovery value: "Off" when disabled, otherwise a
+  // live countdown to the next scheduled sweep.
+  get discoveryStatus() {
+    if (!this.discoveryInterval) return 'Off'
+    if (!this.discoveryNextRun) return 'scheduled'
+    const remaining = this.discoveryNextRun * 1000 - this.nowTs
+    if (remaining <= 0) return 'next run due now'
+    return 'next run in ' + humanDuration(remaining / 1000)
   }
 
   async rebuildDb() {

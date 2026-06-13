@@ -74,13 +74,15 @@ type Server struct {
 	// reconfigDisc signal when the interval setting changes. maintMu serializes the cache
 	// mutations of a discovery tick against a full rebuild so the two never overlap;
 	// discRunning skips a tick while the previous one is still going; discLastSweep records
-	// the last completed sweep time (unix seconds) for the dashboard.
+	// the last completed sweep time (unix seconds) for the dashboard; discNextRun is when the
+	// next scheduled sweep is due (unix seconds, 0 when discovery is off) for the System tab.
 	discoveryStart sync.Once
 	reconfigDisc   chan struct{}
 	maintMu        sync.Mutex
 	discMu         sync.Mutex
 	discRunning    bool
 	discLastSweep  int64
+	discNextRun    int64
 
 	// plexStaging/jellyfinStaging each track a single in-flight library staging job's
 	// live progress (one job at a time per source, like the optimizer percent map). The
@@ -237,6 +239,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("DELETE /api/admin/categories/{name}", s.admin(s.handleDeleteCategory))
 		mux.Handle("GET /api/admin/browse", s.admin(s.handleAdminBrowse))
 		mux.Handle("GET /api/admin/summary", s.admin(s.handleSummary))
+		mux.Handle("GET /api/admin/tasks", s.admin(s.handleTaskBacklog))
 		mux.Handle("GET /api/admin/users", s.admin(s.handleListUsers))
 		mux.Handle("POST /api/admin/users", s.admin(s.handleCreateUser))
 		mux.Handle("PUT /api/admin/users/{id}", s.admin(s.handleUpdateUser))

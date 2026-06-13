@@ -89,10 +89,15 @@ progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}`
   auto-dismisses, or closes on the `x`.
 
 The admin **Settings** page is a tabbed view (System / Library / Playback / Automation / Logging /
-Maintenance) selected by `AppState.settingsTab`. Editable tabs bind to working fields on `AppState`
-and compare them against a saved `settingsBaseline` to drive per-tab dirty getters; each tab's Save
-posts only the changed sub-groups and then re-syncs the baseline from the response. `FormatGate`
-still gates the page on first run, before a media format is chosen.
+Maintenance). The active tab is part of the URL (`/admin/settings/<tab>`), so it is deep-linkable and
+survives a reload; switching tabs keeps the working copies (a reload only happens on a fresh entry).
+Editable tabs bind to working fields on `AppState` and compare them against a saved `settingsBaseline`
+to drive per-tab dirty getters; each tab's Save posts only the changed sub-groups and then re-syncs the
+baseline from the response. The read-only System tab is two boxes: a **Dashboard** of install facts plus a live discovery status
+("Off", or a "next run in ..." countdown with a "force now" link, driven by a clock that ticks only
+while Settings is open), and a **Tasks** box showing the per-type background backlog (queued + running)
+from `GET /api/admin/tasks`, refreshed by the same clock every few seconds.
+`FormatGate` still gates the page on first run, before a media format is chosen.
 
 ## Build
 

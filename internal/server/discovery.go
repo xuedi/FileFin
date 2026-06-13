@@ -62,10 +62,18 @@ func (s *Server) discoverySupervisor() {
 	}
 }
 
+// setDiscNextRun records when the next scheduled sweep is due (unix seconds; 0 = off).
+func (s *Server) setDiscNextRun(unix int64) {
+	s.discMu.Lock()
+	s.discNextRun = unix
+	s.discMu.Unlock()
+}
+
 // startDiscoveryRun launches the ticking agent under ctx when an interval is configured.
 func (s *Server) startDiscoveryRun(ctx context.Context, wg *sync.WaitGroup) {
 	interval := s.discoveryInterval()
 	if interval <= 0 {
+		s.setDiscNextRun(0) // discovery turned off: clear the countdown
 		return
 	}
 	wg.Add(1)
@@ -91,6 +99,7 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	s.setDiscNextRun(time.Now().Add(interval).Unix())
 	s.dlog().Info("discovery agent started", logging.Fields{"interval_s": int(interval.Seconds())})
 	for {
 		select {
@@ -98,6 +107,7 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 			return
 		case <-ticker.C:
 			s.discoveryTick(ctx)
+			s.setDiscNextRun(time.Now().Add(interval).Unix())
 		}
 	}
 }

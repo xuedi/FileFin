@@ -104,7 +104,8 @@ handler pushes the change into the relevant live component:
 
 The admin **Settings** page groups these into tabs (System, Library, Playback, Automation,
 Logging, Maintenance). The System tab is read-only install facts (port, data folder, cache
-path, media format, user count); the editable tabs bind to a working copy of the config and
+path, media format, user count) plus a live discovery status (the scheduler exposes the next
+sweep time, rendered as "Off" or a "next run in ..." countdown); the editable tabs bind to a working copy of the config and
 expose one dirty-aware Save per tab that dispatches only the changed sub-groups to the
 endpoints above (so one Save may issue one or two POSTs, or none). The whole-library
 operations (the four agent re-scans and the cache rebuild) live on the Maintenance tab, not
