@@ -46,6 +46,7 @@ flowchart TD
   App --> Users["admin/AdminUsers"]
   App --> Progress["admin/AdminProgress"]
   App --> Dash["admin/AdminDashboard"]
+  App --> ToastC["components/Toast"]
 
   Lib --> Home["library/Home"]
   Lib --> Cat["library/CategoryGrid"]
@@ -83,6 +84,15 @@ progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}`
   supplies the listing and the navigate/select/close callbacks, so the same widget drives
   directory-only and file-picking flows.
 - `components/ProgressBar.svelte` - a Bulma progress bar with an inline percent label.
+- `components/Toast.svelte` - the global success/error notice stack (bottom-right), rendered once
+  at the app root and fed from `AppState.toasts` (each setting save, scan, and rebuild pushes one);
+  auto-dismisses, or closes on the `x`.
+
+The admin **Settings** page is a tabbed view (System / Library / Playback / Automation / Logging /
+Maintenance) selected by `AppState.settingsTab`. Editable tabs bind to working fields on `AppState`
+and compare them against a saved `settingsBaseline` to drive per-tab dirty getters; each tab's Save
+posts only the changed sub-groups and then re-syncs the baseline from the response. `FormatGate`
+still gates the page on first run, before a media format is chosen.
 
 ## Build
 

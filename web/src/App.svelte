@@ -13,6 +13,7 @@
   import AdminUsers from './views/admin/AdminUsers.svelte'
   import AdminProgress from './views/admin/AdminProgress.svelte'
   import AdminDashboard from './views/admin/AdminDashboard.svelte'
+  import Toast from './components/Toast.svelte'
 
   const app = new AppState()
   setContext('app', app)
@@ -117,3 +118,5 @@
 {#if app.tokOn}
   <TokPlayer />
 {/if}
+
+<Toast />

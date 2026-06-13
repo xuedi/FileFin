@@ -10,7 +10,6 @@
   <code>{'{dataDir}/{category}/{mediafolder}/'}</code>; the format sets the naming style of the
   media folder and its files.
 </p>
-{#if app.settingsError}<p class="has-text-danger">{app.settingsError}</p>{/if}
 <div class="ff-format-boxes">
   {#each app.formatBoxes as b}
     <button

@@ -155,7 +155,14 @@ export class AppState {
   catError = $state('')
   dragName = $state('') // category being dragged to reorder; '' when not dragging
 
-  // admin settings (media-format gate + read-only config list)
+  // admin settings. The editable fields below are the working copy the per-section forms
+  // bind to; settingsBaseline holds the last-saved values so each tab knows when it is dirty.
+  // sys* are read-only install facts shown in the System tab.
+  settingsTab = $state('system') // system | library | playback | automation | logging | maintenance
+  sysPort = $state(0)
+  sysDataDir = $state('')
+  sysCachePath = $state('')
+  sysUsers = $state(0)
   mediaFormat = $state('')
   importFolder = $state('')
   omdbKey = $state('')
@@ -166,34 +173,16 @@ export class AppState {
   ffprobePath = $state('ffprobe')
   subtitleLanguage = $state('en')
   optimizeMode = $state('none')
-  settings = $state([]) // [{name, value}]
+  discoveryInterval = $state(0)
+  settingsBaseline = $state({}) // snapshot of saved editable values, for dirty detection
   formatChoice = $state('')
-  settingsError = $state('')
-
-  editOmdb = $state(false)
-  omdbInput = $state('')
-
-  editLogging = $state(false)
-  logLevelInput = $state('info')
-  logOutputInput = $state('STDOUT')
-
-  editTranscoding = $state(false)
-  transcodeEnabledInput = $state(true)
-  ffmpegPathInput = $state('ffmpeg')
-  ffprobePathInput = $state('ffprobe')
-
-  editSubtitle = $state(false)
-  subtitleInput = $state('en')
 
   optimizeModes = [
-    { value: 'none', label: 'NONE' },
+    { value: 'none', label: 'Off' },
     { value: 'cpu', label: 'CPU only' },
     { value: 'gpu', label: 'GPU only' },
-    { value: 'all', label: 'ALL' },
+    { value: 'all', label: 'GPU + CPU' },
   ]
-  editOptimizer = $state(false)
-  optimizeModeInput = $state('none')
-
   discoveryIntervals = [
     { value: 0, label: 'Off' },
     { value: 3600, label: 'Every 1 hour' },
@@ -201,9 +190,7 @@ export class AppState {
     { value: 43200, label: 'Every 12 hours' },
     { value: 86400, label: 'Every 24 hours' },
   ]
-  discoveryInterval = $state(0)
-  editDiscovery = $state(false)
-  discoveryIntervalInput = $state(0)
+
   discoveryRunning = $state(false)
   discoveryMsg = $state('')
   health = $state(null) // { items: [{id, title, issues:[{code,detail}], lastChecked}] }
@@ -214,6 +201,10 @@ export class AppState {
   ifParent = $state('')
   ifEntries = $state([])
   ifError = $state('')
+
+  // toasts: transient success/error notices, replacing the old inline status lines
+  toasts = $state([])
+  _toastSeq = 0
 
   formatBoxes = [
     {
@@ -232,17 +223,12 @@ export class AppState {
     },
   ]
 
-  // rebuild + background scans
+  // rebuild + background scans (results surface as toasts)
   rebuilding = $state(false)
-  rebuildMsg = $state('')
   optimizeScanning = $state(false)
-  optimizeScanMsg = $state('')
   enrichScanning = $state(false)
-  enrichScanMsg = $state('')
   thumbnailScanning = $state(false)
-  thumbnailScanMsg = $state('')
   probeScanning = $state(false)
-  probeScanMsg = $state('')
 
   // inline alias editing in the admin table
   editName = $state('') // category being edited, '' = none
@@ -684,14 +670,9 @@ export class AppState {
         if (sub === 'import' && this.pendingImports.length > 0) this.continueImport()
       })
     } else if (page === 'settings') {
+      this.settingsTab = 'system'
       this.formatChoice = ''
-      this.settingsError = ''
-      this.rebuildMsg = ''
       this.ifBrowseOpen = false
-      this.editOmdb = false
-      this.editLogging = false
-      this.editTranscoding = false
-      this.editSubtitle = false
       this.loadSettings()
     } else if (page === 'users') {
       this.editUserId = 0
@@ -730,146 +711,141 @@ export class AppState {
 
   // --- admin settings ---
 
-  startEditOmdb() {
-    this.omdbInput = this.omdbKey
-    this.editOmdb = true
-    this.settingsError = ''
-  }
-
-  async saveOmdbKey() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/omdb-key', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: this.omdbInput.trim() }),
-      })
-      this.omdbKey = r.omdbKey
-      this.settings = r.settings
-      this.editOmdb = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the OMDb key'
+  // applySettings syncs the working fields and the dirty baseline from a server response,
+  // so after a save the edited tab is clean and the System facts stay current.
+  applySettings(r) {
+    this.sysPort = r.port
+    this.sysDataDir = r.dataDir
+    this.sysCachePath = r.cachePath
+    this.sysUsers = r.users
+    this.mediaFormat = r.mediaFormat
+    this.importFolder = r.importFolder
+    this.omdbKey = r.omdbKey
+    this.logLevel = r.logLevel
+    this.logOutput = r.logOutput
+    this.transcodeEnabled = r.transcodeEnabled
+    this.ffmpegPath = r.ffmpegPath
+    this.ffprobePath = r.ffprobePath
+    this.subtitleLanguage = r.subtitleLanguage
+    this.optimizeMode = r.optimizeMode
+    this.discoveryInterval = r.discoveryInterval
+    this.settingsBaseline = {
+      importFolder: r.importFolder,
+      omdbKey: r.omdbKey,
+      logLevel: r.logLevel,
+      logOutput: r.logOutput,
+      transcodeEnabled: r.transcodeEnabled,
+      ffmpegPath: r.ffmpegPath,
+      ffprobePath: r.ffprobePath,
+      subtitleLanguage: r.subtitleLanguage,
+      optimizeMode: r.optimizeMode,
+      discoveryInterval: r.discoveryInterval,
     }
   }
 
-  startEditLogging() {
-    this.logLevelInput = this.logLevel
-    this.logOutputInput = this.logOutput
-    this.editLogging = true
-    this.settingsError = ''
+  // Per-sub-group dirty flags (a sub-group is one POST endpoint); a tab is dirty when any of
+  // its sub-groups are. Reading $state here keeps these reactive in the template.
+  get importFolderDirty() { return this.importFolder !== this.settingsBaseline.importFolder }
+  get omdbDirty() { return this.omdbKey !== this.settingsBaseline.omdbKey }
+  get transcodingDirty() {
+    const b = this.settingsBaseline
+    return this.transcodeEnabled !== b.transcodeEnabled || this.ffmpegPath !== b.ffmpegPath || this.ffprobePath !== b.ffprobePath
+  }
+  get subtitleDirty() { return this.subtitleLanguage !== this.settingsBaseline.subtitleLanguage }
+  get optimizerDirty() { return this.optimizeMode !== this.settingsBaseline.optimizeMode }
+  get discoveryDirty() { return Number(this.discoveryInterval) !== this.settingsBaseline.discoveryInterval }
+  get loggingDirty() {
+    return this.logLevel !== this.settingsBaseline.logLevel || this.logOutput !== this.settingsBaseline.logOutput
+  }
+  get libraryDirty() { return this.importFolderDirty || this.omdbDirty }
+  get playbackDirty() { return this.transcodingDirty || this.subtitleDirty }
+  get automationDirty() { return this.optimizerDirty || this.discoveryDirty }
+
+  // resetTab reverts a tab's working fields to the saved baseline.
+  resetTab(tab) {
+    const b = this.settingsBaseline
+    if (tab === 'library') {
+      this.importFolder = b.importFolder
+      this.omdbKey = b.omdbKey
+    } else if (tab === 'playback') {
+      this.transcodeEnabled = b.transcodeEnabled
+      this.ffmpegPath = b.ffmpegPath
+      this.ffprobePath = b.ffprobePath
+      this.subtitleLanguage = b.subtitleLanguage
+    } else if (tab === 'automation') {
+      this.optimizeMode = b.optimizeMode
+      this.discoveryInterval = b.discoveryInterval
+    } else if (tab === 'logging') {
+      this.logLevel = b.logLevel
+      this.logOutput = b.logOutput
+    }
+  }
+
+  // _postSetting POSTs one settings sub-group and applies the fresh server view on success.
+  async _postSetting(path, body) {
+    this.applySettings(
+      await api(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    )
+  }
+
+  async saveLibrary() {
+    try {
+      if (this.importFolderDirty) await this._postSetting('/api/admin/settings/import-folder', { path: this.importFolder })
+      if (this.omdbDirty) await this._postSetting('/api/admin/settings/omdb-key', { key: this.omdbKey.trim() })
+      this.toast('success', 'Library settings saved.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save library settings')
+    }
+  }
+
+  async savePlayback() {
+    try {
+      if (this.transcodingDirty)
+        await this._postSetting('/api/admin/settings/transcoding', {
+          ffmpegPath: this.ffmpegPath.trim(),
+          ffprobePath: this.ffprobePath.trim(),
+          enabled: this.transcodeEnabled,
+        })
+      if (this.subtitleDirty)
+        await this._postSetting('/api/admin/settings/subtitle-language', { language: this.subtitleLanguage.trim() })
+      this.toast('success', 'Playback settings saved.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save playback settings')
+    }
+  }
+
+  async saveAutomation() {
+    try {
+      if (this.optimizerDirty) await this._postSetting('/api/admin/settings/optimizer', { mode: this.optimizeMode })
+      if (this.discoveryDirty) await this._postSetting('/api/admin/settings/discovery', { interval: Number(this.discoveryInterval) })
+      this.toast('success', 'Automation settings saved.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save automation settings')
+    }
   }
 
   async saveLogging() {
-    this.settingsError = ''
     try {
-      const r = await api('/api/admin/settings/logging', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ level: this.logLevelInput, output: this.logOutputInput.trim() }),
-      })
-      this.logLevel = r.logLevel
-      this.logOutput = r.logOutput
-      this.settings = r.settings
-      this.editLogging = false
+      await this._postSetting('/api/admin/settings/logging', { level: this.logLevel, output: this.logOutput.trim() })
+      this.toast('success', 'Logging settings saved.')
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save logging settings'
+      this.toast('error', (await errText(e)) || 'Could not save logging settings')
     }
   }
 
-  startEditTranscoding() {
-    this.transcodeEnabledInput = this.transcodeEnabled
-    this.ffmpegPathInput = this.ffmpegPath
-    this.ffprobePathInput = this.ffprobePath
-    this.editTranscoding = true
-    this.settingsError = ''
+  // toast queues a transient notice; errors linger a little longer than successes.
+  toast(kind, text) {
+    const id = ++this._toastSeq
+    this.toasts = [...this.toasts, { id, kind, text }]
+    setTimeout(() => this.dismissToast(id), kind === 'error' ? 6000 : 3500)
   }
 
-  async saveTranscoding() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/transcoding', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          ffmpegPath: this.ffmpegPathInput.trim(),
-          ffprobePath: this.ffprobePathInput.trim(),
-          enabled: this.transcodeEnabledInput,
-        }),
-      })
-      this.transcodeEnabled = r.transcodeEnabled
-      this.ffmpegPath = r.ffmpegPath
-      this.ffprobePath = r.ffprobePath
-      this.settings = r.settings
-      this.editTranscoding = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save transcoding settings'
-    }
-  }
-
-  startEditSubtitle() {
-    this.subtitleInput = this.subtitleLanguage
-    this.editSubtitle = true
-    this.settingsError = ''
-  }
-
-  async saveSubtitle() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/subtitle-language', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ language: this.subtitleInput.trim() }),
-      })
-      this.subtitleLanguage = r.subtitleLanguage
-      this.settings = r.settings
-      this.editSubtitle = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the subtitle language'
-    }
-  }
-
-  startEditOptimizer() {
-    this.optimizeModeInput = this.optimizeMode
-    this.editOptimizer = true
-    this.settingsError = ''
-  }
-
-  async saveOptimizer() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/optimizer', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: this.optimizeModeInput }),
-      })
-      this.optimizeMode = r.optimizeMode
-      this.settings = r.settings
-      this.editOptimizer = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the optimizer mode'
-    }
-  }
-
-  startEditDiscovery() {
-    this.discoveryIntervalInput = this.discoveryInterval
-    this.editDiscovery = true
-    this.settingsError = ''
-  }
-
-  async saveDiscovery() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/discovery', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ interval: Number(this.discoveryIntervalInput) }),
-      })
-      this.discoveryInterval = r.discoveryInterval
-      this.settings = r.settings
-      this.editDiscovery = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the discovery interval'
-    }
+  dismissToast(id) {
+    this.toasts = this.toasts.filter((t) => t.id !== id)
   }
 
   async runDiscovery() {
@@ -910,37 +886,16 @@ export class AppState {
     }
   }
 
-  async selectImportFolder() {
-    this.settingsError = ''
-    try {
-      const r = await api('/api/admin/settings/import-folder', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ path: this.ifPath }),
-      })
-      this.importFolder = r.importFolder
-      this.settings = r.settings
-      this.ifBrowseOpen = false
-    } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the import folder'
-    }
+  // selectImportFolder just updates the Library tab's working copy from the picker; the
+  // actual save happens on that tab's Save (so it stays consistent with the dirty model).
+  selectImportFolder() {
+    this.importFolder = this.ifPath
+    this.ifBrowseOpen = false
   }
 
   async loadSettings() {
     try {
-      const r = await api('/api/admin/settings')
-      this.mediaFormat = r.mediaFormat
-      this.importFolder = r.importFolder
-      this.omdbKey = r.omdbKey
-      this.logLevel = r.logLevel
-      this.logOutput = r.logOutput
-      this.transcodeEnabled = r.transcodeEnabled
-      this.ffmpegPath = r.ffmpegPath
-      this.ffprobePath = r.ffprobePath
-      this.subtitleLanguage = r.subtitleLanguage
-      this.optimizeMode = r.optimizeMode
-      this.discoveryInterval = r.discoveryInterval
-      this.settings = r.settings
+      this.applySettings(await api('/api/admin/settings'))
     } catch {}
   }
 
@@ -951,14 +906,12 @@ export class AppState {
   async rebuildDb() {
     if (!confirm('Flush the cache and rebuild it from the data folder? This also clears any pending imports.')) return
     this.rebuilding = true
-    this.rebuildMsg = ''
-    this.settingsError = ''
     try {
       const r = await api('/api/admin/rebuild', { method: 'POST' })
-      this.rebuildMsg = `Rebuilt ${r.categories} categor${r.categories === 1 ? 'y' : 'ies'} and ${r.media} media item${r.media === 1 ? '' : 's'}.`
+      this.toast('success', `Rebuilt ${r.categories} categor${r.categories === 1 ? 'y' : 'ies'} and ${r.media} media item${r.media === 1 ? '' : 's'}.`)
       await this.loadSettings()
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Rebuild failed'
+      this.toast('error', (await errText(e)) || 'Rebuild failed')
     } finally {
       this.rebuilding = false
     }
@@ -966,13 +919,11 @@ export class AppState {
 
   async optimizeScan() {
     this.optimizeScanning = true
-    this.optimizeScanMsg = ''
-    this.settingsError = ''
     try {
       const r = await api('/api/admin/optimize/scan', { method: 'POST' })
-      this.optimizeScanMsg = `Found ${r.candidates} file${r.candidates === 1 ? '' : 's'} to optimize; ${r.pending} waiting in line.`
+      this.toast('success', `Found ${r.candidates} file${r.candidates === 1 ? '' : 's'} to optimize; ${r.pending} waiting in line.`)
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Optimizer scan failed'
+      this.toast('error', (await errText(e)) || 'Optimizer scan failed')
     } finally {
       this.optimizeScanning = false
     }
@@ -980,13 +931,11 @@ export class AppState {
 
   async enrichScan() {
     this.enrichScanning = true
-    this.enrichScanMsg = ''
-    this.settingsError = ''
     try {
       const r = await api('/api/admin/enrich/scan', { method: 'POST' })
-      this.enrichScanMsg = `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for enrichment; ${r.pending} waiting in line.`
+      this.toast('success', `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for enrichment; ${r.pending} waiting in line.`)
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'OMDB enrichment scan failed'
+      this.toast('error', (await errText(e)) || 'Metadata scan failed')
     } finally {
       this.enrichScanning = false
     }
@@ -994,13 +943,11 @@ export class AppState {
 
   async thumbnailScan() {
     this.thumbnailScanning = true
-    this.thumbnailScanMsg = ''
-    this.settingsError = ''
     try {
       const r = await api('/api/admin/thumbnail/scan', { method: 'POST' })
-      this.thumbnailScanMsg = `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for thumbnails; ${r.pending} waiting in line.`
+      this.toast('success', `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for thumbnails; ${r.pending} waiting in line.`)
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Thumbnail scan failed'
+      this.toast('error', (await errText(e)) || 'Thumbnail scan failed')
     } finally {
       this.thumbnailScanning = false
     }
@@ -1008,13 +955,11 @@ export class AppState {
 
   async probeScan() {
     this.probeScanning = true
-    this.probeScanMsg = ''
-    this.settingsError = ''
     try {
       const r = await api('/api/admin/probe/scan', { method: 'POST' })
-      this.probeScanMsg = `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for probing; ${r.pending} waiting in line.`
+      this.toast('success', `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for probing; ${r.pending} waiting in line.`)
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Probe scan failed'
+      this.toast('error', (await errText(e)) || 'Probe scan failed')
     } finally {
       this.probeScanning = false
     }
@@ -1022,17 +967,17 @@ export class AppState {
 
   async selectFormat() {
     if (!this.formatChoice) return
-    this.settingsError = ''
     try {
-      const r = await api('/api/admin/settings/format', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ format: this.formatChoice }),
-      })
-      this.mediaFormat = r.mediaFormat
-      this.settings = r.settings
+      this.applySettings(
+        await api('/api/admin/settings/format', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ format: this.formatChoice }),
+        }),
+      )
+      this.toast('success', 'Media format selected.')
     } catch (e) {
-      this.settingsError = (await errText(e)) || 'Could not save the format'
+      this.toast('error', (await errText(e)) || 'Could not save the format')
     }
   }
 

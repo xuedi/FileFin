@@ -102,6 +102,14 @@ handler pushes the change into the relevant live component:
 | discovery interval | signal the discovery supervisor to re-arm its ticker, or idle when off (see `agents/discovery.md`) |
 | import folder, OMDb key, media format, subtitle language | stored in config; read on next use by import / enrichment / library |
 
+The admin **Settings** page groups these into tabs (System, Library, Playback, Automation,
+Logging, Maintenance). The System tab is read-only install facts (port, data folder, cache
+path, media format, user count); the editable tabs bind to a working copy of the config and
+expose one dirty-aware Save per tab that dispatches only the changed sub-groups to the
+endpoints above (so one Save may issue one or two POSTs, or none). The whole-library
+operations (the four agent re-scans and the cache rebuild) live on the Maintenance tab, not
+among the settings; rebuild sits in a confirm-gated danger zone.
+
 ## Request/response helpers
 
 The JSON API leans on a few shared `server` helpers so each handler stays thin and uniform:

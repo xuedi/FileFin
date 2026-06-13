@@ -1,11 +1,9 @@
 package server
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"filefin/internal/config"
@@ -14,26 +12,25 @@ import (
 	"filefin/internal/mediafmt"
 )
 
-type settingRow struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
 // settingsView is the typed read view of the app config returned by every settings
-// endpoint: the structured values the form edits plus a flat name/value list for display.
+// endpoint. Port/DataDir/CachePath/Users are read-only install facts shown in the System
+// tab; the rest are the editable fields the per-section forms bind to.
 type settingsView struct {
-	MediaFormat       string       `json:"mediaFormat"`
-	ImportFolder      string       `json:"importFolder"`
-	OMDBKey           string       `json:"omdbKey"`
-	LogLevel          string       `json:"logLevel"`
-	LogOutput         string       `json:"logOutput"`
-	TranscodeEnabled  bool         `json:"transcodeEnabled"`
-	FFmpegPath        string       `json:"ffmpegPath"`
-	FFprobePath       string       `json:"ffprobePath"`
-	SubtitleLanguage  string       `json:"subtitleLanguage"`
-	OptimizeMode      string       `json:"optimizeMode"`
-	DiscoveryInterval int          `json:"discoveryInterval"`
-	Settings          []settingRow `json:"settings"`
+	Port              int    `json:"port"`
+	DataDir           string `json:"dataDir"`
+	CachePath         string `json:"cachePath"`
+	Users             int    `json:"users"`
+	MediaFormat       string `json:"mediaFormat"`
+	ImportFolder      string `json:"importFolder"`
+	OMDBKey           string `json:"omdbKey"`
+	LogLevel          string `json:"logLevel"`
+	LogOutput         string `json:"logOutput"`
+	TranscodeEnabled  bool   `json:"transcodeEnabled"`
+	FFmpegPath        string `json:"ffmpegPath"`
+	FFprobePath       string `json:"ffprobePath"`
+	SubtitleLanguage  string `json:"subtitleLanguage"`
+	OptimizeMode      string `json:"optimizeMode"`
+	DiscoveryInterval int    `json:"discoveryInterval"`
 }
 
 // discoveryLabel renders a discovery interval (seconds) as the human label shown in
@@ -74,24 +71,7 @@ func (s *Server) mutateConfig(w http.ResponseWriter, apply func(*config.Config))
 // settingsPayload is the read view of the app config: the chosen media format (empty
 // until permanently selected) plus a flat name/value list for display.
 func settingsPayload(cfg *config.Config) settingsView {
-	users := make([]string, 0, len(cfg.Users))
-	for u := range cfg.Users {
-		users = append(users, u)
-	}
-	sort.Strings(users)
-	format := cfg.MediaFormat
-	if format == "" {
-		format = "(not selected)"
-	}
-	importFolder := cfg.ImportFolder
-	if importFolder == "" {
-		importFolder = "(not set)"
-	}
 	cachePath, _ := db.Path()
-	omdbKey := cfg.OMDBKey
-	if omdbKey == "" {
-		omdbKey = "(not set)"
-	}
 	logLevel := cfg.LogLevel
 	if logLevel == "" {
 		logLevel = "info"
@@ -100,42 +80,22 @@ func settingsPayload(cfg *config.Config) settingsView {
 	if logOutput == "" {
 		logOutput = "STDOUT"
 	}
-	transcodeEnabled := cfg.TranscodeOn()
-	transcodeValue := "on"
-	if !transcodeEnabled {
-		transcodeValue = "off"
-	}
-	optimizeMode := cfg.OptimizeModeOr()
-	rows := []settingRow{
-		{"Port", fmt.Sprintf("%d", cfg.Port)},
-		{"Data folder", cfg.DataDir},
-		{"Import folder", importFolder},
-		{"Cache", "SQLite (" + cachePath + ")"},
-		{"Users", strings.Join(users, ", ")},
-		{"Media format", format},
-		{"OMDb API key", omdbKey},
-		{"Log level", logLevel},
-		{"Log output", logOutput},
-		{"Transcoding", transcodeValue},
-		{"ffmpeg path", cfg.FFmpeg()},
-		{"ffprobe path", cfg.FFprobe()},
-		{"Subtitle language", cfg.SubLang()},
-		{"Optimizer", optimizeMode},
-		{"Discovery", discoveryLabel(cfg.DiscoveryInterval)},
-	}
 	return settingsView{
+		Port:              cfg.Port,
+		DataDir:           cfg.DataDir,
+		CachePath:         cachePath,
+		Users:             len(cfg.Users),
 		MediaFormat:       cfg.MediaFormat,
 		ImportFolder:      cfg.ImportFolder,
 		OMDBKey:           cfg.OMDBKey,
 		LogLevel:          logLevel,
 		LogOutput:         logOutput,
-		TranscodeEnabled:  transcodeEnabled,
+		TranscodeEnabled:  cfg.TranscodeOn(),
 		FFmpegPath:        cfg.FFmpeg(),
 		FFprobePath:       cfg.FFprobe(),
 		SubtitleLanguage:  cfg.SubLang(),
-		OptimizeMode:      optimizeMode,
+		OptimizeMode:      cfg.OptimizeModeOr(),
 		DiscoveryInterval: cfg.DiscoveryInterval,
-		Settings:          rows,
 	}
 }
 
