@@ -31,6 +31,10 @@
       <span class="ff-dash-label">Optimizing - {s.optimizer.pending} queued ({s.optimizer.mode})</span>
     </div>
     <div class="box ff-dash-card">
+      <span class="ff-dash-num">{s.optimizer.coverage}%</span>
+      <span class="ff-dash-label">Optimized ({s.optimizer.optimized}/{s.optimizer.needsCopy} need a copy)</span>
+    </div>
+    <div class="box ff-dash-card">
       <span class="ff-dash-num">{s.enrich.pending}</span>
       <span class="ff-dash-label">Enrich queued</span>
     </div>

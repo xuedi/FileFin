@@ -13,6 +13,7 @@
   import AdminUsers from './views/admin/AdminUsers.svelte'
   import AdminProgress from './views/admin/AdminProgress.svelte'
   import AdminDashboard from './views/admin/AdminDashboard.svelte'
+  import AdminStats from './views/admin/AdminStats.svelte'
   import UserSettings from './views/settings/UserSettings.svelte'
   import Toast from './components/Toast.svelte'
 
@@ -96,6 +97,7 @@
           <li><a href={null} class="is-active">Account</a></li>
         {:else}
           <li><a href={null} class:is-active={app.adminView === 'dashboard'} onclick={() => app.go('/admin/dashboard')}>Dashboard</a></li>
+          <li><a href={null} class:is-active={app.adminView === 'stats'} onclick={() => app.go('/admin/stats')}>Statistics</a></li>
           <li><a href={null} class:is-active={app.adminView === 'library'} onclick={() => app.openAdminLibrary()}>Library</a></li>
           <li><a href={null} class:is-active={app.adminView === 'users'} onclick={() => app.go('/admin/users')}>Users</a></li>
           <li><a href={null} class:is-active={app.adminView === 'settings'} onclick={() => app.openSettings()}>Settings</a></li>
@@ -120,6 +122,8 @@
         <AdminUsers />
       {:else if app.adminView === 'progress'}
         <AdminProgress />
+      {:else if app.adminView === 'stats'}
+        <AdminStats />
       {:else}
         <AdminDashboard />
       {/if}

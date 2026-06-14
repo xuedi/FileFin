@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "bulma": "^1.0.4",
+    "chart.js": "^4.4.0",
     "hls.js": "^1.5.0"
   },
   "devDependencies": {

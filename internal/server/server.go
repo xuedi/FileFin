@@ -244,6 +244,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/admin/browse", s.admin(s.handleAdminBrowse))
 		mux.Handle("GET /api/admin/summary", s.admin(s.handleSummary))
 		mux.Handle("GET /api/admin/tasks", s.admin(s.handleTaskBacklog))
+		mux.Handle("GET /api/admin/stats", s.admin(s.handleStats))
 		mux.Handle("GET /api/admin/users", s.admin(s.handleListUsers))
 		mux.Handle("POST /api/admin/users", s.admin(s.handleCreateUser))
 		mux.Handle("PUT /api/admin/users/{id}", s.admin(s.handleUpdateUser))

@@ -53,6 +53,12 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read optimizer state", http.StatusInternalServerError)
 		return
 	}
+	allFiles, err := db.AllFiles(ctx, pool)
+	if err != nil {
+		http.Error(w, "could not read optimizer state", http.StatusInternalServerError)
+		return
+	}
+	optimized, optPendingCopy := optimizeCoverage(allFiles)
 	enrichPending, err := db.CountPendingEnrich(ctx, pool)
 	if err != nil {
 		http.Error(w, "could not read enrich state", http.StatusInternalServerError)
@@ -89,11 +95,15 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	s.discMu.Unlock()
 
 	writeJSON(w, dashboardView{
-		Library:   libraryStats{Categories: categories, Media: media, Files: files},
-		Users:     userStats{Total: total, Admins: admins},
-		Optimizer: optimizerStats{Mode: mode, Pending: optPending, Active: len(optActive)},
-		Enrich:    pendingStat{Pending: enrichPending},
-		Imports:   activeStat{Active: len(importsActive)},
+		Library: libraryStats{Categories: categories, Media: media, Files: files},
+		Users:   userStats{Total: total, Admins: admins},
+		Optimizer: optimizerStats{
+			Mode: mode, Pending: optPending, Active: len(optActive),
+			Optimized: optimized, NeedsCopy: optimized + optPendingCopy,
+			Coverage: coveragePercent(optimized, optPendingCopy),
+		},
+		Enrich:  pendingStat{Pending: enrichPending},
+		Imports: activeStat{Active: len(importsActive)},
 		Health: healthStats{
 			Issues:    healthIssues,
 			Unchecked: healthUnchecked,
@@ -213,9 +223,12 @@ type userStats struct {
 }
 
 type optimizerStats struct {
-	Mode    string `json:"mode"`
-	Pending int    `json:"pending"`
-	Active  int    `json:"active"`
+	Mode      string `json:"mode"`
+	Pending   int    `json:"pending"`
+	Active    int    `json:"active"`
+	Optimized int    `json:"optimized"` // files with a fresh direct-play copy
+	NeedsCopy int    `json:"needsCopy"` // files that need one (optimized + still pending)
+	Coverage  int    `json:"coverage"`  // optimized as a whole-number percentage of needsCopy
 }
 
 type pendingStat struct {

@@ -46,6 +46,7 @@ flowchart TD
   App --> Users["admin/AdminUsers"]
   App --> Progress["admin/AdminProgress"]
   App --> Dash["admin/AdminDashboard"]
+  App --> Stats["admin/AdminStats"]
   App --> UserSet["settings/UserSettings"]
   App --> ToastC["components/Toast"]
 
@@ -113,7 +114,23 @@ while Settings is open), and a **Tasks** box showing the per-type background bac
 from `GET /api/admin/tasks`, refreshed by the same clock every few seconds.
 `FormatGate` still gates the page on first run, before a media format is chosen.
 
+## Dashboard and Statistics
+
+The admin **Dashboard** (`admin/AdminDashboard.svelte`) is a row of summary cards plus the health-issue
+table, all from one `GET /api/admin/summary` call. One card is **optimize coverage**: the percentage of
+files that need a direct-play copy and already have a fresh one. "Needs a copy" is judged the same way the
+optimizer decides candidacy, so direct-playable and remux-eligible files (which never get a copy) are
+excluded from the ratio (see `agents/optimizer.md`).
+
+The **Statistics** page (`admin/AdminStats.svelte`) is a deeper view over the same media-format data from
+`GET /api/admin/stats`: the library broken down by container, video codec, and audio codec, and a
+playability breakdown (direct play / remux / optimized / needs optimize / unprobed). Each dimension is
+shown as a chart beside an exact-count table. Charts use Chart.js, vendored via npm and **lazy-imported**
+in this component only (a separate bundle chunk, like hls.js), so it stays out of the main bundle and the
+app remains fully offline.
+
 ## Build
 
 `just build` runs `npm install && npm run build` in `web/`, then `go build`. Bulma adds ~200 KB
-(gzipped ~68 KB) of CSS to the embedded bundle; hls.js is a lazily-imported separate chunk.
+(gzipped ~68 KB) of CSS to the embedded bundle; hls.js and Chart.js are each lazily-imported separate
+chunks.

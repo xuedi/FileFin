@@ -111,7 +111,7 @@ export class AppState {
   needsSetup = $state(false)
   me = $state(null) // { user, admin }
   view = $state('library') // 'library' | 'admin' | 'settings'
-  adminView = $state('dashboard') // 'dashboard' | 'library' | 'users' | 'settings' | 'progress'
+  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress'
   userMenuOpen = $state(false) // navbar username dropdown
 
   // user settings: MyDramaList import (username field, in-flight flags, last preview)
@@ -313,6 +313,9 @@ export class AppState {
 
   // admin dashboard
   summary = $state(null)
+
+  // admin statistics
+  stats = $state(null)
 
   // admin users
   users = $state([])
@@ -717,7 +720,7 @@ export class AppState {
     const segs = location.pathname.split('/').filter(Boolean)
     if (segs[0] === 'admin' && this.me?.admin) {
       this.view = 'admin'
-      const page = ['dashboard', 'library', 'users', 'settings', 'progress'].includes(segs[1]) ? segs[1] : 'dashboard'
+      const page = ['dashboard', 'stats', 'library', 'users', 'settings', 'progress'].includes(segs[1]) ? segs[1] : 'dashboard'
       this.applyAdmin(page, segs[2])
       return
     }
@@ -782,6 +785,9 @@ export class AppState {
     } else if (page === 'dashboard') {
       this.summary = null
       this.loadSummary()
+    } else if (page === 'stats') {
+      this.stats = null
+      this.loadStats()
     } else if (page === 'progress') {
       this.startProgressPoll()
     }
@@ -1715,6 +1721,16 @@ export class AppState {
       this.summary = null
     }
     this.loadHealth()
+  }
+
+  // --- admin statistics ---
+
+  async loadStats() {
+    try {
+      this.stats = await api('/api/admin/stats')
+    } catch {
+      this.stats = null
+    }
   }
 
   // --- admin users ---

@@ -150,6 +150,12 @@ body { min-height: 100vh; }
 .ff-health-head { margin-top: 2rem; }
 .ff-health-tag { margin-right: 0.35rem; }
 
+/* statistics page: charts + count tables */
+.ff-stats-coverage { justify-content: center; min-width: 280px; flex: 1; }
+.ff-stats-grid { margin-top: 0.5rem; }
+.ff-chart { position: relative; height: 240px; }
+.ff-stats-table { margin-top: 1rem; margin-bottom: 0; }
+
 /* format picker boxes */
 .ff-format-boxes { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.25rem 0; }
 .ff-format-box {
