@@ -84,7 +84,10 @@ is the current user's display name; its items are **Settings** (routes to `/sett
 (admin-only, routes to the admin area), and **Sign out**, with `is-active` marking the current
 view. It is a click-toggle backed by `AppState.userMenuOpen` and closes on an outside click (a
 window listener) or on item select. The per-user settings page (`settings/UserSettings.svelte`) is
-distinct from the admin Settings page and is where the per-user account view lives.
+distinct from the admin Settings page; it holds the account view and the
+[MyDramaList import](mdl.md) section (save a username, preview the scraped matches, confirm to
+import watched + 1-10 ratings). The detail page carries a matching 1-10 rating control beside the
+favourite/watched actions.
 
 ## Shared components
 

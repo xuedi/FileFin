@@ -114,6 +114,9 @@ export class AppState {
   adminView = $state('dashboard') // 'dashboard' | 'library' | 'users' | 'settings' | 'progress'
   userMenuOpen = $state(false) // navbar username dropdown
 
+  // user settings: MyDramaList import (username field, in-flight flags, last preview)
+  mdl = $state({ username: '', loading: false, applying: false, preview: null })
+
   // install form
   iuser = $state('')
   ipass = $state('')
@@ -507,6 +510,76 @@ export class AppState {
       })
     } catch {
       this.detail.favorite = !next // revert on failure
+    }
+  }
+
+  async setRating(n) {
+    const prev = this.detail.rating
+    this.detail.rating = n // optimistic
+    try {
+      await api('/api/media/' + this.detail.id + '/rating', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rating: n }),
+      })
+    } catch {
+      this.detail.rating = prev // revert on failure
+    }
+  }
+
+  // --- MyDramaList import (user settings) ---
+
+  async saveMDLUsername() {
+    const name = this.mdl.username.trim()
+    try {
+      const r = await api('/api/profile/mdl', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mdlUsername: name }),
+      })
+      if (this.me) this.me.mdlUsername = r.mdlUsername
+      this.mdl.username = r.mdlUsername
+      this.toast('success', name ? 'MyDramaList username saved.' : 'MyDramaList username cleared.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save the username')
+    }
+  }
+
+  async mdlPreview() {
+    this.mdl.loading = true
+    this.mdl.preview = null
+    try {
+      const p = await api('/api/mdl/preview', { method: 'POST' })
+      p.matched = p.matched.map((m) => ({ ...m, selected: true }))
+      this.mdl.preview = p
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not read your MyDramaList list')
+    } finally {
+      this.mdl.loading = false
+    }
+  }
+
+  async mdlApply() {
+    const rows = (this.mdl.preview?.matched ?? []).filter((m) => m.selected)
+    if (!rows.length) {
+      this.toast('error', 'Nothing selected to import.')
+      return
+    }
+    this.mdl.applying = true
+    try {
+      const r = await api('/api/mdl/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: rows.map((m) => ({ mediaId: m.mediaId, rating: m.rating, markWatched: m.willMarkWatched })),
+        }),
+      })
+      this.mdl.preview = null
+      this.toast('success', 'Imported ' + r.applied + ' item' + (r.applied === 1 ? '' : 's') + (r.failed ? ', ' + r.failed + ' failed' : '') + '.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not import ratings')
+    } finally {
+      this.mdl.applying = false
     }
   }
 

@@ -20,6 +20,7 @@ subsystem you are working in.
 | [`playback.md`](playback.md) | Video player | Direct-play (by probed format) vs HLS transcode, subtitles |
 | [`mediaformat.md`](mediaformat.md) | Media format & categories | On-disk layout, the `config.json` discriminator, the category tree, probed-format truth |
 | [`library.md`](library.md) | Library & cache | The media cache, rebuild, browsing, and naming formats |
-| [`playback-state.md`](playback-state.md) | Playback state | Per-user state in `meta.json`: resume pointer, watched flag, favorite |
+| [`playback-state.md`](playback-state.md) | Playback state | Per-user state in `meta.json`: resume pointer, watched flag, favorite, rating |
+| [`mdl.md`](mdl.md) | MyDramaList import | Scrape a public MDL list, match to the library, import watched + 1-10 ratings |
 | [`runtime.md`](runtime.md) | Server runtime | Install mode, port rebind, auth/sessions, live settings, the background agents |
 | [`frontend.md`](frontend.md) | Frontend | Svelte + Bulma: app state in context, component tree, routing, player effects |

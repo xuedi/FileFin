@@ -64,6 +64,7 @@ type mediaDetail struct {
 	Tags            []string   `json:"tags"`
 	Watched         bool       `json:"watched"`
 	Favorite        bool       `json:"favorite"`
+	Rating          int        `json:"rating"`
 	ContinueIndex   int        `json:"continueIndex"`
 	ContinueSeconds int        `json:"continueSeconds"`
 }
@@ -328,6 +329,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	v := state.View(us, refs)
 	d.Watched = v.Watched
 	d.Favorite = us.Favorite
+	d.Rating = us.Rating
 	d.ContinueIndex = v.ContinueIndex
 	d.ContinueSeconds = v.ContinueSeconds
 	for i := range d.Files {
@@ -414,6 +416,33 @@ func (s *Server) handleFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
 		us.Favorite = req.Favorite
+		return us
+	}); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRating sets (1-10) or clears (0) the user's rating for an item.
+func (s *Server) handleRating(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Rating int `json:"rating"`
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Rating < 0 || req.Rating > 10 {
+		http.Error(w, "rating out of range", http.StatusBadRequest)
+		return
+	}
+	folder, ok := s.folderFor(w, r)
+	if !ok {
+		return
+	}
+	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
+		us.Rating = req.Rating
 		return us
 	}); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -28,6 +28,7 @@ type User struct {
 	Blocked     bool   `json:"blocked,omitempty"`
 	CreatedAt   int64  `json:"createdAt,omitempty"`
 	LastLoginAt int64  `json:"lastLoginAt,omitempty"`
+	MDLUsername string `json:"mdlUsername,omitempty"` // MyDramaList account to import watched + ratings from
 }
 
 // ActiveAdmins counts accounts that are admin and not blocked, i.e. those that can

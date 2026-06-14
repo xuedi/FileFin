@@ -9,8 +9,13 @@ file per media folder holds both the media metadata and every user's playback st
 ## State lives in meta.json
 
 `meta.json`'s `state` object is keyed by username, one entry per user who has interacted with
-that item. An entry records a resume pointer, a permanent watched flag, a favourite flag, and
-an `updated` unix-seconds timestamp. A folder nobody has touched carries no `state` key.
+that item. An entry records a resume pointer, a permanent watched flag, a favourite flag, an
+optional 1-10 `rating`, and an `updated` unix-seconds timestamp. A folder nobody has touched
+carries no `state` key.
+
+The `rating` is independent of the resume engine: the pure `Apply` never touches it and clearing
+watched never clears it. It is set directly (like the favourite flag), by the detail page or by the
+[MyDramaList import](mdl.md).
 
 ```mermaid
 flowchart LR
@@ -86,3 +91,4 @@ state handlers go through `Manager.UpdateState` (read entry, apply the engine fu
 | `DELETE /api/media/{id}/progress`      | clear the resume pointer                       |
 | `DELETE /api/media/{id}/watched`       | clear the watched flag (and the pointer)       |
 | `POST   /api/media/{id}/favorite`      | set/clear the favourite flag                   |
+| `POST   /api/media/{id}/rating`        | set (1-10) or clear (0) the user's rating      |

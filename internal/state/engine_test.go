@@ -17,6 +17,19 @@ func TestRefs(t *testing.T) {
 	}
 }
 
+func TestApplyPreservesRating(t *testing.T) {
+	refs := []string{"1x1", "1x2"}
+	// A rating is independent of the resume engine: a progress report (even one that
+	// advances to watched) must leave it untouched.
+	s := Apply(UserState{Rating: 8}, refs, 1, 950, 1000)
+	if !s.Watched {
+		t.Fatalf("expected watched after 95%% of the last file")
+	}
+	if s.Rating != 8 {
+		t.Fatalf("Apply changed rating to %d", s.Rating)
+	}
+}
+
 func TestApplyForwardSeconds(t *testing.T) {
 	refs := []string{""}
 	s := Apply(UserState{}, refs, 0, 100, 1000)

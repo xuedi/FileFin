@@ -131,7 +131,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, authResult{User: req.Username, Admin: u.Admin, Alias: u.Alias})
+	writeJSON(w, authResult{User: req.Username, Admin: u.Admin, Alias: u.Alias, MDLUsername: u.MDLUsername})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -151,5 +151,5 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, authResult{User: user, Admin: u.Admin, Alias: u.Alias})
+	writeJSON(w, authResult{User: user, Admin: u.Admin, Alias: u.Alias, MDLUsername: u.MDLUsername})
 }

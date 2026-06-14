@@ -217,6 +217,9 @@ func (s *Server) handler() http.Handler {
 		mux.HandleFunc("POST /api/login", s.handleLogin)
 		mux.HandleFunc("POST /api/logout", s.handleLogout)
 		mux.Handle("GET /api/me", s.auth(s.handleMe))
+		mux.Handle("POST /api/profile/mdl", s.auth(s.handleMDLProfile))
+		mux.Handle("POST /api/mdl/preview", s.auth(s.handleMDLPreview))
+		mux.Handle("POST /api/mdl/apply", s.auth(s.handleMDLApply))
 		mux.Handle("GET /api/categories", s.auth(s.handleListCategories))
 
 		// End-user library, detail, status, and playback.
@@ -225,6 +228,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/media/{id}", s.auth(s.handleMediaDetail))
 		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
 		mux.Handle("POST /api/media/{id}/favorite", s.auth(s.handleFavorite))
+		mux.Handle("POST /api/media/{id}/rating", s.auth(s.handleRating))
 		mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
 		mux.Handle("DELETE /api/media/{id}/progress", s.auth(s.handleClearProgress))
 		mux.Handle("DELETE /api/media/{id}/watched", s.auth(s.handleClearWatched))
@@ -353,9 +357,10 @@ type queueStatus[T any] struct {
 
 // authResult is the response of login and /me: the authenticated user and its flags.
 type authResult struct {
-	User  string `json:"user"`
-	Admin bool   `json:"admin"`
-	Alias string `json:"alias"`
+	User        string `json:"user"`
+	Admin       bool   `json:"admin"`
+	Alias       string `json:"alias"`
+	MDLUsername string `json:"mdlUsername"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

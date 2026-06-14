@@ -22,6 +22,10 @@ type UserState struct {
 	Progress *Pointer `json:"progress,omitempty"`
 	Watched  bool     `json:"watched,omitempty"`
 	Favorite bool     `json:"favorite,omitempty"`
+	// Rating is the user's 1-10 score for the item (0 = unrated). It is independent of the
+	// resume engine: Apply never touches it and clearing watched never clears it. The
+	// MyDramaList import is one writer; the detail page is another.
+	Rating int `json:"rating,omitempty"`
 	// Updated is the unix-seconds time of the last change, stamped by the writer. It is
 	// the ordering key the home buckets sort by (newest-first); meta.json's own mtime is
 	// useless for that since the importer and enricher also touch the file.

@@ -17,6 +17,12 @@
         </h2>
         {#if !app.playing}
           <div class="ff-title-actions">
+            <div class="select is-small ff-rating" title="Your rating">
+              <select value={detail.rating} onchange={(e) => app.setRating(Number(e.currentTarget.value))}>
+                <option value={0}>★ Rate</option>
+                {#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n}<option value={n}>★ {n}</option>{/each}
+              </select>
+            </div>
             <button
               class="button heart"
               class:on={detail.favorite}
