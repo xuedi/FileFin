@@ -1,5 +1,6 @@
 <script>
   import { getContext } from 'svelte'
+  import GithubLink from '../components/GithubLink.svelte'
   const app = getContext('app')
 </script>
 
@@ -20,3 +21,6 @@
   </div>
   {#if app.loginError}<p class="has-text-danger">{app.loginError}</p>{/if}
 </form>
+<div class="ff-auth-foot has-text-centered">
+  <GithubLink />
+</div>

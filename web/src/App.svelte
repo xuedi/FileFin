@@ -16,6 +16,7 @@
   import AdminStats from './views/admin/AdminStats.svelte'
   import UserSettings from './views/settings/UserSettings.svelte'
   import Toast from './components/Toast.svelte'
+  import GithubLink from './components/GithubLink.svelte'
 
   const app = new AppState()
   setContext('app', app)
@@ -104,6 +105,9 @@
           <li><a href={null} class:is-active={app.adminView === 'progress'} onclick={() => app.go('/admin/progress')}>Progress</a></li>
         {/if}
       </ul>
+      <div class="ff-sidebar-foot">
+        <GithubLink />
+      </div>
     </aside>
     <main class="ff-main">
       {#if app.view === 'library'}
