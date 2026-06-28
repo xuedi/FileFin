@@ -23,7 +23,8 @@ import (
 )
 
 // Optimizer worker labels, shown on the Progress page and recorded as the claiming agent
-// on each task: the always-on GPU agent and the load-gated CPU pool.
+// on each task: the always-on GPU agent(s) and the load-gated CPU pool. With more than one
+// GPU each worker's label is suffixed with its device (see gpuLabel).
 const (
 	workerGPU = "GPU"
 	workerCPU = "CPU"
@@ -140,10 +141,12 @@ func (s *Server) startOptimizeRun(ctx context.Context, wg *sync.WaitGroup) {
 	// The queue is filled by the scan (the "Optimizer scan" button or the discovery agent,
 	// see discovery.go); the agents below just drain whatever it holds.
 	if mode == config.OptimizeGPU || mode == config.OptimizeAll {
-		enc := s.optimizeGPUEncoder(ctx)
-		wg.Add(1)
-		go s.optimizeGPUAgent(ctx, enc, wg)
-		s.olog().Info("optimizer started", logging.Fields{"mode": mode, "gpu": enc.Kind, "device": enc.Device})
+		encs := s.optimizeGPUEncoders(ctx)
+		for _, enc := range encs {
+			wg.Add(1)
+			go s.optimizeGPUAgent(ctx, gpuLabel(enc, len(encs)), enc, wg)
+		}
+		s.olog().Info("optimizer started", logging.Fields{"mode": mode, "gpus": len(encs), "devices": gpuDevices(encs)})
 	}
 	if mode == config.OptimizeCPU || mode == config.OptimizeAll {
 		wg.Add(1)
@@ -154,9 +157,10 @@ func (s *Server) startOptimizeRun(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-// optimizeGPUEncoder detects the best available encoder (vaapi when present, else
-// software) for the always-on worker.
-func (s *Server) optimizeGPUEncoder(ctx context.Context) transcode.Encoder {
+// optimizeGPUEncoders detects every usable GPU encoder (one per render node that can
+// encode, vaapi; else a single software encoder) so a multi-GPU host runs one always-on
+// worker per card. The result always has at least one element.
+func (s *Server) optimizeGPUEncoders(ctx context.Context) []transcode.Encoder {
 	s.mu.RLock()
 	cfg, lg := s.cfg, s.lg
 	s.mu.RUnlock()
@@ -164,7 +168,31 @@ func (s *Server) optimizeGPUEncoder(ctx context.Context) transcode.Encoder {
 	if cfg != nil {
 		opts.FFmpegPath, opts.FFprobePath = cfg.FFmpeg(), cfg.FFprobe()
 	}
-	return transcode.DetectEncoder(ctx, opts)
+	return transcode.DetectEncoders(ctx, opts)
+}
+
+// gpuLabel is the claiming-agent label for a GPU worker, shown on the Progress page. With a
+// single GPU it is the plain "GPU"; with several it is suffixed with the device base name
+// (e.g. "GPU:renderD128") so concurrent workers are distinguishable.
+func gpuLabel(enc transcode.Encoder, total int) string {
+	if total <= 1 || enc.Device == "" {
+		return workerGPU
+	}
+	return workerGPU + ":" + filepath.Base(enc.Device)
+}
+
+// gpuDevices lists the device path (or encoder kind, for the software fallback) of each
+// encoder, for the "optimizer started" log line.
+func gpuDevices(encs []transcode.Encoder) []string {
+	out := make([]string, len(encs))
+	for i, e := range encs {
+		if e.Device != "" {
+			out[i] = e.Device
+		} else {
+			out[i] = string(e.Kind)
+		}
+	}
+	return out
 }
 
 // handleOptimizeScan is the manual queue refill: it walks the cached media files, queues
@@ -225,15 +253,16 @@ func (s *Server) optimizeRefill(ctx context.Context) (int, error) {
 	return len(cands), nil
 }
 
-// optimizeGPUAgent is the always-on worker: it grabs the next pending task the instant it
-// finishes and idles between empties, until ctx is cancelled.
-func (s *Server) optimizeGPUAgent(ctx context.Context, enc transcode.Encoder, wg *sync.WaitGroup) {
+// optimizeGPUAgent is an always-on worker bound to one GPU encoder: it grabs the next
+// pending task the instant it finishes and idles between empties, until ctx is cancelled.
+// label identifies the worker (and the GPU it runs on) on the Progress page.
+func (s *Server) optimizeGPUAgent(ctx context.Context, label string, enc transcode.Encoder, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if !s.optimizeOnce(ctx, workerGPU, enc) {
+		if !s.optimizeOnce(ctx, label, enc) {
 			if !sleepCtx(ctx, optimizeBusyPoll) {
 				return
 			}

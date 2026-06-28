@@ -69,32 +69,50 @@ func OptimizeArgs(enc Encoder, inputPath, outputPath string, extra ...string) []
 	return append(args, outputPath)
 }
 
-// DetectEncoder probes for a usable VAAPI H.264 encoder, honoring the hardware-accel
-// settings on opts. It returns the software encoder when hardware is disabled, when
-// ffmpeg lacks h264_vaapi, or when no render node can actually encode. Detection ends
-// in a real micro-encode, not a capability guess, so a returned vaapi encoder is known
-// to work end to end (driver + ffmpeg + GPU).
-func DetectEncoder(ctx context.Context, opts Options) Encoder {
-	if opts.HWAccel == hwAccelOff {
-		return softwareEncoder
-	}
+// DetectEncoders probes for usable VAAPI H.264 encoders, honoring the hardware-accel
+// settings on opts. It returns one Encoder per render node that can actually encode, in
+// sorted node order, so a multi-GPU host yields one encoder per card. It falls back to a
+// single software encoder when hardware is disabled, when ffmpeg lacks h264_vaapi, or when
+// no render node can encode. Detection ends in a real micro-encode, not a capability guess,
+// so a returned vaapi encoder is known to work end to end (driver + ffmpeg + GPU). The
+// result always has at least one element.
+func DetectEncoders(ctx context.Context, opts Options) []Encoder {
 	ffmpeg := opts.FFmpegPath
 	if ffmpeg == "" {
 		ffmpeg = "ffmpeg"
 	}
-	if !ffmpegHasEncoder(ctx, ffmpeg, "h264_vaapi") {
-		return softwareEncoder
+	return detectEncoders(opts,
+		func(name string) bool { return ffmpegHasEncoder(ctx, ffmpeg, name) },
+		func(node string) bool { return probeVAAPIEncode(ctx, ffmpeg, node) },
+		renderNodes("/dev/dri"),
+	)
+}
+
+// DetectEncoder returns the first encoder DetectEncoders finds (a single GPU, or software).
+// It is the single-encoder entry point used by live HLS playback.
+func DetectEncoder(ctx context.Context, opts Options) Encoder {
+	return DetectEncoders(ctx, opts)[0]
+}
+
+// detectEncoders is the GPU-free core of DetectEncoders: hasEncoder and probe are injected
+// so the node-selection logic is testable without a real ffmpeg or GPU.
+func detectEncoders(opts Options, hasEncoder, probe func(string) bool, nodes []string) []Encoder {
+	if opts.HWAccel == hwAccelOff || !hasEncoder("h264_vaapi") {
+		return []Encoder{softwareEncoder}
 	}
-	nodes := renderNodes("/dev/dri")
 	if opts.HWAccelDevice != "" {
 		nodes = []string{opts.HWAccelDevice}
 	}
+	var encs []Encoder
 	for _, node := range nodes {
-		if probeVAAPIEncode(ctx, ffmpeg, node) {
-			return Encoder{Kind: KindVAAPI, Device: node, Codec: "h264_vaapi"}
+		if probe(node) {
+			encs = append(encs, Encoder{Kind: KindVAAPI, Device: node, Codec: "h264_vaapi"})
 		}
 	}
-	return softwareEncoder
+	if len(encs) == 0 {
+		return []Encoder{softwareEncoder}
+	}
+	return encs
 }
 
 // renderNodes lists DRM render nodes (/dev/dri/renderD*) in dir, sorted.

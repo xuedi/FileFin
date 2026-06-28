@@ -19,7 +19,7 @@ agents below still only drain whatever it holds.
 flowchart TD
     SCAN[Optimizer scan pressed] -->|Candidates from media_files| Q[(optimize_tasks queue)]
     SCAN -->|prune fresh / native files| Q
-    Q --> GPU[Always-on GPU/best-encoder agent]
+    Q --> GPU[Always-on GPU agent per detected GPU]
     Q --> CPU[Elastic CPU worker pool]
     GPU --> ONE
     CPU --> ONE
@@ -56,13 +56,18 @@ the supervisor, which cancels the current run, waits for it to drain, and relaun
 | mode | agents running |
 |------|----------------|
 | `none` | nothing (off, the default) |
-| `gpu`  | one always-on worker on the best detected encoder |
+| `gpu`  | one always-on worker per detected GPU |
 | `cpu`  | the elastic software-worker pool only |
-| `all`  | the always-on worker **plus** the elastic CPU pool |
+| `all`  | the always-on GPU worker(s) **plus** the elastic CPU pool |
 
-- **Always-on agent** - grabs the next pending task the instant it finishes one, idling
-  between empties. It uses the best encoder `DetectEncoder` finds (VAAPI when a render node
-  can actually encode, proven by a real micro-encode; software otherwise).
+- **Always-on agent(s)** - detection enumerates every DRM render node and keeps each one
+  that passes a real micro-encode (VAAPI), so a host with several GPUs gets one always-on
+  worker per card, each pinned to its own device; a single worker on software encoding is the
+  fallback when no node can encode. Each worker grabs the next pending task the instant it
+  finishes one, idling between empties. With more than one GPU each worker's Progress-page
+  label is suffixed with its device (e.g. `GPU:renderD128`) so concurrent encodes are
+  distinguishable. The shared queue's race-free claim and the per-item `.tmp` lock make the
+  workers safe to run concurrently with no further coordination.
 - **Elastic CPU pool** - a load-aware autoscaler that only ever *adds* libx264 workers, one
   per ramp interval, while there is pending work, no live viewer, CPU headroom (below the
   target busy %, read from `/proc/stat` via `sysload`), and fewer than `NumCPU` workers. Each

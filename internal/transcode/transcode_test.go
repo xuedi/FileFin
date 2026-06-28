@@ -75,6 +75,67 @@ func TestBuildPlaylist(t *testing.T) {
 	}
 }
 
+func TestDetectEncoders(t *testing.T) {
+	yes := func(string) bool { return true }
+	no := func(string) bool { return false }
+	onlyNode := func(want string) func(string) bool {
+		return func(node string) bool { return node == want }
+	}
+	nodes := []string{"/dev/dri/renderD128", "/dev/dri/renderD129"}
+
+	t.Run("hwaccel off -> software", func(t *testing.T) {
+		got := detectEncoders(Options{HWAccel: hwAccelOff}, yes, yes, nodes)
+		if len(got) != 1 || got[0].Kind != KindSoftware {
+			t.Fatalf("got %+v, want single software encoder", got)
+		}
+	})
+
+	t.Run("no h264_vaapi -> software", func(t *testing.T) {
+		got := detectEncoders(Options{}, no, yes, nodes)
+		if len(got) != 1 || got[0].Kind != KindSoftware {
+			t.Fatalf("got %+v, want single software encoder", got)
+		}
+	})
+
+	t.Run("no node encodes -> software", func(t *testing.T) {
+		got := detectEncoders(Options{}, yes, no, nodes)
+		if len(got) != 1 || got[0].Kind != KindSoftware {
+			t.Fatalf("got %+v, want single software encoder", got)
+		}
+	})
+
+	t.Run("all nodes encode -> one vaapi encoder each", func(t *testing.T) {
+		got := detectEncoders(Options{}, yes, yes, nodes)
+		if len(got) != len(nodes) {
+			t.Fatalf("got %d encoders, want %d: %+v", len(got), len(nodes), got)
+		}
+		for i, e := range got {
+			if e.Kind != KindVAAPI || e.Codec != "h264_vaapi" || e.Device != nodes[i] {
+				t.Errorf("encoder %d = %+v, want vaapi on %q", i, e, nodes[i])
+			}
+		}
+	})
+
+	t.Run("only second node encodes", func(t *testing.T) {
+		got := detectEncoders(Options{}, yes, onlyNode(nodes[1]), nodes)
+		if len(got) != 1 || got[0].Device != nodes[1] {
+			t.Fatalf("got %+v, want single vaapi on %q", got, nodes[1])
+		}
+	})
+
+	t.Run("device override probes only that node", func(t *testing.T) {
+		probed := []string{}
+		probe := func(node string) bool { probed = append(probed, node); return true }
+		got := detectEncoders(Options{HWAccelDevice: nodes[1]}, yes, probe, nodes)
+		if len(probed) != 1 || probed[0] != nodes[1] {
+			t.Fatalf("probed %v, want only %q", probed, nodes[1])
+		}
+		if len(got) != 1 || got[0].Device != nodes[1] {
+			t.Fatalf("got %+v, want single vaapi on %q", got, nodes[1])
+		}
+	})
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (indexOf(s, sub) >= 0)
 }
