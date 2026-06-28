@@ -276,6 +276,15 @@ body { min-height: 100vh; }
 .tile-remove:hover { background: #e0245e; color: white; }
 .ff-row-title { margin: 1.5rem 0 0.75rem; }
 .ff-row-title:first-child { margin-top: 0.5rem; }
+/* home section header: title with an optional "Show less" toggle on the right */
+.ff-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 1.5rem 0 0.75rem; }
+.ff-row-head .ff-row-title { margin: 0; }
+.ff-row-toggle { font-size: 0.85rem; white-space: nowrap; }
+/* "+N more" overflow tile that ends a collapsed single-row section */
+.ff-more-card { align-items: center; justify-content: center; gap: 0.2rem; color: var(--bulma-text); }
+.ff-more-count { font-size: 1.7rem; font-weight: 600; line-height: 1; }
+.ff-more-label { color: var(--bulma-text-weak); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.ff-more-card:hover { border-color: var(--bulma-link); color: var(--bulma-link); }
 
 /* media detail */
 .ff-back { margin-bottom: 0.5rem; }
