@@ -89,6 +89,10 @@ type Server struct {
 	// frontend polls them.
 	plexStaging     stagingTracker
 	jellyfinStaging stagingTracker
+
+	// rebuildJob tracks a single in-flight cache rebuild's progress (one at a time), polled
+	// by the maintenance page so a large rebuild shows a progress bar instead of a hung POST.
+	rebuildJob rebuildTracker
 }
 
 func New() *Server {
@@ -276,6 +280,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/admin/probe/active", s.admin(s.handleActiveProbe))
 		mux.Handle("POST /api/admin/probe/scan", s.admin(s.handleProbeScan))
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
+		mux.Handle("GET /api/admin/rebuild/progress", s.admin(s.handleRebuildProgress))
 		mux.Handle("POST /api/admin/import/assess", s.admin(s.handleAssess))
 		mux.Handle("GET /api/admin/import/plex/default", s.admin(s.handlePlexDefault))
 		mux.Handle("POST /api/admin/import/plex/check", s.admin(s.handlePlexCheck))

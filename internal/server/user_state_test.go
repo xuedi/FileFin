@@ -68,6 +68,7 @@ func TestUserStateMirrorAndRebuild(t *testing.T) {
 	if rr := do(t, h, "POST", "/api/admin/rebuild", "", admin); rr.Code != 200 {
 		t.Fatalf("rebuild: %d %s", rr.Code, rr.Body.String())
 	}
+	waitForRebuild(t, s)
 	if n := userStateRowCount(t, s, id); n != 1 {
 		t.Fatalf("user_state not re-derived by rebuild = %d, want 1", n)
 	}

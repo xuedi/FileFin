@@ -1,6 +1,7 @@
 <script>
   import { getContext } from 'svelte'
   import FolderBrowser from '../../components/FolderBrowser.svelte'
+  import ProgressBar from '../../components/ProgressBar.svelte'
   const app = getContext('app')
 
   const tabs = [
@@ -216,6 +217,12 @@
       <div class="ff-maint-text"><strong>Rebuild database</strong><p class="help">Flush the cache and rebuild it from the data folder. Also clears pending imports.</p></div>
       <button class="button is-danger" disabled={app.rebuilding} onclick={() => app.rebuildDb()}>{app.rebuilding ? 'Rebuilding...' : 'Rebuild'}</button>
     </div>
+    {#if app.rebuildProgress}
+      <div class="ff-rebuild-progress">
+        <ProgressBar value={app.rebuildProgress.done} max={app.rebuildProgress.total || 1} />
+        <p class="help">Rebuilding cache - {app.rebuildProgress.done} / {app.rebuildProgress.total || '?'} items</p>
+      </div>
+    {/if}
   </div>
 {/if}
 

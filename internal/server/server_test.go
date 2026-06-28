@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -15,6 +16,20 @@ import (
 	"filefin/internal/db"
 	"filefin/internal/library"
 )
+
+// waitForRebuild blocks until the background cache rebuild reports finished, so a test can
+// assert on its results. The rebuild runs off the request now, so the POST returns before the
+// work is done.
+func waitForRebuild(t *testing.T, s *Server) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if s.rebuildJob.snapshot().Finished {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("rebuild did not finish in time")
+}
 
 func TestInstallFlow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

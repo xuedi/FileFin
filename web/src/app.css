@@ -128,6 +128,9 @@ body { min-height: 100vh; }
 .ff-maint-note { margin-top: 1rem; }
 .ff-danger-zone { border: 1px solid var(--bulma-danger); }
 .ff-danger-title { color: var(--bulma-danger); font-weight: 600; margin-bottom: 0.25rem; }
+.ff-rebuild-progress { padding-top: 0.75rem; }
+.ff-rebuild-progress .ff-progress { width: 100%; }
+.ff-rebuild-progress .help { margin-top: 0.35rem; }
 
 /* toasts: transient success/error notices, stacked bottom-right */
 .ff-toasts {

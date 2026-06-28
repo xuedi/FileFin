@@ -331,10 +331,10 @@ func TestRebuildFromDisk(t *testing.T) {
 
 	// Rebuild flushes imports and re-derives media from disk.
 	rr := do(t, h, "POST", "/api/admin/rebuild", "", admin)
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"categories":1`) ||
-		!strings.Contains(rr.Body.String(), `"media":1`) {
+	if rr.Code != 200 {
 		t.Fatalf("rebuild: %d %s", rr.Code, rr.Body.String())
 	}
+	waitForRebuild(t, s)
 
 	var media int
 	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&media); err != nil || media != 1 {

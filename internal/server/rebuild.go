@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"filefin/internal/db"
 	"filefin/internal/importer"
@@ -14,85 +17,154 @@ import (
 	"filefin/internal/recognize"
 )
 
-// handleRebuild flushes the cache and rebuilds it from the data folder: categories
-// first (the source of truth on disk), then the media folders inside each. Imports are
-// transient and cannot be reconstructed, so they are simply dropped. This realizes the
-// architecture's "cache is fully rebuildable from the filesystem" promise.
+// rebuildState is a cache rebuild's live progress, polled by the maintenance page. running is
+// not serialized; it guards against starting a second rebuild while one is in flight.
+type rebuildState struct {
+	Total      int    `json:"total"`
+	Done       int    `json:"done"`
+	Categories int    `json:"categories"`
+	Media      int    `json:"media"`
+	Finished   bool   `json:"finished"`
+	Error      string `json:"error"`
+	running    bool
+}
+
+// rebuildTracker owns the rebuild progress behind its own mutex (the stagingTracker pattern).
+type rebuildTracker struct {
+	mu sync.Mutex
+	st rebuildState
+}
+
+// begin marks a fresh rebuild running with its item denominator; ok is false when one is
+// already in flight.
+func (t *rebuildTracker) begin(total int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.st.running {
+		return false
+	}
+	t.st = rebuildState{running: true, Total: total}
+	return true
+}
+
+func (t *rebuildTracker) advance() {
+	t.mu.Lock()
+	t.st.Done++
+	t.mu.Unlock()
+}
+
+func (t *rebuildTracker) finish(categories, media int) {
+	t.mu.Lock()
+	t.st.Categories, t.st.Media = categories, media
+	t.st.Finished, t.st.running = true, false
+	t.mu.Unlock()
+}
+
+func (t *rebuildTracker) fail(msg string) {
+	t.mu.Lock()
+	t.st.Error, t.st.Finished, t.st.running = msg, true, false
+	t.mu.Unlock()
+}
+
+func (t *rebuildTracker) snapshot() rebuildState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.st
+}
+
+// handleRebuild starts a background rebuild of the cache from the data folder and returns at
+// once; the maintenance page polls handleRebuildProgress for the bar. Running off the request
+// keeps a large library from hanging the POST. The denominator is the cheap name-level folder
+// count, so the bar has a total before the (slower) meta.json scan begins.
 func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	pool, err := s.ensureDB(r.Context())
 	if err != nil {
 		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	ctx := r.Context()
 	dataDir := s.dataDir()
+	refs, _ := onDiskMediaRefs(dataDir)
+	if !s.rebuildJob.begin(len(refs)) {
+		http.Error(w, "rebuild already running", http.StatusConflict)
+		return
+	}
+	go s.runRebuild(context.Background(), pool, dataDir)
+	writeJSON(w, s.rebuildJob.snapshot())
+}
 
-	// Serialize against a discovery tick so the two never mutate the cache concurrently.
+// handleRebuildProgress returns the live rebuild progress for the polling maintenance page.
+func (s *Server) handleRebuildProgress(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.rebuildJob.snapshot())
+}
+
+// runRebuild flushes the cache and rebuilds it from the data folder: categories first (the
+// source of truth on disk), then the media folders inside each, reporting progress per folder.
+// Imports and the transient queues are dropped (they cannot be reconstructed). It serializes
+// against a discovery tick via maintMu so the two never mutate the cache concurrently. This
+// realizes the architecture's "cache is fully rebuildable from the filesystem" promise.
+func (s *Server) runRebuild(ctx context.Context, pool *sql.DB, dataDir string) {
 	s.maintMu.Lock()
 	defer s.maintMu.Unlock()
 
 	cats, err := library.List(dataDir)
 	if err != nil {
-		http.Error(w, "could not read categories", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not read categories")
 		return
 	}
 
 	// Categories first (with parent links + effective other-media propagation).
 	if err := s.mirrorCategories(ctx, pool); err != nil {
-		http.Error(w, "could not rebuild categories", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not rebuild categories")
 		return
 	}
 	if err := db.ClearImportsAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear imports", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear imports")
 		return
 	}
 	if err := db.ClearMedia(ctx, pool); err != nil {
-		http.Error(w, "could not clear media", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear media")
 		return
 	}
 	if err := db.ClearOptimizeTasksAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear optimize tasks", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear optimize tasks")
 		return
 	}
 	if err := db.ClearEnrichTasksAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear enrich tasks", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear enrich tasks")
 		return
 	}
 	if err := db.ClearThumbnailTasksAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear thumbnail tasks", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear thumbnail tasks")
 		return
 	}
 	if err := db.ClearProbeTasksAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear probe tasks", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear probe tasks")
 		return
 	}
 	if err := db.ClearHealthAll(ctx, pool); err != nil {
-		http.Error(w, "could not clear media health", http.StatusInternalServerError)
+		s.rebuildJob.fail("could not clear media health")
 		return
 	}
 
-	// Then the media folders within each category.
+	// Then the media folders within each category, advancing the bar per folder.
 	mediaCount := 0
 	for _, c := range cats {
 		for _, m := range scanCategoryMedia(dataDir, c) {
-			if err := db.InsertMedia(ctx, pool, m.media); err != nil {
-				continue
+			if err := db.InsertMedia(ctx, pool, m.media); err == nil {
+				for _, f := range m.files {
+					_ = db.InsertMediaFile(ctx, pool, f)
+				}
+				_ = db.ReplaceMediaFacets(ctx, pool, m.media.ID, m.actors, m.tags)
+				_ = db.ReplaceUserStateForMedia(ctx, pool, m.media.ID, m.userState)
+				mediaCount++
 			}
-			for _, f := range m.files {
-				_ = db.InsertMediaFile(ctx, pool, f)
-			}
-			_ = db.ReplaceMediaFacets(ctx, pool, m.media.ID, m.actors, m.tags)
-			_ = db.ReplaceUserStateForMedia(ctx, pool, m.media.ID, m.userState)
-			mediaCount++
+			s.rebuildJob.advance()
 		}
 	}
 
 	s.logger().For(logging.Backend).Info("cache rebuilt from disk",
 		logging.Fields{"categories": len(cats), "media": mediaCount})
-	writeJSON(w, struct {
-		Categories int `json:"categories"`
-		Media      int `json:"media"`
-	}{len(cats), mediaCount})
+	s.rebuildJob.finish(len(cats), mediaCount)
 }
 
 // scannedMedia pairs a media row with its file rows, its multivalued facets (actors, genres),

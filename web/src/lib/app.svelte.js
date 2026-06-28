@@ -252,6 +252,8 @@ export class AppState {
 
   // rebuild + background scans (results surface as toasts)
   rebuilding = $state(false)
+  rebuildProgress = $state(null) // { total, done, categories, media, finished, error } while a rebuild runs
+  rebuildTimer = 0
   optimizeScanning = $state(false)
   enrichScanning = $state(false)
   thumbnailScanning = $state(false)
@@ -1161,18 +1163,47 @@ export class AppState {
     return 'next run in ' + humanDuration(remaining / 1000)
   }
 
+  // rebuildDb starts the background rebuild and polls its progress; the danger zone shows a
+  // bar until it finishes (the rebuild runs off the request, so the POST returns immediately).
   async rebuildDb() {
     if (!confirm('Flush the cache and rebuild it from the data folder? This also clears any pending imports.')) return
     this.rebuilding = true
+    this.rebuildProgress = { total: 0, done: 0, categories: 0, media: 0, finished: false, error: '' }
     try {
-      const r = await api('/api/admin/rebuild', { method: 'POST' })
-      this.toast('success', `Rebuilt ${r.categories} categor${r.categories === 1 ? 'y' : 'ies'} and ${r.media} media item${r.media === 1 ? '' : 's'}.`)
-      await this.loadSettings()
+      await api('/api/admin/rebuild', { method: 'POST' })
+      this.pollRebuildProgress()
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Rebuild failed')
-    } finally {
       this.rebuilding = false
+      this.rebuildProgress = null
     }
+  }
+
+  pollRebuildProgress() {
+    clearInterval(this.rebuildTimer)
+    this.rebuildTimer = setInterval(async () => {
+      try {
+        const p = await api('/api/admin/rebuild/progress')
+        this.rebuildProgress = p
+        if (p.finished) {
+          clearInterval(this.rebuildTimer)
+          this.rebuildTimer = 0
+          this.rebuilding = false
+          this.rebuildProgress = null
+          if (p.error) {
+            this.toast('error', p.error)
+          } else {
+            this.toast('success', `Rebuilt ${p.categories} categor${p.categories === 1 ? 'y' : 'ies'} and ${p.media} media item${p.media === 1 ? '' : 's'}.`)
+            await this.loadSettings()
+          }
+        }
+      } catch {
+        clearInterval(this.rebuildTimer)
+        this.rebuildTimer = 0
+        this.rebuilding = false
+        this.rebuildProgress = null
+      }
+    }, 700)
   }
 
   async optimizeScan() {
