@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "node": {
+        "id": 16498,
+        "title": "Shingeki no Kyojin",
+        "alternative_titles": { "synonyms": ["AoT"], "en": "Attack on Titan", "ja": "進撃の巨人" },
+        "start_season": { "year": 2013, "season": "spring" },
+        "start_date": "2013-04-07"
+      },
+      "list_status": { "status": "completed", "score": 10, "updated_at": "2021-01-01T00:00:00+00:00" }
+    },
+    {
+      "node": {
+        "id": 32281,
+        "title": "Kimi no Na wa.",
+        "alternative_titles": { "synonyms": [], "en": "", "ja": "君の名は。" },
+        "start_date": "2016-08-26"
+      },
+      "list_status": { "status": "watching", "score": 0 }
+    }
+  ],
+  "paging": { "next": "{{NEXT}}" }
+}

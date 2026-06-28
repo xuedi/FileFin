@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"filefin/internal/watchlist"
 )
 
 // Status is a normalized MyDramaList list bucket.
@@ -42,6 +44,12 @@ type Entry struct {
 
 // Watched reports whether this entry's status counts as fully watched.
 func (e Entry) Watched() bool { return e.Status == StatusCompleted }
+
+// ToWatchlist maps the scraped entry to the source-neutral type the shared matcher pairs
+// against the library. MyDramaList carries a single title, so there are no aliases.
+func (e Entry) ToWatchlist() watchlist.Entry {
+	return watchlist.Entry{Title: e.Title, Year: e.Year, Rating: e.Rating, Watched: e.Watched()}
+}
 
 var (
 	// ErrNotFound means the list page does not exist (no such user).

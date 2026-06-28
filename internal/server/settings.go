@@ -23,6 +23,7 @@ type settingsView struct {
 	MediaFormat       string `json:"mediaFormat"`
 	ImportFolder      string `json:"importFolder"`
 	OMDBKey           string `json:"omdbKey"`
+	MALClientID       string `json:"malClientId"`
 	LogLevel          string `json:"logLevel"`
 	LogOutput         string `json:"logOutput"`
 	TranscodeEnabled  bool   `json:"transcodeEnabled"`
@@ -92,6 +93,7 @@ func (s *Server) settingsPayload(cfg *config.Config) settingsView {
 		MediaFormat:       cfg.MediaFormat,
 		ImportFolder:      cfg.ImportFolder,
 		OMDBKey:           cfg.OMDBKey,
+		MALClientID:       cfg.MALClientID,
 		LogLevel:          logLevel,
 		LogOutput:         logOutput,
 		TranscodeEnabled:  cfg.TranscodeOn(),
@@ -177,6 +179,23 @@ func (s *Server) handleSetOMDBKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.OMDBKey = strings.TrimSpace(req.Key) })
+	if !ok {
+		return
+	}
+	writeJSON(w, s.settingsPayload(cfg))
+}
+
+// handleSetMALClientID records the MyAnimeList API client id used by the watch-history
+// importer. An empty id is allowed and disables the MAL importer.
+func (s *Server) handleSetMALClientID(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		ClientID string `json:"clientId"`
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.MALClientID = strings.TrimSpace(req.ClientID) })
 	if !ok {
 		return
 	}

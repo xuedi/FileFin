@@ -36,25 +36,13 @@ func TestParseList(t *testing.T) {
 	}
 }
 
-func TestMatchLibrary(t *testing.T) {
-	entries := []Entry{
-		{Title: "Death's Game", Year: 2023, Rating: 9, Status: StatusCompleted},
-		{Title: "Goblin", Year: 2016, Rating: 8, Status: StatusCompleted},
-		{Title: "Vincenzo", Year: 2021, Status: StatusPlanToWatch},
+func TestToWatchlist(t *testing.T) {
+	e := Entry{Title: "Goblin", Year: 2016, Rating: 8, Status: StatusCompleted}
+	w := e.ToWatchlist()
+	if w.Title != "Goblin" || w.Year != 2016 || w.Rating != 8 || !w.Watched || len(w.Aliases) != 0 {
+		t.Errorf("ToWatchlist = %+v", w)
 	}
-	lib := []LibraryItem{
-		{ID: "a", Title: "Deaths Game", Year: 2023}, // punctuation differs
-		{ID: "b", Title: "Goblin", Year: 1999},      // title matches, year does not
-	}
-	m := MatchLibrary(entries, lib)
-
-	if m[0].Item == nil || m[0].Item.ID != "a" || !m[0].Exact {
-		t.Errorf("Death's Game should match item a exactly: %+v", m[0])
-	}
-	if m[1].Item == nil || m[1].Item.ID != "b" || m[1].Exact {
-		t.Errorf("Goblin should match item b but not exactly (year differs): %+v", m[1])
-	}
-	if m[2].Item != nil {
-		t.Errorf("Vincenzo should be unmatched: %+v", m[2])
+	if (Entry{Status: StatusDropped}).ToWatchlist().Watched {
+		t.Error("a dropped entry must not be watched")
 	}
 }

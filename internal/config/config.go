@@ -29,6 +29,7 @@ type User struct {
 	CreatedAt   int64  `json:"createdAt,omitempty"`
 	LastLoginAt int64  `json:"lastLoginAt,omitempty"`
 	MDLUsername string `json:"mdlUsername,omitempty"` // MyDramaList account to import watched + ratings from
+	MALUsername string `json:"malUsername,omitempty"` // MyAnimeList account to import watched + ratings from
 }
 
 // ActiveAdmins counts accounts that are admin and not blocked, i.e. those that can
@@ -53,6 +54,7 @@ type Config struct {
 	MediaFormat  string          `json:"mediaFormat"`  // "" until permanently chosen in Settings
 	ImportFolder string          `json:"importFolder"` // server path media is imported from
 	OMDBKey      string          `json:"omdbKey"`      // OMDb API key; "" skips metadata enrichment
+	MALClientID  string          `json:"malClientId"`  // MyAnimeList API client id; "" disables the MAL importer
 	LogLevel     string          `json:"logLevel"`     // error|info|debug; "" => info
 	LogOutput    string          `json:"logOutput"`    // STDOUT|STDERR|file path; "" => STDOUT
 

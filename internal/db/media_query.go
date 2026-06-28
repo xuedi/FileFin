@@ -30,6 +30,26 @@ func ListMediaByCategory(ctx context.Context, pool *sql.DB, categoryID int64) ([
 	return scanSummaries(rows)
 }
 
+// ListMediaInCategorySubtree returns the media in a category and all its descendants,
+// ordered by year then title. Categories nest, so a watch-list import scoped to a parent
+// (e.g. "Anime") must reach items filed under its children; the exact-id ListMediaByCategory
+// would miss them.
+func ListMediaInCategorySubtree(ctx context.Context, pool *sql.DB, rootID int64) ([]MediaSummary, error) {
+	rows, err := pool.QueryContext(ctx,
+		`WITH RECURSIVE subtree(id) AS (
+		    SELECT id FROM categories WHERE id = ?
+		    UNION ALL
+		    SELECT c.id FROM categories c JOIN subtree s ON c.parent_id = s.id
+		)
+		SELECT id, title, year, (poster <> ''), path FROM media
+		WHERE category_id IN (SELECT id FROM subtree) ORDER BY year, title`,
+		rootID)
+	if err != nil {
+		return nil, fmt.Errorf("query media in category subtree %d: %w", rootID, err)
+	}
+	return scanSummaries(rows)
+}
+
 // AllMedia returns every media item with its folder path, for cross-library views (the
 // per-user home page) that filter by live state. The home rows re-sort by the per-user
 // updated time, so this order only sets the tie-break; year then title keeps it

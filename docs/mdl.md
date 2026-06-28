@@ -51,8 +51,23 @@ flowchart TD
 
 ## Matching
 
-Both sides are normalized to lowercase alphanumerics (punctuation and spacing dropped, `&` folded
-to `and`) and paired on that key. When several library items share a normalized title, an exact
-**year** match wins and is flagged as exact; otherwise the first candidate is offered and marked
-approximate in the review table. Unmatched MDL titles are listed so the user can see what was
-skipped.
+Matching is a shared, source-neutral matcher (the MyAnimeList importer in [`mal.md`](mal.md) uses
+the same one, so the year-strict rules live in one place). Both sides are normalized to lowercase
+alphanumerics (punctuation and spacing dropped, `&` folded to `and`) and paired on that key. An
+entry may also carry alternative titles (aliases) to try when its primary title matches nothing;
+MyDramaList carries a single title, so it brings none.
+
+The **year is part of the decision**, which stops a shared normalized title (an anime "Kingdom" and
+a Korean drama "Kingdom") from auto-selecting the wrong release:
+
+- When a candidate's year equals the entry's year, it is picked and flagged **exact**.
+- Otherwise the candidate whose year is **closest** is offered (not blindly the first), flagged
+  **approximate**, and the review table shows `approx: year x != y`.
+- Only exact rows are **pre-selected**; approximate rows arrive **unchecked**, so a year-mismatched
+  match is never applied without a deliberate tick.
+
+Unmatched titles are listed so the user can see what was skipped.
+
+The preview optionally restricts its candidates to a **category** and its descendants. Scoping a
+list to one category is the structural fix for cross-title collisions - a list scoped to a category
+never sees a same-titled item filed elsewhere.

@@ -110,6 +110,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	u, ok := s.cfg.Users[req.Username]
+	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
 	// A blocked account is rejected exactly like a bad password, so a block leaks
 	// nothing about which accounts exist.
@@ -131,7 +132,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, authResult{User: req.Username, Admin: u.Admin, Alias: u.Alias, MDLUsername: u.MDLUsername})
+	writeJSON(w, authResultOf(req.Username, u, malConfigured))
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -146,10 +147,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value(userKey{}).(string)
 	s.mu.RLock()
 	u, ok := s.cfg.Users[user]
+	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, authResult{User: user, Admin: u.Admin, Alias: u.Alias, MDLUsername: u.MDLUsername})
+	writeJSON(w, authResultOf(user, u, malConfigured))
 }

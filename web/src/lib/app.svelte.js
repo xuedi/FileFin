@@ -114,8 +114,10 @@ export class AppState {
   adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress'
   userMenuOpen = $state(false) // navbar username dropdown
 
-  // user settings: MyDramaList import (username field, in-flight flags, last preview)
-  mdl = $state({ username: '', loading: false, applying: false, preview: null })
+  // user settings: MyDramaList / MyAnimeList import (username, optional category scope,
+  // in-flight flags, last preview)
+  mdl = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
+  mal = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
 
   // install form
   iuser = $state('')
@@ -181,6 +183,7 @@ export class AppState {
   mediaFormat = $state('')
   importFolder = $state('')
   omdbKey = $state('')
+  malClientID = $state('')
   logLevel = $state('info')
   logOutput = $state('STDOUT')
   transcodeEnabled = $state(true)
@@ -552,8 +555,14 @@ export class AppState {
     this.mdl.loading = true
     this.mdl.preview = null
     try {
-      const p = await api('/api/mdl/preview', { method: 'POST' })
-      p.matched = p.matched.map((m) => ({ ...m, selected: true }))
+      const p = await api('/api/mdl/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ categoryId: Number(this.mdl.categoryId) }),
+      })
+      // Only exact (title + year) matches are pre-selected; a year-mismatched row arrives
+      // unchecked so a wrong cross-title match is never applied without a deliberate tick.
+      p.matched = p.matched.map((m) => ({ ...m, selected: m.exact }))
       this.mdl.preview = p
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not read your MyDramaList list')
@@ -563,26 +572,71 @@ export class AppState {
   }
 
   async mdlApply() {
-    const rows = (this.mdl.preview?.matched ?? []).filter((m) => m.selected)
+    await this._watchApply('/api/mdl/apply', this.mdl, 'ratings')
+  }
+
+  // --- MyAnimeList import (user settings) ---
+
+  async saveMALUsername() {
+    const name = this.mal.username.trim()
+    try {
+      const r = await api('/api/profile/mal', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ malUsername: name }),
+      })
+      if (this.me) this.me.malUsername = r.malUsername
+      this.mal.username = r.malUsername
+      this.toast('success', name ? 'MyAnimeList username saved.' : 'MyAnimeList username cleared.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save the username')
+    }
+  }
+
+  async malPreview() {
+    this.mal.loading = true
+    this.mal.preview = null
+    try {
+      const p = await api('/api/mal/preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ categoryId: Number(this.mal.categoryId) }),
+      })
+      p.matched = p.matched.map((m) => ({ ...m, selected: m.exact }))
+      this.mal.preview = p
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not read your MyAnimeList list')
+    } finally {
+      this.mal.loading = false
+    }
+  }
+
+  async malApply() {
+    await this._watchApply('/api/mal/apply', this.mal, 'ratings')
+  }
+
+  // _watchApply posts the confirmed rows of a watch-history preview (shared by MDL and MAL).
+  async _watchApply(path, store, noun) {
+    const rows = (store.preview?.matched ?? []).filter((m) => m.selected)
     if (!rows.length) {
       this.toast('error', 'Nothing selected to import.')
       return
     }
-    this.mdl.applying = true
+    store.applying = true
     try {
-      const r = await api('/api/mdl/apply', {
+      const r = await api(path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           items: rows.map((m) => ({ mediaId: m.mediaId, rating: m.rating, markWatched: m.willMarkWatched })),
         }),
       })
-      this.mdl.preview = null
+      store.preview = null
       this.toast('success', 'Imported ' + r.applied + ' item' + (r.applied === 1 ? '' : 's') + (r.failed ? ', ' + r.failed + ' failed' : '') + '.')
     } catch (e) {
-      this.toast('error', (await errText(e)) || 'Could not import ratings')
+      this.toast('error', (await errText(e)) || 'Could not import ' + noun)
     } finally {
-      this.mdl.applying = false
+      store.applying = false
     }
   }
 
@@ -805,6 +859,17 @@ export class AppState {
     this.go('/settings')
   }
 
+  // loadScopeCategories populates the category tree for the user-settings import scope
+  // dropdown. The import flow is auth-gated (not admin-gated), so it reads the plain
+  // /api/categories endpoint, which every signed-in user can reach.
+  async loadScopeCategories() {
+    try {
+      this.categories = await api('/api/categories')
+    } catch {
+      this.categories = []
+    }
+  }
+
   async loadCategories() {
     this.catError = ''
     try {
@@ -833,6 +898,7 @@ export class AppState {
     this.mediaFormat = r.mediaFormat
     this.importFolder = r.importFolder
     this.omdbKey = r.omdbKey
+    this.malClientID = r.malClientId
     this.logLevel = r.logLevel
     this.logOutput = r.logOutput
     this.transcodeEnabled = r.transcodeEnabled
@@ -845,6 +911,7 @@ export class AppState {
     this.settingsBaseline = {
       importFolder: r.importFolder,
       omdbKey: r.omdbKey,
+      malClientId: r.malClientId,
       logLevel: r.logLevel,
       logOutput: r.logOutput,
       transcodeEnabled: r.transcodeEnabled,
@@ -860,6 +927,7 @@ export class AppState {
   // its sub-groups are. Reading $state here keeps these reactive in the template.
   get importFolderDirty() { return this.importFolder !== this.settingsBaseline.importFolder }
   get omdbDirty() { return this.omdbKey !== this.settingsBaseline.omdbKey }
+  get malClientDirty() { return this.malClientID !== this.settingsBaseline.malClientId }
   get transcodingDirty() {
     const b = this.settingsBaseline
     return this.transcodeEnabled !== b.transcodeEnabled || this.ffmpegPath !== b.ffmpegPath || this.ffprobePath !== b.ffprobePath
@@ -870,7 +938,7 @@ export class AppState {
   get loggingDirty() {
     return this.logLevel !== this.settingsBaseline.logLevel || this.logOutput !== this.settingsBaseline.logOutput
   }
-  get libraryDirty() { return this.importFolderDirty || this.omdbDirty }
+  get libraryDirty() { return this.importFolderDirty || this.omdbDirty || this.malClientDirty }
   get playbackDirty() { return this.transcodingDirty || this.subtitleDirty }
   get automationDirty() { return this.optimizerDirty || this.discoveryDirty }
 
@@ -880,6 +948,7 @@ export class AppState {
     if (tab === 'library') {
       this.importFolder = b.importFolder
       this.omdbKey = b.omdbKey
+      this.malClientID = b.malClientId
     } else if (tab === 'playback') {
       this.transcodeEnabled = b.transcodeEnabled
       this.ffmpegPath = b.ffmpegPath
@@ -909,6 +978,7 @@ export class AppState {
     try {
       if (this.importFolderDirty) await this._postSetting('/api/admin/settings/import-folder', { path: this.importFolder })
       if (this.omdbDirty) await this._postSetting('/api/admin/settings/omdb-key', { key: this.omdbKey.trim() })
+      if (this.malClientDirty) await this._postSetting('/api/admin/settings/mal-client-id', { clientId: this.malClientID.trim() })
       this.toast('success', 'Library settings saved.')
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not save library settings')

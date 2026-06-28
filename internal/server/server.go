@@ -220,6 +220,9 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/profile/mdl", s.auth(s.handleMDLProfile))
 		mux.Handle("POST /api/mdl/preview", s.auth(s.handleMDLPreview))
 		mux.Handle("POST /api/mdl/apply", s.auth(s.handleMDLApply))
+		mux.Handle("POST /api/profile/mal", s.auth(s.handleMALProfile))
+		mux.Handle("POST /api/mal/preview", s.auth(s.handleMALPreview))
+		mux.Handle("POST /api/mal/apply", s.auth(s.handleMALApply))
 		mux.Handle("GET /api/categories", s.auth(s.handleListCategories))
 
 		// End-user library, detail, status, and playback.
@@ -255,6 +258,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/settings/format", s.admin(s.handleSetFormat))
 		mux.Handle("POST /api/admin/settings/import-folder", s.admin(s.handleSetImportFolder))
 		mux.Handle("POST /api/admin/settings/omdb-key", s.admin(s.handleSetOMDBKey))
+		mux.Handle("POST /api/admin/settings/mal-client-id", s.admin(s.handleSetMALClientID))
 		mux.Handle("POST /api/admin/settings/logging", s.admin(s.handleSetLogging))
 		mux.Handle("POST /api/admin/settings/transcoding", s.admin(s.handleSetTranscoding))
 		mux.Handle("POST /api/admin/settings/subtitle-language", s.admin(s.handleSetSubtitleLanguage))
@@ -357,11 +361,24 @@ type queueStatus[T any] struct {
 }
 
 // authResult is the response of login and /me: the authenticated user and its flags.
+// MALConfigured reflects whether the server has a MyAnimeList client id, so the UI can
+// hint when the MAL importer is unavailable.
 type authResult struct {
-	User        string `json:"user"`
-	Admin       bool   `json:"admin"`
-	Alias       string `json:"alias"`
-	MDLUsername string `json:"mdlUsername"`
+	User          string `json:"user"`
+	Admin         bool   `json:"admin"`
+	Alias         string `json:"alias"`
+	MDLUsername   string `json:"mdlUsername"`
+	MALUsername   string `json:"malUsername"`
+	MALConfigured bool   `json:"malConfigured"`
+}
+
+// authResultOf builds the auth view for a user. malConfigured is passed in by the caller
+// (read under the config lock) to avoid touching s.cfg outside it.
+func authResultOf(user string, u config.User, malConfigured bool) authResult {
+	return authResult{
+		User: user, Admin: u.Admin, Alias: u.Alias,
+		MDLUsername: u.MDLUsername, MALUsername: u.MALUsername, MALConfigured: malConfigured,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

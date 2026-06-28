@@ -116,3 +116,36 @@ func TestMediaQueries(t *testing.T) {
 		t.Fatalf("unknown index should yield ok=false")
 	}
 }
+
+func TestListMediaInCategorySubtree(t *testing.T) {
+	ctx, pool := mediaTestPool(t)
+
+	// Anime (10) -> Seasonal (11); an item filed under the child must surface when the
+	// parent is the scope root.
+	if _, err := pool.ExecContext(ctx,
+		`INSERT INTO categories (id, name, alias, parent_id) VALUES (10, 'Anime', 'Anime', NULL), (11, 'Seasonal', 'Seasonal', 10)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := InsertMedia(ctx, pool, Media{ID: "p", CategoryID: 10, Path: "/d/a", Year: 2013, Title: "Parent Show"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := InsertMedia(ctx, pool, Media{ID: "c", CategoryID: 11, Path: "/d/b", Year: 2020, Title: "Child Show"}); err != nil {
+		t.Fatal(err)
+	}
+	// A sibling outside the subtree must be excluded.
+	if _, err := pool.ExecContext(ctx,
+		`INSERT INTO categories (id, name, alias) VALUES (20, 'Drama', 'Drama')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := InsertMedia(ctx, pool, Media{ID: "x", CategoryID: 20, Path: "/d/c", Year: 2019, Title: "Other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ListMediaInCategorySubtree(ctx, pool, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "p" || got[1].ID != "c" {
+		t.Fatalf("subtree of Anime should be [p, c] year-sorted: %+v", got)
+	}
+}
