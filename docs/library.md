@@ -94,6 +94,44 @@ flowchart LR
     RENUM --> MIRROR[re-mirror categories cache]
 ```
 
+## Search
+
+Browsing is category-first; **search** is the cross-library way to find a title or pivot on a
+facet. The searchable facets - actors, genres (tags), language, country, director, writer -
+live only in each folder's `meta.json`, not as cache columns, so search reuses the **home
+page's live-scan shape**: load every media row, read each folder's `meta.json`, match in Go,
+and return the same `MediaSummary` rows the category and home lists use (so the existing tiles
+render results with no new plumbing). Results keep the library's year-then-title order and
+carry the per-user watched flag.
+
+Search is **submit-driven** (Enter or the button), never per-keystroke, so a full scan happens
+only on an explicit query; an empty query returns nothing rather than the whole library. A
+query is one text value `q` plus a `field` scope (default `all`):
+
+- `all` - case-insensitive substring across title, description, plot, actors, tags, language,
+  country, director, and writer.
+- a single text field (`title`, `description`, `cast`, `genre`, `language`, `director`,
+  `writer`) - the same substring match within just that facet.
+- `year` - exact match against the item's year; `decade` - `1990` or `1990s` matches 1990-1999.
+
+```mermaid
+flowchart LR
+    Q[GET /api/search?q=&field=] --> E{q empty?}
+    E -->|yes| NONE[return no results]
+    E -->|no| ALL[AllMedia rows, year/title order]
+    ALL --> META[read each folder meta.json]
+    META --> M{matches field + q?}
+    M -->|no| SKIP[drop]
+    M -->|yes| KEEP[keep + overlay user watched]
+    KEEP --> OUT[MediaSummary results]
+```
+
+The same facets are clickable on a media detail page (cast, genre, director, language, year),
+each navigating to `field=<scope>&q=<value>` - the detail page's facets become entry points
+into a scoped search. If the live scan ever becomes too slow on a large library, the documented
+follow-up is to denormalize these facets into cache columns (or an FTS index) populated by
+rebuild / reconcile / enrich; nothing in the current shape depends on that.
+
 ## Naming formats
 
 The media-folder naming style is chosen once in Settings (the `mediafmt` set of valid formats)
@@ -109,6 +147,7 @@ format only dictates how the importer names media folders and their files.
 | `GET /api/media/{id}`                  | full media detail                             |
 | `GET /api/media/{id}/poster`           | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
 | `GET /api/home`                        | continue / favorites / completed buckets      |
+| `GET /api/search`                      | library-wide facet search (`q`, `field`; live `meta.json` scan) |
 | `POST/PUT/DELETE /api/admin/categories`| create / re-alias / delete (empty only)       |
 | `POST /api/admin/categories/reorder`   | renumber one parent's children (siblings only) |
 | `POST /api/admin/rebuild`              | flush and rebuild the cache from disk          |

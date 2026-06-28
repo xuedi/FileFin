@@ -54,6 +54,7 @@ flowchart TD
   Lib --> Cat["library/CategoryGrid"]
   Lib --> Detail["library/MediaDetail"]
   Detail --> Player["library/Player"]
+  Home --> Search["library/SearchBar"]
   Home --> Tile["components/MediaTile"]
   Cat --> Tile
 
@@ -78,6 +79,17 @@ progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}`
 `view` / `adminView` / `importPage` that mounts the matching view component. The top-level `view`
 is `library`, `admin`, or `settings`; `/settings` is available to every authenticated user, while
 `/admin/*` falls back to the library for non-admins.
+
+The library has a fourth `libMode`, `search`, alongside `home` / `category` / `detail`. Library
+search renders **on the home page**: `library/Home.svelte` always shows the `SearchBar` (a text
+input next to a field-scope dropdown) at the top, and `route()` reads `q` + `field` from the
+`/search?...` query string into `AppState`. In default mode Home shows the three lists
+(continue / favorites / completed); once a search is active those lists give way to a single
+results grid (with a result count, or a plain "No matches"). `LibraryView` reuses `Home` for
+both modes, so the search section is shared. Submitting calls `runSearch` (pushes the `/search`
+URL); Clear calls `clearSearch` (returns to `/`). The [media detail page](library.md#search)
+turns its facets - cast, genre, director, language, year - into pivot links that navigate into
+a scoped search.
 
 The top bar is a Bulma `navbar`: the **FileFin** brand on the left, which is a link back to the
 library home, and a right-aligned `navbar-end` holding a username dropdown. The dropdown's trigger

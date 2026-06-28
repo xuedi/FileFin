@@ -227,6 +227,7 @@ func (s *Server) handler() http.Handler {
 
 		// End-user library, detail, status, and playback.
 		mux.Handle("GET /api/home", s.auth(s.handleHome))
+		mux.Handle("GET /api/search", s.auth(s.handleSearch))
 		mux.Handle("GET /api/category/{id}/media", s.auth(s.handleCategoryMedia))
 		mux.Handle("GET /api/media/{id}", s.auth(s.handleMediaDetail))
 		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))

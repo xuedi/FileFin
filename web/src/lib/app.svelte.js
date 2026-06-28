@@ -143,8 +143,14 @@ export class AppState {
   homeCategory = $state('') // selected category name, '' = Home
 
   // library views: home grids, category grid, media detail + player
-  libMode = $state('home') // 'home' | 'category' | 'detail'
+  libMode = $state('home') // 'home' | 'category' | 'detail' | 'search'
   homeData = $state({ continue: [], favorites: [], completed: [] })
+
+  // library search: the active query, its field scope, and the result rows. The search
+  // section lives on the home page; 'search' mode hides the three home lists for the grid.
+  searchQuery = $state('')
+  searchField = $state('all')
+  searchResults = $state([])
   categoryMedia = $state([])
   detail = $state(null)
   currentFile = $state(0)
@@ -474,6 +480,28 @@ export class AppState {
     }
   }
 
+  async loadSearch() {
+    try {
+      this.searchResults = await api(
+        '/api/search?q=' + encodeURIComponent(this.searchQuery) + '&field=' + encodeURIComponent(this.searchField),
+      )
+    } catch {
+      this.searchResults = []
+    }
+  }
+
+  // runSearch navigates to the results URL; route() then parses it and loads the rows.
+  // An empty query is a no-op so a bare Enter never replaces the home lists with nothing.
+  runSearch(q = this.searchQuery, field = this.searchField) {
+    const query = (q || '').trim()
+    if (!query) return
+    this.go('/search?field=' + encodeURIComponent(field) + '&q=' + encodeURIComponent(query))
+  }
+
+  clearSearch() {
+    this.go('/')
+  }
+
   async loadCategoryMedia(id) {
     try {
       this.categoryMedia = await api('/api/category/' + id + '/media')
@@ -796,10 +824,21 @@ export class AppState {
       this.libMode = 'category'
       this.detail = null
       await this.loadCategoryMedia(segs[1])
+    } else if (segs[0] === 'search') {
+      const params = new URLSearchParams(location.search)
+      this.searchQuery = params.get('q') || ''
+      this.searchField = params.get('field') || 'all'
+      this.homeCategory = ''
+      this.libMode = 'search'
+      this.detail = null
+      await this.loadSearch()
     } else {
       this.homeCategory = ''
       this.libMode = 'home'
       this.detail = null
+      this.searchQuery = ''
+      this.searchField = 'all'
+      this.searchResults = []
       await this.loadHome()
     }
   }

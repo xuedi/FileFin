@@ -12,7 +12,11 @@
     <div class="ff-detail-main">
       <div class="ff-titlebar">
         <h2 class="title is-4">
-          {detail.title} <span class="has-text-grey has-text-weight-normal">({detail.year})</span>
+          {detail.title}
+          <span class="has-text-grey has-text-weight-normal">(<a
+              href={null}
+              class="ff-pivot"
+              onclick={() => app.go('/search?field=year&q=' + detail.year)}>{detail.year}</a>)</span>
           {#if detail.watched}<span class="tag is-success is-light">&#10003; Watched</span>{/if}
         </h2>
         {#if !app.playing}
@@ -41,7 +45,11 @@
 
       {#if detail.description}<p>{detail.description}</p>{/if}
       {#if detail.tags.length}
-        <div class="tags ff-tags">{#each detail.tags as t}<span class="tag">{t}</span>{/each}</div>
+        <div class="tags ff-tags">
+          {#each detail.tags as t}
+            <a href={null} class="tag" onclick={() => app.go('/search?field=genre&q=' + encodeURIComponent(t))}>{t}</a>
+          {/each}
+        </div>
       {/if}
 
       {#if detail.files.length > 1}
@@ -75,7 +83,20 @@
 
       {#if detail.metadata.length}
         <table class="table ff-meta-table"><tbody>
-          {#each detail.metadata as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
+          {#each detail.metadata as m}
+            <tr>
+              <th>{m.key}</th>
+              <td>
+                {#if m.key === 'Directed by'}
+                  <a href={null} class="ff-pivot" onclick={() => app.go('/search?field=director&q=' + encodeURIComponent(m.value))}>{m.value}</a>
+                {:else if m.key === 'Language'}
+                  <a href={null} class="ff-pivot" onclick={() => app.go('/search?field=language&q=' + encodeURIComponent(m.value))}>{m.value}</a>
+                {:else}
+                  {m.value}
+                {/if}
+              </td>
+            </tr>
+          {/each}
         </tbody></table>
       {/if}
 
@@ -95,7 +116,11 @@
 
       {#if detail.actors.length}
         <h3 class="title is-6">Cast</h3>
-        <ul class="ff-cast">{#each detail.actors as a}<li>{a}</li>{/each}</ul>
+        <ul class="ff-cast">
+          {#each detail.actors as a}
+            <li><a href={null} class="ff-pivot" onclick={() => app.go('/search?field=cast&q=' + encodeURIComponent(a))}>{a}</a></li>
+          {/each}
+        </ul>
       {/if}
 
       {#if detail.plot}<h3 class="title is-6">Plot</h3><p>{detail.plot}</p>{/if}
