@@ -62,6 +62,15 @@ func (m *Manager) Update(folder string, fn func(Meta) Meta) (Meta, error) {
 // UpdateState folds fn into one user's playback state inside meta.json, stamping the
 // change time. The clock lives here so the pure engine stays clock-free.
 func (m *Manager) UpdateState(folder, user string, fn func(state.UserState) state.UserState) error {
+	_, err := m.UpdateStateGet(folder, user, fn)
+	return err
+}
+
+// UpdateStateGet is UpdateState that also returns the resulting per-user state, so a caller
+// can mirror it elsewhere (the DB cache) without a second read. meta.json stays the source of
+// truth; the returned value is exactly what was written under the folder lock.
+func (m *Manager) UpdateStateGet(folder, user string, fn func(state.UserState) state.UserState) (state.UserState, error) {
+	var out state.UserState
 	_, err := m.Update(folder, func(meta Meta) Meta {
 		if meta.State == nil {
 			meta.State = map[string]state.UserState{}
@@ -69,9 +78,10 @@ func (m *Manager) UpdateState(folder, user string, fn func(state.UserState) stat
 		us := fn(meta.State[user])
 		us.Updated = time.Now().Unix()
 		meta.State[user] = us
+		out = us
 		return meta
 	})
-	return err
+	return out, err
 }
 
 // LoadState returns a folder's per-user state from meta.json. A missing meta.json (or

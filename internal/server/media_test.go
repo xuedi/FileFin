@@ -45,7 +45,13 @@ func seedMedia(t *testing.T, s *Server, dataDir, category string, catID int64, f
 	if err := db.InsertMedia(ctx, pool, db.Media{
 		ID: id, CategoryID: catID, Path: dir,
 		Year: meta.Year, Title: meta.Title, Description: meta.Description, Plot: meta.Plot, Poster: "poster.jpg",
+		Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
+		Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
 	}); err != nil {
+		t.Fatal(err)
+	}
+	// Mirror the denormalized facets the importer/scanner would write, so search tests see them.
+	if err := db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags); err != nil {
 		t.Fatal(err)
 	}
 	ext := strings.ToLower(filepath.Ext(fileName))

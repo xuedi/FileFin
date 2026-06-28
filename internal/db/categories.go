@@ -45,8 +45,19 @@ CREATE TABLE IF NOT EXISTS media (
     description TEXT,
     plot        TEXT,
     poster      TEXT,
-    enriched    INTEGER NOT NULL DEFAULT 0
+    enriched    INTEGER NOT NULL DEFAULT 0,
+    language    TEXT NOT NULL DEFAULT '',
+    country     TEXT NOT NULL DEFAULT '',
+    director    TEXT NOT NULL DEFAULT '',
+    writer      TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS media_facets (
+    media_id TEXT,
+    kind     TEXT,
+    value    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_media_facets_kv ON media_facets (kind, value);
+CREATE INDEX IF NOT EXISTS idx_media_facets_media ON media_facets (media_id);
 CREATE TABLE IF NOT EXISTS media_files (
     media_id    TEXT,
     idx         INTEGER,
@@ -111,7 +122,18 @@ CREATE TABLE IF NOT EXISTS media_health (
     fingerprint     TEXT NOT NULL DEFAULT '',
     ok              INTEGER NOT NULL DEFAULT 0,
     issues          TEXT NOT NULL DEFAULT ''
-);`
+);
+CREATE TABLE IF NOT EXISTS user_state (
+    user         TEXT,
+    media_id     TEXT,
+    watched      INTEGER NOT NULL DEFAULT 0,
+    favorite     INTEGER NOT NULL DEFAULT 0,
+    rating       INTEGER NOT NULL DEFAULT 0,
+    has_progress INTEGER NOT NULL DEFAULT 0,
+    updated      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user, media_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_state_user_updated ON user_state (user, updated);`
 
 // Category is one row of the categories cache. It mirrors the authoritative config.json
 // files on disk; the cache can always be rebuilt from those files. ParentID is 0 for a
@@ -148,6 +170,12 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"imports", "subtitles", `ALTER TABLE imports ADD COLUMN subtitles TEXT`},
 		{"imports", "origin", `ALTER TABLE imports ADD COLUMN origin TEXT`},
 		{"media", "enriched", `ALTER TABLE media ADD COLUMN enriched INTEGER NOT NULL DEFAULT 0`},
+		// Denormalized facets for SQL-backed search; backfilled from meta.json by a rebuild
+		// or the rolling reconcile (the multivalued actors/tags live in media_facets).
+		{"media", "language", `ALTER TABLE media ADD COLUMN language TEXT NOT NULL DEFAULT ''`},
+		{"media", "country", `ALTER TABLE media ADD COLUMN country TEXT NOT NULL DEFAULT ''`},
+		{"media", "director", `ALTER TABLE media ADD COLUMN director TEXT NOT NULL DEFAULT ''`},
+		{"media", "writer", `ALTER TABLE media ADD COLUMN writer TEXT NOT NULL DEFAULT ''`},
 		{"categories", "other_media", `ALTER TABLE categories ADD COLUMN other_media INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "parent_id", `ALTER TABLE categories ADD COLUMN parent_id INTEGER`},
 		{"categories", "position", `ALTER TABLE categories ADD COLUMN position INTEGER NOT NULL DEFAULT 0`},
@@ -188,6 +216,25 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 				return fmt.Errorf("drop column %s.%s: %w", d.table, d.name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// SchemaVersion reads SQLite's user_version pragma, used to gate one-time data backfills
+// (column migrations are handled structurally by migrate; this tracks data-level upgrades).
+func SchemaVersion(ctx context.Context, pool *sql.DB) (int, error) {
+	var v int
+	if err := pool.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
+		return 0, fmt.Errorf("read user_version: %w", err)
+	}
+	return v, nil
+}
+
+// SetSchemaVersion writes the user_version pragma. PRAGMA takes no bound parameters, so the
+// integer is formatted into the statement (an internal constant, never user input).
+func SetSchemaVersion(ctx context.Context, pool *sql.DB, v int) error {
+	if _, err := pool.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, v)); err != nil {
+		return fmt.Errorf("set user_version: %w", err)
 	}
 	return nil
 }

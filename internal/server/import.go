@@ -449,9 +449,19 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		ID: id, CategoryID: row.CategoryID, Path: dir,
 		Year: row.Year, Title: row.Title, Description: meta.Description, Plot: meta.Plot,
 		Poster: posterRel, Enriched: meta.Enriched,
+		Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
+		Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
 	}); err != nil {
 		fail("could not write media row: " + err.Error())
 		return
+	}
+	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags)
+	if len(meta.State) > 0 {
+		us := make(map[string]db.UserStateRow, len(meta.State))
+		for u, st := range meta.State {
+			us[u] = userStateRow(st)
+		}
+		_ = db.ReplaceUserStateForMedia(ctx, pool, id, us)
 	}
 	idx, _ := db.CountMediaFiles(ctx, pool, id)
 	_ = db.InsertMediaFile(ctx, pool, db.MediaFile{

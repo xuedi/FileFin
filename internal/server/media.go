@@ -157,6 +157,32 @@ func pad2(n int) string {
 	return strconv.Itoa(n)
 }
 
+// writeState applies a per-user playback-state change to meta.json (the source of truth) and
+// mirrors the result into the user_state cache, so home and the watched overlays can be served
+// by query rather than a per-folder read. The mirror is best-effort: meta.json wins, and a
+// failed upsert is re-derived by the next discovery reconcile or a rebuild.
+func (s *Server) writeState(folder, mediaID, user string, fn func(state.UserState) state.UserState) error {
+	us, err := s.metaMgr.UpdateStateGet(folder, user, fn)
+	if err != nil {
+		return err
+	}
+	s.mu.RLock()
+	pool := s.db
+	s.mu.RUnlock()
+	if pool != nil {
+		s.bestEffort(db.UpsertUserState(context.Background(), pool, user, mediaID, userStateRow(us)), "mirror user state")
+	}
+	return nil
+}
+
+// userStateRow projects the authoritative per-user state onto its cache mirror row.
+func userStateRow(us state.UserState) db.UserStateRow {
+	return db.UserStateRow{
+		Watched: us.Watched, Favorite: us.Favorite, Rating: us.Rating,
+		HasProgress: us.Progress != nil, Updated: us.Updated,
+	}
+}
+
 // userPool returns the cache pool for an end-user request, building it on the fly. A
 // 503 is written and false returned when the cache is unavailable.
 func (s *Server) userPool(w http.ResponseWriter, r *http.Request) (*sql.DB, bool) {
@@ -184,68 +210,21 @@ func (s *Server) handleCategoryMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not list media", http.StatusInternalServerError)
 		return
 	}
-	user := userFrom(r)
-	for i := range media {
-		if all, err := importer.LoadState(media[i].FolderPath); err == nil {
-			media[i].Watched = all[user].Watched
-		}
+	if err := s.overlayWatched(r.Context(), pool, userFrom(r), media); err != nil {
+		http.Error(w, "could not list media", http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, media)
 }
 
-// mediaWhere returns every media item whose per-user state satisfies keep, newest-first
-// by the per-user `updated` timestamp in meta.json. State is read live, so a folder
-// with no entry for the user is skipped (keep is never called for it).
-func (s *Server) mediaWhere(ctx context.Context, pool *sql.DB, user string, keep func(state.UserState) bool) ([]db.MediaSummary, error) {
-	media, err := db.AllMedia(ctx, pool)
-	if err != nil {
-		return nil, err
-	}
-	type scored struct {
-		ms      db.MediaSummary
-		updated int64
-		watched bool
-	}
-	var hits []scored
-	for _, m := range media {
-		all, err := importer.LoadState(m.FolderPath)
-		if err != nil {
-			continue
-		}
-		us, ok := all[user]
-		if !ok || !keep(us) {
-			continue
-		}
-		hits = append(hits, scored{ms: m, updated: us.Updated, watched: us.Watched})
-	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].updated > hits[j].updated })
-	out := make([]db.MediaSummary, len(hits))
-	for i, h := range hits {
-		h.ms.Watched = h.watched
-		out[i] = h.ms
-	}
-	return out, nil
-}
-
-// handleHome returns the user's continue/favorites/completed rows in one call.
+// handleHome returns the user's continue/favorites/completed rows in one call, served from
+// the user_state mirror (three indexed queries) rather than a per-folder meta.json scan.
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	pool, ok := s.userPool(w, r)
 	if !ok {
 		return
 	}
-	user := userFrom(r)
-	ctx := r.Context()
-	cont, err := s.mediaWhere(ctx, pool, user, func(us state.UserState) bool { return us.Progress != nil && !us.Watched })
-	if err != nil {
-		http.Error(w, "could not load home", http.StatusInternalServerError)
-		return
-	}
-	favs, err := s.mediaWhere(ctx, pool, user, func(us state.UserState) bool { return us.Favorite })
-	if err != nil {
-		http.Error(w, "could not load home", http.StatusInternalServerError)
-		return
-	}
-	done, err := s.mediaWhere(ctx, pool, user, func(us state.UserState) bool { return us.Watched })
+	cont, favs, done, err := db.HomeBuckets(r.Context(), pool, userFrom(r))
 	if err != nil {
 		http.Error(w, "could not load home", http.StatusInternalServerError)
 		return
@@ -414,7 +393,7 @@ func (s *Server) handleFavorite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
 		us.Favorite = req.Favorite
 		return us
 	}); err != nil {
@@ -441,7 +420,7 @@ func (s *Server) handleRating(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
 		us.Rating = req.Rating
 		return us
 	}); err != nil {
@@ -456,7 +435,7 @@ func (s *Server) handleClearProgress(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
 		us.Progress = nil
 		return us
 	}); err != nil {
@@ -471,7 +450,7 @@ func (s *Server) handleClearWatched(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.metaMgr.UpdateState(folder, userFrom(r), func(us state.UserState) state.UserState {
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
 		us.Watched = false
 		us.Progress = nil // a leftover pointer would bounce the item into "continue"
 		return us
@@ -518,7 +497,7 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	user := userFrom(r)
 	var becameWatched bool
-	if err := s.metaMgr.UpdateState(m.Path, user, func(us state.UserState) state.UserState {
+	if err := s.writeState(m.Path, m.ID, user, func(us state.UserState) state.UserState {
 		before := us.Watched
 		out := state.Apply(us, refs, req.File, req.Position, req.Duration)
 		becameWatched = !before && out.Watched

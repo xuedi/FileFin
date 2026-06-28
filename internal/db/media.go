@@ -18,6 +18,12 @@ type Media struct {
 	Plot        string
 	Poster      string
 	Enriched    bool
+	// Denormalized single-value facets for search, derived from meta.json's metadata map.
+	// The multivalued facets (actors, genres) live in media_facets, written separately.
+	Language string
+	Country  string
+	Director string
+	Writer   string
 }
 
 // MediaFile is one file belonging to a media row (season/episode 0 for a movie).
@@ -42,11 +48,48 @@ type MediaFile struct {
 func InsertMedia(ctx context.Context, pool *sql.DB, m Media) error {
 	_, err := pool.ExecContext(ctx,
 		`INSERT OR REPLACE INTO media
-            (id, category_id, path, year, title, description, plot, poster, enriched)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.CategoryID, m.Path, m.Year, m.Title, m.Description, m.Plot, m.Poster, m.Enriched)
+            (id, category_id, path, year, title, description, plot, poster, enriched, language, country, director, writer)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.CategoryID, m.Path, m.Year, m.Title, m.Description, m.Plot, m.Poster, m.Enriched,
+		m.Language, m.Country, m.Director, m.Writer)
 	if err != nil {
 		return fmt.Errorf("insert media %s: %w", m.ID, err)
+	}
+	return nil
+}
+
+// ReplaceMediaFacets swaps a media item's multivalued facets (actors, genres) for a fresh
+// set, mirroring ReplaceMediaFiles. Each list is stored one value per row in media_facets,
+// tagged by kind, so search can match a single facet with an indexed lookup.
+func ReplaceMediaFacets(ctx context.Context, pool *sql.DB, mediaID string, actors, tags []string) error {
+	tx, err := pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace media facets %s: %w", mediaID, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM media_facets WHERE media_id = ?`, mediaID); err != nil {
+		return fmt.Errorf("clear media facets %s: %w", mediaID, err)
+	}
+	insert := func(kind string, values []string) error {
+		for _, v := range values {
+			if v == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO media_facets (media_id, kind, value) VALUES (?, ?, ?)`, mediaID, kind, v); err != nil {
+				return fmt.Errorf("insert media facet %s/%s: %w", mediaID, kind, err)
+			}
+		}
+		return nil
+	}
+	if err := insert("actor", actors); err != nil {
+		return err
+	}
+	if err := insert("tag", tags); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace media facets %s: %w", mediaID, err)
 	}
 	return nil
 }
@@ -59,6 +102,18 @@ func SetMediaEnriched(ctx context.Context, pool *sql.DB, id, description, plot, 
 		description, plot, poster, id)
 	if err != nil {
 		return fmt.Errorf("set media enriched %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetMediaFacets updates a row's denormalized single-value facets, used by the enricher
+// after OMDb fills the metadata map (the multivalued actors/tags go via ReplaceMediaFacets).
+func SetMediaFacets(ctx context.Context, pool *sql.DB, id, language, country, director, writer string) error {
+	_, err := pool.ExecContext(ctx,
+		`UPDATE media SET language = ?, country = ?, director = ?, writer = ? WHERE id = ?`,
+		language, country, director, writer, id)
+	if err != nil {
+		return fmt.Errorf("set media facets %s: %w", id, err)
 	}
 	return nil
 }
@@ -194,6 +249,12 @@ func DeleteMedia(ctx context.Context, pool *sql.DB, id string) error {
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media_files WHERE media_id = ?`, id); err != nil {
 		return fmt.Errorf("delete media files %s: %w", id, err)
 	}
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media_facets WHERE media_id = ?`, id); err != nil {
+		return fmt.Errorf("delete media facets %s: %w", id, err)
+	}
+	if _, err := pool.ExecContext(ctx, `DELETE FROM user_state WHERE media_id = ?`, id); err != nil {
+		return fmt.Errorf("delete media user state %s: %w", id, err)
+	}
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete media %s: %w", id, err)
 	}
@@ -225,10 +286,16 @@ func ReplaceMediaFiles(ctx context.Context, pool *sql.DB, mediaID string, files 
 	return nil
 }
 
-// ClearMedia empties the media cache (both tables), for a full rebuild from disk.
+// ClearMedia empties the media cache (rows, files, and facets), for a full rebuild from disk.
 func ClearMedia(ctx context.Context, pool *sql.DB) error {
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media_files`); err != nil {
 		return fmt.Errorf("clear media files: %w", err)
+	}
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media_facets`); err != nil {
+		return fmt.Errorf("clear media facets: %w", err)
+	}
+	if _, err := pool.ExecContext(ctx, `DELETE FROM user_state`); err != nil {
+		return fmt.Errorf("clear user state: %w", err)
 	}
 	if _, err := pool.ExecContext(ctx, `DELETE FROM media`); err != nil {
 		return fmt.Errorf("clear media: %w", err)

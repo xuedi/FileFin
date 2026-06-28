@@ -22,13 +22,22 @@ built entirely from a filesystem scan and exists only to make listing and lookup
 | table | holds | written by |
 |-------|-------|------------|
 | `categories` | id / name (relpath) / parent_id / alias / effective other_media / position | rebuild, category admin |
-| `media` | one row per media folder (title, year, description, poster, enriched) | importer, rebuild, enricher, thumbnail agent |
+| `media` | one row per media folder (title, year, description, poster, enriched, + denormalized facets: language/country/director/writer) | importer, rebuild, enricher, thumbnail agent |
 | `media_files` | one row per video file (index, season/episode, ext, path) | importer, rebuild |
+| `media_facets` | the multivalued search facets (one row per actor/genre, tagged by kind) | importer, rebuild, reconcile, enricher |
+| `user_state` | per-user playback-state mirror (watched/favorite/rating/has_progress/updated) for cache-served home + watched overlays | playback-state writers, rebuild, reconcile |
 | `imports` | the transient import interface | producers + importer (see `import.md`) |
 | `optimize_tasks` | transient pre-transcode queue (see `agents/optimizer.md`) | optimizer |
 | `enrich_tasks` | transient enrichment queue (see `agents/enricher.md`) | enricher |
 | `thumbnail_tasks` | transient sized-poster queue (see `agents/thumbnailer.md`) | thumbnail agent |
 | `media_health` | per-item integrity check + fingerprint (see `agents/discovery.md`) | discovery agent |
+
+The `media_facets` and `user_state` rows are **denormalized mirrors** of what each folder's
+`meta.json` already holds (the searchable facets and the per-user state). They exist only to
+turn search and the home page into indexed queries instead of a per-folder scan; `meta.json`
+stays the source of truth, and both are fully re-derived by a rebuild or the rolling reconcile,
+so nothing in the cache is authoritative. An in-place schema upgrade backfills them once from
+`meta.json` on the next cache open (a `user_version`-gated pass), equivalent to a manual rebuild.
 
 A media id is derived from its data-dir-relative path (see `mediaformat.md`), so the same
 folder always maps to the same row across rebuilds. The cache is opened lazily - the first
@@ -71,9 +80,10 @@ flush-everything path; reconcile is its rolling, in-place sibling.
 End users read the library through the cache: a category lists its media **ordered by year
 then title** (chronological browse order), and a media detail folds the cache row, the rich
 `meta.json` fields, per-file transcode-eligibility and sidecar subtitles, and the live per-user
-watch state into one response. The **home** view is built by reading each folder's `meta.json`
-state live and bucketing into continue / favorites / completed (those rows re-sort by the
-per-user updated time).
+watch state into one response. The **home** view is served from the `user_state` mirror: three
+indexed queries bucket the user's rows into continue / favorites / completed, ordered by the
+per-user updated time (newest first). The per-item watched flag on a category listing comes from
+the same mirror in one set lookup, rather than a read per folder.
 (The separate `browse` endpoints that walk the raw server filesystem are for the installer and
 the import source picker, not library browsing.)
 
@@ -98,15 +108,17 @@ flowchart LR
 
 Browsing is category-first; **search** is the cross-library way to find a title or pivot on a
 facet. The searchable facets - actors, genres (tags), language, country, director, writer -
-live only in each folder's `meta.json`, not as cache columns, so search reuses the **home
-page's live-scan shape**: load every media row, read each folder's `meta.json`, match in Go,
-and return the same `MediaSummary` rows the category and home lists use (so the existing tiles
-render results with no new plumbing). Results keep the library's year-then-title order and
-carry the per-user watched flag.
+are **denormalized** out of each folder's `meta.json` into the cache (scalar columns on `media`
+plus the `media_facets` child table) by the scanner that already reads `meta.json` on import,
+rebuild, reconcile, and enrich. So a query is **one indexed SQL statement** (`LIKE` on the text
+columns, an `EXISTS` on `media_facets` for the multivalued facets), returning the same
+`MediaSummary` rows the category and home lists use - the existing tiles render results with no
+new plumbing. Results keep the library's year-then-title order; the per-user watched flag is
+folded on from the `user_state` mirror.
 
-Search is **submit-driven** (Enter or the button), never per-keystroke, so a full scan happens
-only on an explicit query; an empty query returns nothing rather than the whole library. A
-query is one text value `q` plus a `field` scope (default `all`):
+Search is **submit-driven** (Enter or the button), never per-keystroke. An empty query returns
+nothing rather than the whole library. A query is one text value `q` plus a `field` scope
+(default `all`):
 
 - `all` - case-insensitive substring across title, description, plot, actors, tags, language,
   country, director, and writer.
@@ -114,23 +126,25 @@ query is one text value `q` plus a `field` scope (default `all`):
   `writer`) - the same substring match within just that facet.
 - `year` - exact match against the item's year; `decade` - `1990` or `1990s` matches 1990-1999.
 
+LIKE wildcards in `q` (`%`, `_`) are escaped, so they match literally. Because the facets are a
+denormalized mirror, search is only as complete as the last scan: a folder enriched after its
+last reconcile shows its new facets once the enricher updates the cache (which it does inline).
+
 ```mermaid
 flowchart LR
     Q[GET /api/search?q=&field=] --> E{q empty?}
     E -->|yes| NONE[return no results]
-    E -->|no| ALL[AllMedia rows, year/title order]
-    ALL --> META[read each folder meta.json]
-    META --> M{matches field + q?}
-    M -->|no| SKIP[drop]
-    M -->|yes| KEEP[keep + overlay user watched]
-    KEEP --> OUT[MediaSummary results]
+    E -->|no| SQL[SQL: LIKE on media columns + EXISTS on media_facets]
+    SQL --> ROWS[matching rows, year/title order]
+    ROWS --> WATCH[overlay watched from user_state]
+    WATCH --> OUT[MediaSummary results]
 ```
 
 The same facets are clickable on a media detail page (cast, genre, director, language, year),
 each navigating to `field=<scope>&q=<value>` - the detail page's facets become entry points
-into a scoped search. If the live scan ever becomes too slow on a large library, the documented
-follow-up is to denormalize these facets into cache columns (or an FTS index) populated by
-rebuild / reconcile / enrich; nothing in the current shape depends on that.
+into a scoped search. Matching is plain substring (`LIKE`); ranked/tokenized search (FTS5) was
+considered and deliberately not adopted, to keep the exact substring semantics with no
+driver-feature dependency.
 
 ## Naming formats
 

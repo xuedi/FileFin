@@ -161,6 +161,9 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 	}
 
 	_ = db.SetMediaEnriched(ctx, pool, task.MediaID, meta.Description, meta.Plot, posterRel)
+	_ = db.SetMediaFacets(ctx, pool, task.MediaID,
+		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
+	_ = db.ReplaceMediaFacets(ctx, pool, task.MediaID, meta.Actors, meta.Tags)
 	_ = db.FinishEnrich(ctx, pool, task.ID)
 	s.elog().Info("enriched "+m.Title, logging.Fields{"title": m.Title, "year": m.Year, "imdbID": mv.ImdbID})
 }

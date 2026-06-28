@@ -205,7 +205,7 @@ func (s *Server) applyWatchImport(w http.ResponseWriter, r *http.Request, source
 			failed++
 			continue
 		}
-		err = s.metaMgr.UpdateState(folder, user, func(us state.UserState) state.UserState {
+		err = s.writeState(folder, it.MediaID, user, func(us state.UserState) state.UserState {
 			if it.Rating > 0 {
 				us.Rating = it.Rating
 			}
