@@ -50,31 +50,19 @@ multi-episode show.
 
 ## Installation
 
-`.deb`, `.rpm`, and Arch packages are on the [latest release](https://github.com/xuedi/FileFin/releases) -
-install the one for your distro with its package manager. No package? Build from source (below) and run
-`just install`. Either way you get the binary in place, a dedicated `filefin` system user and
-`/var/lib/filefin`, and a **disabled** systemd unit. Then finish in three steps:
+.deb, .rpm, and Arch packages are on the [latest release](https://github.com/xuedi/FileFin/releases) -
+install the one for your distro with its package manager. No package? Build from source: 
 
 ```sh
-sudo -u filefin HOME=/var/lib/filefin filefin setup --port 80   # write a pending config, print a tokened setup URL
-# open the printed URL, set the admin account + data folder; the installer then removes itself
-sudo systemctl enable --now filefin                             # start the service
+git clone https://github.com/xuedi/FileFin                     # clone repo
+cd FileFin                                                     # enter folder
+just install                                                   # build binary (need: golang, node & npm)
+sudo -u filefin HOME=/var/lib/filefin filefin setup --port 80  # follow printed instructions (web installer)
+sudo systemctl enable --now filefin                            # enable & start the service
 ```
 
 Running behind a reverse proxy, without systemd, or curious about the token flow? See
 [docs/install.md](docs/install.md).
-
-## Build from source
-
-Building needs Go 1.26+ and Node.js + npm. Optional: `ffmpeg`/`ffprobe` to transcode non-browser-native
-formats (e.g. `.avi`/`.mkv`), a VAAPI-capable AMD or Intel GPU for automatic hardware encoding, and
-[`just`](https://github.com/casey/just) for the task recipes below.
-
-```sh
-git clone https://github.com/xuedi/FileFin
-cd FileFin
-just build            # builds the web frontend, then the single binary into bin/filefin
-```
 
 ## Usage
 
