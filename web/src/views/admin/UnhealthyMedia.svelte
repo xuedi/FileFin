@@ -113,7 +113,8 @@
   <!-- List: everything that has no metadata match yet, plus the disk-health section. -->
   <h1 class="title is-4">Unhealthy media</h1>
   <p class="ff-settings-intro has-text-grey">
-    Media with no metadata match yet. Open one to search the database and pick the right title.
+    Media with no metadata match yet. Open a row to search the database and pick the right title, or
+    click a title to edit its metadata by hand.
   </p>
 
   {#if u.loading}
@@ -127,7 +128,9 @@
         {#each u.items as it}
           <tr class="ff-clickable" onclick={() => app.goUnhealthy(it.id)}>
             <td>{it.folder}</td>
-            <td>{it.title}</td>
+            <td>
+              <a href={null} class="ff-edit-link" title="Edit metadata" onclick={(e) => { e.stopPropagation(); app.goEditMeta(it.id) }}>{it.title}</a>
+            </td>
             <td>{it.year || '-'}</td>
             <td class="has-text-grey">{it.category}</td>
             <td>

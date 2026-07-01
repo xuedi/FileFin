@@ -98,5 +98,7 @@ concurrent playback event is never dropped.
 - **Enrichment write path** - the shared additive/replace helper and the `meta.json` builders (see
   [`agents/enricher.md`](agents/enricher.md)).
 - **Frontend** - the admin `Unhealthy media` view and the metadata editor's "Match with the API"
-  button (see [`frontend.md`](frontend.md)). The editor itself is reached from the library detail
-  page's admin "Edit" button (see [`metaedit.md`](metaedit.md)).
+  button (see [`frontend.md`](frontend.md)). On the list, clicking a row opens the OMDb match view,
+  while clicking the item's **title** links straight to the metadata editor for that item, for when
+  an admin would rather type the fields by hand than pick a database record. The editor is also
+  reached from the library detail page's admin "Edit" button (see [`metaedit.md`](metaedit.md)).
