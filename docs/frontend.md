@@ -47,6 +47,7 @@ flowchart TD
   App --> Progress["admin/AdminProgress"]
   App --> Dash["admin/AdminDashboard"]
   App --> Stats["admin/AdminStats"]
+  App --> Unhealthy["admin/UnhealthyMedia"]
   App --> UserSet["settings/UserSettings"]
   App --> ToastC["components/Toast"]
 
@@ -140,6 +141,13 @@ playability breakdown (direct play / remux / optimized / needs optimize / unprob
 shown as a chart beside an exact-count table. Charts use Chart.js, vendored via npm and **lazy-imported**
 in this component only (a separate bundle chunk, like hls.js), so it stays out of the main bundle and the
 app remains fully offline.
+
+The **Unhealthy media** page (`admin/UnhealthyMedia.svelte`) is one component with two modes off the
+route sub-segment: a list of items with no OMDb metadata match yet (plus the read-only disk-health
+issues below it), and, at `/admin/unhealthy/<mediaId>`, a detail view that shows the file facts and
+current match, searches OMDb from an editable title/year/IMDb-id form, and applies a chosen candidate.
+Its data and actions live on `AppState.unhealthy`; the library detail page carries an admin-only
+"Force metadata match" button that routes here for any item (see [`rematch.md`](rematch.md)).
 
 ## Build
 

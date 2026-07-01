@@ -78,6 +78,72 @@ func scanSummaries(rows *sql.Rows) ([]MediaSummary, error) {
 	return out, rows.Err()
 }
 
+// UnmatchedMedia is one media item that still has no OMDb metadata match (enriched = 0),
+// for the admin "Unhealthy media" page: its category name and, when the enricher has already
+// tried it, the failed task's status and error message.
+type UnmatchedMedia struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
+	Folder      string `json:"folder"`
+	Category    string `json:"category"`
+	Status      string `json:"status"` // "error" when a lookup failed, else "queued"
+	Error       string `json:"error"`
+	LastAttempt int64  `json:"lastAttempt"` // unix seconds of the last failed attempt (0 = never tried)
+}
+
+// ListUnmatchedMedia returns every media item without a metadata match (enriched = 0),
+// excluding other-media categories (which never match OMDb), joined to its category name and
+// any enrich task so the page can show the failure reason. Errored items sort first, then by
+// title. The status is normalized to "error" or "queued" for the UI.
+func ListUnmatchedMedia(ctx context.Context, pool *sql.DB) ([]UnmatchedMedia, error) {
+	rows, err := pool.QueryContext(ctx,
+		`SELECT m.id, m.title, m.year, m.path, COALESCE(NULLIF(c.alias, ''), c.name),
+		        COALESCE(t.status, ''), COALESCE(t.error, ''), COALESCE(t.attempted_at, 0)
+		 FROM media m
+		 JOIN categories c ON c.id = m.category_id
+		 LEFT JOIN enrich_tasks t ON t.media_id = m.id
+		 WHERE m.enriched = 0 AND c.other_media = 0
+		 ORDER BY (COALESCE(t.status, '') = 'error') DESC, m.title`)
+	if err != nil {
+		return nil, fmt.Errorf("query unmatched media: %w", err)
+	}
+	defer rows.Close()
+	out := []UnmatchedMedia{}
+	for rows.Next() {
+		var u UnmatchedMedia
+		var path, status string
+		if err := rows.Scan(&u.ID, &u.Title, &u.Year, &path, &u.Category, &status, &u.Error, &u.LastAttempt); err != nil {
+			return nil, fmt.Errorf("scan unmatched media: %w", err)
+		}
+		u.Folder = filepath.Base(path)
+		if status == EnrichStatusError {
+			u.Status = "error"
+		} else {
+			u.Status = "queued"
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// CategoryName returns a category's display name (its alias, or the raw name when unaliased),
+// or "" for an unknown id.
+func CategoryName(ctx context.Context, pool *sql.DB, id int64) (string, error) {
+	var name, alias string
+	err := pool.QueryRowContext(ctx, `SELECT name, alias FROM categories WHERE id = ?`, id).Scan(&name, &alias)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query category name %d: %w", id, err)
+	}
+	if alias != "" {
+		return alias, nil
+	}
+	return name, nil
+}
+
 // AllMediaIDs returns every cached media id, for the discovery reconcile to diff the
 // cache against the on-disk folder set.
 func AllMediaIDs(ctx context.Context, pool *sql.DB) ([]string, error) {

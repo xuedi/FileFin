@@ -68,10 +68,37 @@ func FinishEnrich(ctx context.Context, pool *sql.DB, id int64) error {
 	return enrichQueue.finish(ctx, pool, id)
 }
 
-// FailEnrich marks a task failed with a message, leaving it for inspection (not
-// retried automatically).
-func FailEnrich(ctx context.Context, pool *sql.DB, id int64, msg string) error {
-	return enrichQueue.fail(ctx, pool, id, msg)
+// FailEnrich marks a task failed with a message and stamps when the attempt failed, so the
+// discovery agent can re-queue it once the stamp is older than the retry interval. A small
+// enrich-specific write (rather than the shared queue fail) because only this queue tracks
+// attempt times.
+func FailEnrich(ctx context.Context, pool *sql.DB, id int64, msg string, now int64) error {
+	if _, err := pool.ExecContext(ctx,
+		`UPDATE enrich_tasks SET status = ?, agent = '', error = ?, attempted_at = ? WHERE id = ?`,
+		EnrichStatusError, msg, now, id); err != nil {
+		return fmt.Errorf("fail enrich %d: %w", id, err)
+	}
+	return nil
+}
+
+// RequeueStaleEnrichErrors flips every error task last attempted before cutoff back to
+// pending (clearing its agent) so the enrich agent retries it, returning how many were
+// re-queued. There is no attempted_at > 0 guard, so legacy error rows (stamped 0 by the
+// migration default) are swept in once on the first discovery tick after an upgrade - a
+// one-time catch-up that drains at the rate-limited agent's pace, not a burst. Only the
+// discovery timer calls this; the manual scan leaves error rows put.
+func RequeueStaleEnrichErrors(ctx context.Context, pool *sql.DB, cutoff int64) (int, error) {
+	res, err := pool.ExecContext(ctx,
+		`UPDATE enrich_tasks SET status = ?, agent = '' WHERE status = ? AND attempted_at < ?`,
+		EnrichStatusPending, EnrichStatusError, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale enrich errors: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale enrich errors rows: %w", err)
+	}
+	return int(n), nil
 }
 
 // ListActiveEnrich returns the in-flight enrichments joined to their media title.
@@ -85,6 +112,24 @@ func ListActiveEnrich(ctx context.Context, pool *sql.DB) ([]ActiveEnrich, error)
 			var a ActiveEnrich
 			return a, r.Scan(&a.ID, &a.Title, &a.Agent, &a.Status)
 		}, EnrichStatusEnriching)
+}
+
+// EnrichError returns the stored failure message and the last-attempt time of a media item's
+// enrich task, or ("", 0) when there is no task or it has not failed, for the admin
+// match-context panel.
+func EnrichError(ctx context.Context, pool *sql.DB, mediaID string) (string, int64, error) {
+	var msg string
+	var attemptedAt int64
+	err := pool.QueryRowContext(ctx,
+		`SELECT COALESCE(error, ''), attempted_at FROM enrich_tasks WHERE media_id = ? AND status = ?`,
+		mediaID, EnrichStatusError).Scan(&msg, &attemptedAt)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("query enrich error %s: %w", mediaID, err)
+	}
+	return msg, attemptedAt, nil
 }
 
 // CountPendingEnrich returns how many enrichment tasks are still waiting.

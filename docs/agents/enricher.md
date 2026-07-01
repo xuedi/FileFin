@@ -24,7 +24,8 @@ flowchart TD
     SCAN -->|prune tasks for since-enriched folders| Q
     Q -->|single agent, claims one task| A[Enrich agent]
     A -->|OMDb lookup by title + year| O{match?}
-    O -->|no / API error| ERR[task = error, left for admin]
+    O -->|no / API error| ERR[task = error, attempted_at stamped]
+    ERR -.->|discovery re-queues after 14 days| Q
     O -->|yes| W[merge OMDb into meta.json additively, flag enriched]
     W --> P[download poster only if folder has none]
     P --> M[SetMediaEnriched on cache row]
@@ -42,9 +43,25 @@ nothing is lost across restarts.
 The queue is **transient cache state**: it is refilled by the shared scanner - run on demand
 by the "Enrich scan" button and on a timer by the discovery agent (see `discovery.md`) -
 which queues a task per still-unenriched media folder and prunes tasks for folders enriched
-since. A `not-found` or API error fails the task and leaves it
-visible to the admin rather than silently retrying; only a poster download failure is
-tolerated (the media still counts as enriched, keeping any existing poster).
+since. A `not-found` or API error fails the task, stamps `attempted_at` on the task row, and
+leaves it visible to the admin; only a poster download failure is tolerated (the media still
+counts as enriched, keeping any existing poster).
+
+## Failed matches self-heal on a slow retry
+
+A failure is no longer terminal. The error task keeps blocking the manual scan (which stays
+**never-enriched-only** - it queues stub folders and leaves error rows put), but the discovery
+agent re-queues any error task whose `attempted_at` is older than a fixed **14-day** interval,
+so a transient OMDb outage or a title OMDb only lists later heals itself without a full cache
+rebuild. The stamp lives on the transient `enrich_tasks` row rather than on `media` or in
+`meta.json`: it must survive the discovery reconcile re-inserting a media row from disk, and
+writing it into `meta.json` would churn the mtime the home view and discovery fingerprint
+depend on. A re-queued task that fails again gets a fresh `attempted_at` and waits another two
+weeks - natural backoff - while a successful retry deletes the task like any other. Legacy
+error rows predating the stamp read as `attempted_at = 0` and are swept in once on the first
+discovery tick after upgrade, draining at the agent's rate-limited pace. See `discovery.md`
+for where the re-queue sits in the tick and `../rematch.md` for the last-tried / next-retry
+times shown to the admin.
 
 ## Other-media is never enriched
 
@@ -64,6 +81,17 @@ from the thumbnail agent's frame-extraction path instead (see `thumbnailer.md`).
 | `meta.json` | the OMDb result **merged additively** into the existing file (existing values win), flagged `enriched`, **keeping** the ffprobe `technical` block written at import time, and **preserving** the per-user `state` object (see `../playback-state.md`) - the write goes through the shared per-folder lock (`importer.Manager.Update`) so a concurrent playback event is never dropped |
 | `poster.*` | downloaded into the media folder **only when the folder has no poster** and OMDb returns one; an existing poster is never overwritten |
 | `media` cache row | description, plot, and poster name updated; `enriched` set |
+
+## Additive vs replace: one write path, two callers
+
+The write above is the **additive** mode of a shared write path. The admin manual re-match (see
+`../rematch.md`) reuses the same path in **replace** mode: the chosen OMDb record wins over the
+existing `meta.json`, the cache row's title/year are corrected to the admin-confirmed values (the
+agent instead pins them to the folder), and the poster is refreshed (the old base poster and its
+sized variants removed so the thumbnailer rebuilds them). Both modes preserve the ffprobe
+`technical` block and the per-user `state`, and both go through the same per-folder lock - so an
+admin fixing a wrong match and the agent filling a fresh one share one code path and one set of
+invariants.
 
 ## Dependencies
 
@@ -85,3 +113,6 @@ from the thumbnail agent's frame-extraction path instead (see `thumbnailer.md`).
 |-------------------------------------|------------------------------------------------------|
 | `POST /api/admin/enrich/scan`       | queue an enrich task per unenriched media folder     |
 | `GET  /api/admin/enrich/active`     | in-flight enrichments + count still pending          |
+
+The admin manual-match endpoints (list unmatched, search OMDb, apply a chosen record) live with
+the flow that uses them in [`../rematch.md`](../rematch.md).

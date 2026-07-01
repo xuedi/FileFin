@@ -5,9 +5,12 @@ app := "filefin"
 clean:
     rm -f /home/xuedi/.filefin.json
 
-# build everything: the Svelte frontend bundle and the single binary that embeds it
-build:
+# build just the Svelte frontend bundle the binary embeds
+frontend:
     cd web && npm install && npm run build
+
+# build everything: the Svelte frontend bundle and the single binary that embeds it
+build: frontend
     go build -o bin/{{app}} ./cmd/{{app}}
 
 # build, then run the server

@@ -57,8 +57,8 @@ func TestGetUserList(t *testing.T) {
 	if aot.Title != "Shingeki no Kyojin" || aot.Year != 2013 || aot.Rating != 10 || !aot.Watched {
 		t.Errorf("entry 0 = %+v", aot)
 	}
-	if len(aot.Aliases) != 1 || aot.Aliases[0] != "Attack on Titan" {
-		t.Errorf("entry 0 should alias the English title: %+v", aot.Aliases)
+	if len(aot.Aliases) != 2 || aot.Aliases[0] != "Attack on Titan" || aot.Aliases[1] != "AoT" {
+		t.Errorf("entry 0 should alias the English title and its synonyms: %+v", aot.Aliases)
 	}
 
 	kimi := entries[1]

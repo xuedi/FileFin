@@ -106,6 +106,17 @@ func SetMediaEnriched(ctx context.Context, pool *sql.DB, id, description, plot, 
 	return nil
 }
 
+// SetMediaTitleYear updates a media row's title and year. Import-time InsertMedia is
+// otherwise the only writer of these; the admin manual match uses this to correct a
+// mis-parsed title/year (the enrich agent passes the row's existing values, a no-op there).
+func SetMediaTitleYear(ctx context.Context, pool *sql.DB, id, title string, year int) error {
+	_, err := pool.ExecContext(ctx, `UPDATE media SET title = ?, year = ? WHERE id = ?`, title, year, id)
+	if err != nil {
+		return fmt.Errorf("set media title/year %s: %w", id, err)
+	}
+	return nil
+}
+
 // SetMediaFacets updates a row's denormalized single-value facets, used by the enricher
 // after OMDb fills the metadata map (the multivalued actors/tags go via ReplaceMediaFacets).
 func SetMediaFacets(ctx context.Context, pool *sql.DB, id, language, country, director, writer string) error {

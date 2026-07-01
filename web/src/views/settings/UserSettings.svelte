@@ -61,9 +61,17 @@
             <td><input type="checkbox" bind:checked={m.selected} /></td>
             <td>
               {m.libraryTitle}
-              {#if !m.exact}
-                <span class="tag is-warning is-light ff-health-tag" title="Matched by title only">
-                  {m.year && m.libraryYear && m.year !== m.libraryYear ? 'approx: year ' + m.year + ' != ' + m.libraryYear : 'approx'}
+              {#if m.confidence === 'exact'}
+                <span class="tag is-success is-light ff-health-tag" title="Matched on title and year">exact</span>
+              {:else if m.confidence === 'confident'}
+                <span class="tag is-info is-light ff-health-tag" title="Unique title; year absent or close">confident</span>
+              {:else}
+                <span class="tag is-warning is-light ff-health-tag" title="Matched approximately">
+                  {m.reason
+                    ? 'approx: ' + m.reason
+                    : m.year && m.libraryYear && m.year !== m.libraryYear
+                      ? 'approx: year ' + m.year + ' != ' + m.libraryYear
+                      : 'approx'}
                 </span>
               {/if}
             </td>

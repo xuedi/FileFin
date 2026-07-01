@@ -36,19 +36,20 @@ const (
 
 // Entry is one title on a user's list.
 type Entry struct {
-	Title  string // display title as shown on MDL
-	Year   int    // release year; 0 when MDL shows "TBA"
-	Rating int    // the user's score rounded to 1-10; 0 when unrated
-	Status Status
+	Title   string   // display title as shown on MDL
+	Aliases []string // alternative titles (the anchor's oldtitle and de-slugged href)
+	Year    int      // release year; 0 when MDL shows "TBA"
+	Rating  int      // the user's score rounded to 1-10; 0 when unrated
+	Status  Status
 }
 
 // Watched reports whether this entry's status counts as fully watched.
 func (e Entry) Watched() bool { return e.Status == StatusCompleted }
 
 // ToWatchlist maps the scraped entry to the source-neutral type the shared matcher pairs
-// against the library. MyDramaList carries a single title, so there are no aliases.
+// against the library, passing the alternative titles through as matcher aliases.
 func (e Entry) ToWatchlist() watchlist.Entry {
-	return watchlist.Entry{Title: e.Title, Year: e.Year, Rating: e.Rating, Watched: e.Watched()}
+	return watchlist.Entry{Title: e.Title, Aliases: e.Aliases, Year: e.Year, Rating: e.Rating, Watched: e.Watched()}
 }
 
 var (
@@ -132,17 +133,21 @@ func parseList(r io.Reader) ([]Entry, error) {
 	return entries, nil
 }
 
-// parseRow extracts one entry from a list <tr>. A row missing its title is skipped.
+// parseRow extracts one entry from a list <tr>. A row missing its title is skipped. The
+// title anchor also carries free alternative titles - its oldtitle attribute and the
+// de-slugged href - which become matcher aliases when they differ from the visible title.
 func parseRow(tr *html.Node, status Status) (Entry, bool) {
 	titleCell := findClass(tr, "mdl-style-col-title")
 	if titleCell == nil {
 		return Entry{}, false
 	}
-	title := strings.TrimSpace(textOf(findTitleAnchor(titleCell)))
+	anchor := findTitleAnchor(titleCell)
+	title := strings.TrimSpace(textOf(anchor))
 	if title == "" {
 		return Entry{}, false
 	}
 	e := Entry{Title: title, Status: status}
+	e.Aliases = distinctAliases(title, attr(anchor, "oldtitle"), deslugTitle(attr(anchor, "href")))
 	if y := findClass(tr, "mdl-style-col-year"); y != nil {
 		e.Year, _ = strconv.Atoi(strings.TrimSpace(textOf(y))) // "TBA" -> 0
 	}
@@ -150,6 +155,53 @@ func parseRow(tr *html.Node, status Status) (Entry, bool) {
 		e.Rating = roundScore(strings.TrimSpace(textOf(sc)))
 	}
 	return e, true
+}
+
+// distinctAliases keeps only the candidates that carry a title distinct (after the shared
+// normalization) from the primary title and from one another, so the matcher never wastes a
+// lookup on a duplicate key.
+func distinctAliases(title string, candidates ...string) []string {
+	seen := map[string]bool{watchlist.Normalize(title): true}
+	var out []string
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		key := watchlist.Normalize(c)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// deslugTitle turns a MyDramaList title href ("/734-i-will-die-soon") into a readable
+// alternative title ("i will die soon"): it takes the first path segment, drops a leading
+// numeric id, and turns hyphens into spaces.
+func deslugTitle(href string) string {
+	s := strings.Trim(href, "/")
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.IndexByte(s, '-'); i > 0 {
+		if _, err := strconv.Atoi(s[:i]); err == nil {
+			s = s[i+1:]
+		}
+	}
+	return strings.TrimSpace(strings.ReplaceAll(s, "-", " "))
+}
+
+// attr returns the value of element n's attribute key, or "" when absent.
+func attr(n *html.Node, key string) string {
+	if n == nil {
+		return ""
+	}
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val
+		}
+	}
+	return ""
 }
 
 // roundScore turns MyDramaList's "0.0".."10.0" string into a 1-10 int; "0.0" (unrated)

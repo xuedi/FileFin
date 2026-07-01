@@ -83,11 +83,12 @@ CREATE TABLE IF NOT EXISTS optimize_tasks (
     UNIQUE(media_id, file_idx)
 );
 CREATE TABLE IF NOT EXISTS enrich_tasks (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    media_id TEXT,
-    status   TEXT,
-    agent    TEXT,
-    error    TEXT,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id     TEXT,
+    status       TEXT,
+    agent        TEXT,
+    error        TEXT,
+    attempted_at INTEGER NOT NULL DEFAULT 0,
     UNIQUE(media_id)
 );
 CREATE TABLE IF NOT EXISTS thumbnail_tasks (
@@ -170,6 +171,9 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"imports", "subtitles", `ALTER TABLE imports ADD COLUMN subtitles TEXT`},
 		{"imports", "origin", `ALTER TABLE imports ADD COLUMN origin TEXT`},
 		{"media", "enriched", `ALTER TABLE media ADD COLUMN enriched INTEGER NOT NULL DEFAULT 0`},
+		// When an enrich attempt last failed, so discovery can re-queue stale error rows. An
+		// existing cache gains it as 0, which the first discovery retry sweeps in once.
+		{"enrich_tasks", "attempted_at", `ALTER TABLE enrich_tasks ADD COLUMN attempted_at INTEGER NOT NULL DEFAULT 0`},
 		// Denormalized facets for SQL-backed search; backfilled from meta.json by a rebuild
 		// or the rolling reconcile (the multivalued actors/tags live in media_facets).
 		{"media", "language", `ALTER TABLE media ADD COLUMN language TEXT NOT NULL DEFAULT ''`},

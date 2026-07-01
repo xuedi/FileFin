@@ -50,7 +50,8 @@ type malMatch struct {
 	Year            int    `json:"year"`
 	Rating          int    `json:"rating"`
 	WillMarkWatched bool   `json:"willMarkWatched"`
-	Exact           bool   `json:"exact"`
+	Confidence      string `json:"confidence"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 // malPreview is the preview response: matched proposals plus the titles with no library item.
@@ -119,7 +120,8 @@ func (s *Server) handleMALPreview(w http.ResponseWriter, r *http.Request) {
 			Year:            m.Entry.Year,
 			Rating:          m.Entry.Rating,
 			WillMarkWatched: m.Entry.Watched,
-			Exact:           m.Exact,
+			Confidence:      string(m.Confidence),
+			Reason:          m.Reason,
 		})
 	}
 	writeJSON(w, out)

@@ -183,7 +183,7 @@ func TestFinishAndFailEnrich(t *testing.T) {
 		t.Fatal(err)
 	}
 	tk2, _, _ := ClaimNextEnrich(ctx, pool, "omdb")
-	if err := FailEnrich(ctx, pool, tk2.ID, "boom"); err != nil {
+	if err := FailEnrich(ctx, pool, tk2.ID, "boom", 1000); err != nil {
 		t.Fatal(err)
 	}
 	// A failed row is neither pending nor active.
@@ -192,6 +192,71 @@ func TestFinishAndFailEnrich(t *testing.T) {
 	}
 	if active, _ := ListActiveEnrich(ctx, pool); len(active) != 0 {
 		t.Fatalf("failed task counted as active: %v", active)
+	}
+	// FailEnrich records the message and stamps the attempt time.
+	msg, attemptedAt, err := EnrichError(ctx, pool, "m2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "boom" || attemptedAt != 1000 {
+		t.Fatalf("EnrichError = (%q, %d), want (\"boom\", 1000)", msg, attemptedAt)
+	}
+}
+
+func TestRequeueStaleEnrichErrors(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	// m1: an old failure (stamped before the cutoff) - should be re-queued.
+	// m2: a fresh failure (stamped after the cutoff) - should be left errored.
+	// m3: a legacy failure (attempted_at defaulted to 0) - swept in on the first run.
+	// m4: still pending, never claimed - untouched.
+	// m5: actively enriching - untouched.
+	for _, id := range []string{"m1", "m2", "m3", "m4", "m5"} {
+		if err := UpsertPendingEnrich(ctx, pool, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failClaimed := func(id, msg string, at int64) {
+		tk, ok, err := ClaimNextEnrich(ctx, pool, "omdb")
+		if err != nil || !ok || tk.MediaID != id {
+			t.Fatalf("claim %s: ok=%v id=%q err=%v", id, ok, tk.MediaID, err)
+		}
+		if err := FailEnrich(ctx, pool, tk.ID, msg, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const cutoff = 10000
+	failClaimed("m1", "old", cutoff-1)
+	failClaimed("m2", "fresh", cutoff+1)
+	// m3: fail then reset its stamp to the legacy 0 to model a pre-migration row.
+	failClaimed("m3", "legacy", cutoff-1)
+	if _, err := pool.ExecContext(ctx, `UPDATE enrich_tasks SET attempted_at = 0 WHERE media_id = ?`, "m3"); err != nil {
+		t.Fatal(err)
+	}
+	// m4 stays pending; m5 is claimed and left enriching.
+	if _, ok, _ := ClaimNextEnrich(ctx, pool, "omdb"); !ok {
+		t.Fatal("expected to claim m5")
+	}
+
+	n, err := RequeueStaleEnrichErrors(ctx, pool, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("re-queued = %d, want 2 (m1 + legacy m3)", n)
+	}
+	// m1 and m3 (old + legacy) are now pending again alongside the still-pending m4.
+	if pending, _ := CountPendingEnrich(ctx, pool); pending != 3 {
+		t.Fatalf("pending after requeue = %d, want 3", pending)
+	}
+	// The fresh m2 failure is untouched.
+	if msg, _, _ := EnrichError(ctx, pool, "m2"); msg != "fresh" {
+		t.Fatalf("fresh error should remain, got %q", msg)
+	}
+	// m5 is still enriching, not re-queued.
+	if active, _ := ListActiveEnrich(ctx, pool); len(active) != 1 {
+		t.Fatalf("m5 should stay enriching, active = %v", active)
 	}
 }
 
