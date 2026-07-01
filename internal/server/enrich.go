@@ -173,13 +173,22 @@ func (s *Server) applyOmdbResult(ctx context.Context, pool *sql.DB, m db.Media, 
 		posterRel = downloadPoster(ctx, m.Path, client, mv)
 	}
 
-	if err := db.SetMediaTitleYear(ctx, pool, m.ID, title, year); err != nil {
+	return s.writeMediaCacheRow(ctx, pool, m.ID, title, year, meta, posterRel)
+}
+
+// writeMediaCacheRow projects a written meta.json onto its media cache row - the title/year,
+// the enriched description/plot/poster, and the derived search facets. Shared by the enrich
+// agent, the admin OMDb re-match, and the admin metadata editor so the cache never drifts
+// from meta.json. Only the title/year write is load-bearing (it renames nothing but drives
+// browsing/search); the rest are best-effort mirrors a rebuild can re-derive.
+func (s *Server) writeMediaCacheRow(ctx context.Context, pool *sql.DB, id, title string, year int, meta importer.Meta, posterRel string) error {
+	if err := db.SetMediaTitleYear(ctx, pool, id, title, year); err != nil {
 		return err
 	}
-	_ = db.SetMediaEnriched(ctx, pool, m.ID, meta.Description, meta.Plot, posterRel)
-	_ = db.SetMediaFacets(ctx, pool, m.ID,
+	_ = db.SetMediaEnriched(ctx, pool, id, meta.Description, meta.Plot, posterRel)
+	_ = db.SetMediaFacets(ctx, pool, id,
 		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
-	_ = db.ReplaceMediaFacets(ctx, pool, m.ID, meta.Actors, meta.Tags)
+	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags)
 	return nil
 }
 

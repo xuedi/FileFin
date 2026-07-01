@@ -307,6 +307,11 @@ body { min-height: 100vh; }
 .ff-video-player { width: 100%; max-height: 70vh; background: black; border-radius: 8px; margin: 0.75rem 0; }
 .ff-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .ff-title-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+/* keep the rating select and every action button the same height and radius */
+.ff-title-actions .button,
+.ff-title-actions .select,
+.ff-title-actions .select select { height: 2.5em; border-radius: var(--bulma-radius); }
+.ff-rating select { font-weight: 600; }
 .heart { color: var(--bulma-text-weak); }
 .heart:hover, .heart.on { color: #e0245e; border-color: #e0245e; }
 .ff-tags { margin: 0.6rem 0; }
@@ -366,3 +371,9 @@ body { min-height: 100vh; }
   text-align: center;
 }
 .ff-candidate-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
+
+/* metadata editor: two-up field grid and the poster box */
+.ff-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 1.25rem; }
+.ff-edit-grid .field { margin-bottom: 0; }
+.ff-edit-poster { width: 100%; border-radius: 8px; display: block; aspect-ratio: 2 / 3; object-fit: cover; }
+div.ff-edit-poster { min-height: 12rem; }

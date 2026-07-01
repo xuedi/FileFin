@@ -54,6 +54,7 @@ flowchart TD
   Lib --> Home["library/Home"]
   Lib --> Cat["library/CategoryGrid"]
   Lib --> Detail["library/MediaDetail"]
+  Lib --> Edit["library/MediaEdit"]
   Detail --> Player["library/Player"]
   Home --> Search["library/SearchBar"]
   Home --> Tile["components/MediaTile"]
@@ -101,7 +102,8 @@ window listener) or on item select. The per-user settings page (`settings/UserSe
 distinct from the admin Settings page; it holds the account view and the
 [MyDramaList import](mdl.md) section (save a username, preview the scraped matches, confirm to
 import watched + 1-10 ratings). The detail page carries a matching 1-10 rating control beside the
-favourite/watched actions.
+favourite/watched actions, all sharing one height, plus an admin-only "Edit" button that opens the
+metadata editor.
 
 ## Shared components
 
@@ -146,8 +148,11 @@ The **Unhealthy media** page (`admin/UnhealthyMedia.svelte`) is one component wi
 route sub-segment: a list of items with no OMDb metadata match yet (plus the read-only disk-health
 issues below it), and, at `/admin/unhealthy/<mediaId>`, a detail view that shows the file facts and
 current match, searches OMDb from an editable title/year/IMDb-id form, and applies a chosen candidate.
-Its data and actions live on `AppState.unhealthy`; the library detail page carries an admin-only
-"Force metadata match" button that routes here for any item (see [`rematch.md`](rematch.md)).
+Its data and actions live on `AppState.unhealthy`. The metadata editor (`library/MediaEdit.svelte`,
+at `/media/{id}/edit`, on `AppState.edit`) reaches this page through its "Match with the API"
+button; the editor itself is opened from the library detail page's admin-only "Edit" button and
+lets an admin change every `meta.json` field and upload a poster (see [`metaedit.md`](metaedit.md)).
+Applying an OMDb candidate here redirects to the item's detail page (see [`rematch.md`](rematch.md)).
 
 ## Build
 

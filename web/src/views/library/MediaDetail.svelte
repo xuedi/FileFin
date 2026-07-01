@@ -21,7 +21,7 @@
         </h2>
         {#if !app.playing}
           <div class="ff-title-actions">
-            <div class="select is-small ff-rating" title="Your rating">
+            <div class="select ff-rating" title="Your rating">
               <select value={detail.rating} onchange={(e) => app.setRating(Number(e.currentTarget.value))}>
                 <option value={0}>★ Rate</option>
                 {#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n}<option value={n}>★ {n}</option>{/each}
@@ -36,8 +36,8 @@
               &#9654; {app.hasResume ? 'Continue' : 'Play'}
             </button>
             {#if app.me?.admin}
-              <button class="button is-small" title="Fix or change this item's metadata match" onclick={() => app.goUnhealthy(detail.id)}>
-                Force metadata match
+              <button class="button" title="Edit this item's metadata and poster" onclick={() => app.goEditMeta(detail.id)}>
+                Edit
               </button>
             {/if}
           </div>

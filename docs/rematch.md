@@ -35,7 +35,7 @@ media page shows that health list too, read-only, below the matching list, so th
 ```mermaid
 flowchart TD
     L["admin: Unhealthy media<br/>(list of unmatched items)"] -->|open one| D["match context<br/>GET /api/admin/media/{id}/match"]
-    FM["library detail<br/>'Force metadata match' (admin)"] -->|any item| D
+    FM["metadata editor<br/>'Match with the API' (admin)"] -->|any item| D
     D --> E["edit title / year / IMDb id<br/>(seeded from current + folder guess)"]
     E -->|Search OMDb| S{"IMDb id given?"}
     S -->|yes| BYID["LookupByID (i=)"]
@@ -45,7 +45,7 @@ flowchart TD
     C -->|Use this match| AP["POST /api/admin/media/{id}/match<br/>LookupByID -> replace-mode write"]
     AP --> W["meta.json replaced + title/year + poster refreshed,<br/>enriched flag set, enrich task cleared"]
     W --> MJ[(meta.json + cache row)]
-    W -->|item now matched| L
+    W -->|redirect| DET["media detail /media/{id}"]
 ```
 
 - The **match context** carries the folder and file details, the item's current match (title, year,
@@ -60,7 +60,8 @@ flowchart TD
   to disk until a match is applied.
 - **Apply** re-fetches the chosen record by IMDb id (the authoritative source), writes it in replace
   mode, corrects the cache row's title/year, refreshes the poster, sets `enriched`, and clears any
-  leftover enrich task. The item then drops off the unmatched list.
+  leftover enrich task. The item drops off the unmatched list, and the admin is redirected to the
+  freshly written media detail page.
 
 ## The write: additive vs replace
 
@@ -96,5 +97,6 @@ concurrent playback event is never dropped.
   the OMDb API key; with no key the page's search and apply are unavailable.
 - **Enrichment write path** - the shared additive/replace helper and the `meta.json` builders (see
   [`agents/enricher.md`](agents/enricher.md)).
-- **Frontend** - the admin `Unhealthy media` view and the library detail "Force metadata match"
-  button (see [`frontend.md`](frontend.md)).
+- **Frontend** - the admin `Unhealthy media` view and the metadata editor's "Match with the API"
+  button (see [`frontend.md`](frontend.md)). The editor itself is reached from the library detail
+  page's admin "Edit" button (see [`metaedit.md`](metaedit.md)).

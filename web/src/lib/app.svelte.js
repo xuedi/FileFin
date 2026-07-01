@@ -127,6 +127,14 @@ export class AppState {
     form: { title: '', year: '', imdbId: '' }, candidates: null, searching: false, applying: false,
   })
 
+  // admin: metadata editor (library detail "Edit" -> /media/{id}/edit). The raw editable
+  // meta.json fields, the folder facts shown alongside, and in-flight flags. posterVersion
+  // bumps to bust the poster preview cache after an upload.
+  edit = $state({
+    id: '', folder: '', category: '', hasPoster: false, posterVersion: 0,
+    loading: false, saving: false, uploadingPoster: false, form: null,
+  })
+
   // install form
   iuser = $state('')
   ipass = $state('')
@@ -534,6 +542,93 @@ export class AppState {
     this.go('/media/' + m.id)
   }
 
+  // --- admin: metadata editor ---
+
+  goEditMeta(id) {
+    this.go('/media/' + id + '/edit')
+  }
+
+  // loadEdit fetches one item's raw editable metadata and seeds the form. Actors are edited
+  // one per line, tags as a comma list, matching how they are joined for display.
+  async loadEdit(id) {
+    this.edit.id = id
+    this.edit.loading = true
+    this.edit.form = null
+    try {
+      const c = await api('/api/admin/media/' + id + '/meta')
+      this.edit.folder = c.folder
+      this.edit.category = c.category
+      this.edit.hasPoster = c.hasPoster
+      this.edit.posterVersion = 0
+      this.edit.form = {
+        title: c.title || '', year: c.year || '',
+        description: c.description || '', plot: c.plot || '',
+        release: c.release || '', runtime: c.runtime || '',
+        language: c.language || '', country: c.country || '',
+        director: c.director || '', writer: c.writer || '',
+        contentRating: c.contentRating || '', awards: c.awards || '',
+        boxOffice: c.boxOffice || '', imdbId: c.imdbId || '',
+        imdb: c.imdb || '', rottenTomatoes: c.rottenTomatoes || '', metacritic: c.metacritic || '',
+        actors: (c.actors || []).join('\n'),
+        tags: (c.tags || []).join(', '),
+      }
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not load that item')
+      this.go('/media/' + id)
+    } finally {
+      this.edit.loading = false
+    }
+  }
+
+  // saveEdit posts the edited fields (a replace-mode write server-side) and lands on the
+  // freshly written detail page.
+  async saveEdit() {
+    const f = this.edit.form
+    if (!f) return
+    this.edit.saving = true
+    try {
+      await api('/api/admin/media/' + this.edit.id + '/meta', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: f.title.trim(), year: Number(f.year) || 0,
+          description: f.description, plot: f.plot,
+          release: f.release, runtime: f.runtime, language: f.language, country: f.country,
+          director: f.director, writer: f.writer, contentRating: f.contentRating,
+          awards: f.awards, boxOffice: f.boxOffice, imdbId: f.imdbId,
+          imdb: f.imdb, rottenTomatoes: f.rottenTomatoes, metacritic: f.metacritic,
+          actors: f.actors.split('\n').map((s) => s.trim()).filter(Boolean),
+          tags: f.tags.split(',').map((s) => s.trim()).filter(Boolean),
+        }),
+      })
+      this.toast('success', 'Saved changes to "' + (f.title.trim() || 'this item') + '".')
+      this.go('/media/' + this.edit.id)
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save the changes')
+    } finally {
+      this.edit.saving = false
+    }
+  }
+
+  // uploadPoster replaces the base poster from a picked file; the server drops the stale
+  // sized variants so the thumbnail agent rebuilds them.
+  async uploadPoster(file) {
+    if (!file) return
+    this.edit.uploadingPoster = true
+    try {
+      const form = new FormData()
+      form.append('poster', file, file.name)
+      await api('/api/admin/media/' + this.edit.id + '/poster', { method: 'POST', body: form })
+      this.edit.hasPoster = true
+      this.edit.posterVersion++
+      this.toast('success', 'Poster updated.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not upload the poster')
+    } finally {
+      this.edit.uploadingPoster = false
+    }
+  }
+
   playFile(idx) {
     // Resume to the saved second only when starting the furthest-unfinished file; an
     // explicit pick of any other file starts it from the beginning.
@@ -827,8 +922,14 @@ export class AppState {
     await this.loadHomeCategories()
     this.playing = false // a route change tears the player down (its effect cleanup reports a stop)
     if (segs[0] === 'media' && segs[1]) {
-      this.libMode = 'detail'
-      await this.showMedia(segs[1])
+      if (segs[2] === 'edit' && this.me?.admin) {
+        this.libMode = 'editMeta'
+        this.detail = null
+        await this.loadEdit(segs[1])
+      } else {
+        this.libMode = 'detail'
+        await this.showMedia(segs[1])
+      }
     } else if (segs[0] === 'category' && segs[1]) {
       const c = this.homeCategories.find((x) => String(x.id) === segs[1])
       this.homeCategory = c ? c.name : ''
@@ -1195,7 +1296,7 @@ export class AppState {
         body: JSON.stringify({ imdbId: cand.imdbId, title, year: Number(this.unhealthy.form.year) || 0 }),
       })
       this.toast('success', 'Matched "' + title + '".')
-      this.go('/admin/unhealthy')
+      this.go('/media/' + d.id) // land on the freshly written detail page
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not apply the match')
     } finally {
