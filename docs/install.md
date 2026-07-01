@@ -102,3 +102,17 @@ that non-root user in a tight sandbox (`ProtectSystem=strict`, a single writable
 `HOME=/var/lib/filefin` puts both the config (`~/.filefin.json`) and the disposable cache
 (`~/.cache/filefin`) under that one writable path; a data folder chosen outside it needs an
 extra `ReadWritePaths=` line.
+
+## Installing without a distro package
+
+Two paths reach the same hardened layout on a host with no `.deb`/`.rpm`/Arch package:
+
+- **From source.** The `just install` recipe mirrors the package post-install on any systemd
+  host: it builds the binary, installs it to `/usr/local/bin`, creates the `filefin` system user
+  and the `/var/lib/filefin` state directory, and installs the same disabled unit with its
+  `ExecStart` pointed at the local binary. Setup then proceeds exactly as for the packages.
+- **Bare binary.** The release tarball is just the binary. Dropped onto the `PATH` and run with
+  `serve`, it bootstraps a pending config and logs the setup URL on first run (the same bootstrap
+  the CLI table describes) - no system user, no unit, no sandbox. Because there is then no unit to
+  grant `CAP_NET_BIND_SERVICE`, binding a port below 1024 needs that capability set on the binary
+  or running as root.

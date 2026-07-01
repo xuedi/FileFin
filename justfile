@@ -17,6 +17,29 @@ build: frontend
 run: build
     ./bin/{{app}}
 
+# install the built binary + hardened systemd unit + service user (source/bare-metal, no distro package)
+install: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=/usr/local/bin/{{app}}
+    unit=/etc/systemd/system/{{app}}.service
+    nologin=/usr/sbin/nologin
+    [ -x "$nologin" ] || nologin=/sbin/nologin
+    [ -x "$nologin" ] || nologin=/bin/false
+    echo "installing {{app}} -> $bin (elevating with sudo)"
+    sudo install -Dm755 bin/{{app}} "$bin"
+    getent group filefin >/dev/null 2>&1 || sudo groupadd --system filefin
+    getent passwd filefin >/dev/null 2>&1 || sudo useradd --system --gid filefin \
+        --home-dir /var/lib/filefin --shell "$nologin" --comment "FileFin media server" filefin
+    sudo install -d -o filefin -g filefin -m 0750 /var/lib/filefin
+    sed "s#^ExecStart=.*#ExecStart=$bin serve#" packaging/systemd/{{app}}.service | sudo tee "$unit" >/dev/null
+    sudo systemctl daemon-reload
+    echo
+    echo "installed; the unit is disabled. to finish:"
+    echo "  1. sudo -u filefin HOME=/var/lib/filefin {{app}} setup --port 80"
+    echo "  2. sudo systemctl enable --now {{app}}"
+    echo "  3. open the printed setup URL and set the admin account + data folder"
+
 # format, vet, and test
 check:
     gofmt -w .
