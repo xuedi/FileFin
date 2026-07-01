@@ -157,6 +157,15 @@ func (s *Server) discoveryTick(ctx context.Context) {
 	if _, err := s.refillEnrich(ctx, pool); err != nil {
 		s.dlog().Error("discovery enrich refill failed", logging.Fields{"error": err.Error()})
 	}
+	// Self-heal past failures: re-queue error tasks last tried longer ago than the retry
+	// interval, so a transient OMDb miss is retried without a full rebuild. Discovery-only;
+	// the manual scan stays never-enriched-only.
+	cutoff := time.Now().Unix() - int64(enrichRetryInterval.Seconds())
+	if n, err := db.RequeueStaleEnrichErrors(ctx, pool, cutoff); err != nil {
+		s.dlog().Error("discovery enrich retry failed", logging.Fields{"error": err.Error()})
+	} else if n > 0 {
+		s.dlog().Info("discovery re-queued stale enrich failures", logging.Fields{"count": n})
+	}
 	if _, err := s.refillThumbnail(ctx, pool); err != nil {
 		s.dlog().Error("discovery thumbnail refill failed", logging.Fields{"error": err.Error()})
 	}

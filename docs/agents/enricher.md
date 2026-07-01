@@ -24,7 +24,8 @@ flowchart TD
     SCAN -->|prune tasks for since-enriched folders| Q
     Q -->|single agent, claims one task| A[Enrich agent]
     A -->|OMDb lookup by title + year| O{match?}
-    O -->|no / API error| ERR[task = error, left for admin]
+    O -->|no / API error| ERR[task = error, attempted_at stamped]
+    ERR -.->|discovery re-queues after 14 days| Q
     O -->|yes| W[merge OMDb into meta.json additively, flag enriched]
     W --> P[download poster only if folder has none]
     P --> M[SetMediaEnriched on cache row]
@@ -42,9 +43,25 @@ nothing is lost across restarts.
 The queue is **transient cache state**: it is refilled by the shared scanner - run on demand
 by the "Enrich scan" button and on a timer by the discovery agent (see `discovery.md`) -
 which queues a task per still-unenriched media folder and prunes tasks for folders enriched
-since. A `not-found` or API error fails the task and leaves it
-visible to the admin rather than silently retrying; only a poster download failure is
-tolerated (the media still counts as enriched, keeping any existing poster).
+since. A `not-found` or API error fails the task, stamps `attempted_at` on the task row, and
+leaves it visible to the admin; only a poster download failure is tolerated (the media still
+counts as enriched, keeping any existing poster).
+
+## Failed matches self-heal on a slow retry
+
+A failure is no longer terminal. The error task keeps blocking the manual scan (which stays
+**never-enriched-only** - it queues stub folders and leaves error rows put), but the discovery
+agent re-queues any error task whose `attempted_at` is older than a fixed **14-day** interval,
+so a transient OMDb outage or a title OMDb only lists later heals itself without a full cache
+rebuild. The stamp lives on the transient `enrich_tasks` row rather than on `media` or in
+`meta.json`: it must survive the discovery reconcile re-inserting a media row from disk, and
+writing it into `meta.json` would churn the mtime the home view and discovery fingerprint
+depend on. A re-queued task that fails again gets a fresh `attempted_at` and waits another two
+weeks - natural backoff - while a successful retry deletes the task like any other. Legacy
+error rows predating the stamp read as `attempted_at = 0` and are swept in once on the first
+discovery tick after upgrade, draining at the agent's rate-limited pace. See `discovery.md`
+for where the re-queue sits in the tick and `../rematch.md` for the last-tried / next-retry
+times shown to the admin.
 
 ## Other-media is never enriched
 

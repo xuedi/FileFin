@@ -1,5 +1,6 @@
 <script>
   import { getContext } from 'svelte'
+  import { fmtTime } from '../../lib/app.svelte.js'
   const app = getContext('app')
   const u = $derived(app.unhealthy)
 </script>
@@ -13,7 +14,12 @@
     <p class="ff-settings-intro has-text-grey">In {d.category}</p>
 
     {#if d.error}
-      <div class="notification is-warning is-light">OMDb could not match this automatically: {d.error}</div>
+      <div class="notification is-warning is-light">
+        OMDb could not match this automatically: {d.error}
+        {#if d.lastAttempt}
+          <p class="is-size-7 mt-2">Last tried {d.lastAttempt}{#if d.nextRetry} &middot; will retry after {d.nextRetry}{/if}</p>
+        {/if}
+      </div>
     {/if}
 
     <div class="ff-detail">
@@ -127,6 +133,7 @@
             <td>
               {#if it.status === 'error'}
                 <span class="tag is-danger is-light ff-health-tag" title={it.error}>error</span>
+                {#if it.lastAttempt}<span class="is-size-7 has-text-grey ml-2">last tried {fmtTime(it.lastAttempt)}</span>{/if}
               {:else}
                 <span class="tag is-light ff-health-tag">queued</span>
               {/if}

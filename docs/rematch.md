@@ -14,8 +14,13 @@ A media item is "unmatched" when its cache row is still `enriched = 0` - it has 
 yet. That covers two cases the page shows side by side:
 
 - **errored** - the enricher tried and OMDb returned nothing (the failure message is kept on the
-  item's enrich task and shown on the row);
+  item's enrich task and shown on the row, alongside when it was last tried);
 - **queued** - not yet attempted (still waiting its turn in the enrich queue).
+
+An errored item is not stuck: the discovery agent re-queues a failure whose last attempt is older
+than 14 days (see [`agents/enricher.md`](agents/enricher.md)), so the page also shows, for an
+errored item, **when it was last tried** and **when discovery will retry it** - the admin can wait
+for the automatic retry or fix it by hand now.
 
 Items in an **other-media** category are excluded: they are never matched against OMDb by design
 (see [`agents/enricher.md`](agents/enricher.md)), so they never belong on this list.
@@ -44,8 +49,9 @@ flowchart TD
 ```
 
 - The **match context** carries the folder and file details, the item's current match (title, year,
-  IMDb id, plot, poster) for a re-match comparison, the enrich failure reason if any, and a
-  folder-name guess (from the same recognizer the importer uses) to seed the form.
+  IMDb id, plot, poster) for a re-match comparison, the enrich failure reason if any (with the
+  last-tried and next-retry times), and a folder-name guess (from the same recognizer the importer
+  uses) to seed the form.
 - **Search** hits OMDb two ways: an entered IMDb id resolves directly to one record; otherwise a
   title (with an optional year and movie/series kind) returns a candidate list. A "not found"
   search is presented as "no candidates", not an error.

@@ -82,13 +82,14 @@ func scanSummaries(rows *sql.Rows) ([]MediaSummary, error) {
 // for the admin "Unhealthy media" page: its category name and, when the enricher has already
 // tried it, the failed task's status and error message.
 type UnmatchedMedia struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Year     int    `json:"year"`
-	Folder   string `json:"folder"`
-	Category string `json:"category"`
-	Status   string `json:"status"` // "error" when a lookup failed, else "queued"
-	Error    string `json:"error"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
+	Folder      string `json:"folder"`
+	Category    string `json:"category"`
+	Status      string `json:"status"` // "error" when a lookup failed, else "queued"
+	Error       string `json:"error"`
+	LastAttempt int64  `json:"lastAttempt"` // unix seconds of the last failed attempt (0 = never tried)
 }
 
 // ListUnmatchedMedia returns every media item without a metadata match (enriched = 0),
@@ -98,7 +99,7 @@ type UnmatchedMedia struct {
 func ListUnmatchedMedia(ctx context.Context, pool *sql.DB) ([]UnmatchedMedia, error) {
 	rows, err := pool.QueryContext(ctx,
 		`SELECT m.id, m.title, m.year, m.path, COALESCE(NULLIF(c.alias, ''), c.name),
-		        COALESCE(t.status, ''), COALESCE(t.error, '')
+		        COALESCE(t.status, ''), COALESCE(t.error, ''), COALESCE(t.attempted_at, 0)
 		 FROM media m
 		 JOIN categories c ON c.id = m.category_id
 		 LEFT JOIN enrich_tasks t ON t.media_id = m.id
@@ -112,7 +113,7 @@ func ListUnmatchedMedia(ctx context.Context, pool *sql.DB) ([]UnmatchedMedia, er
 	for rows.Next() {
 		var u UnmatchedMedia
 		var path, status string
-		if err := rows.Scan(&u.ID, &u.Title, &u.Year, &path, &u.Category, &status, &u.Error); err != nil {
+		if err := rows.Scan(&u.ID, &u.Title, &u.Year, &path, &u.Category, &status, &u.Error, &u.LastAttempt); err != nil {
 			return nil, fmt.Errorf("scan unmatched media: %w", err)
 		}
 		u.Folder = filepath.Base(path)

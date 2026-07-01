@@ -30,19 +30,21 @@ type matchFile struct {
 // matchContext is the detail view's payload: the folder/file facts, the current match (for a
 // re-match comparison), the enrich failure reason, and a folder-name guess to seed the form.
 type matchContext struct {
-	ID         string      `json:"id"`
-	Folder     string      `json:"folder"`
-	Category   string      `json:"category"`
-	Title      string      `json:"title"`
-	Year       int         `json:"year"`
-	Enriched   bool        `json:"enriched"`
-	HasPoster  bool        `json:"hasPoster"`
-	ImdbID     string      `json:"imdbId"`
-	Plot       string      `json:"plot"`
-	Error      string      `json:"error"`
-	Files      []matchFile `json:"files"`
-	GuessTitle string      `json:"guessTitle"`
-	GuessYear  int         `json:"guessYear"`
+	ID          string      `json:"id"`
+	Folder      string      `json:"folder"`
+	Category    string      `json:"category"`
+	Title       string      `json:"title"`
+	Year        int         `json:"year"`
+	Enriched    bool        `json:"enriched"`
+	HasPoster   bool        `json:"hasPoster"`
+	ImdbID      string      `json:"imdbId"`
+	Plot        string      `json:"plot"`
+	Error       string      `json:"error"`
+	LastAttempt string      `json:"lastAttempt"` // when the enricher last tried ("" = never)
+	NextRetry   string      `json:"nextRetry"`   // when discovery will retry ("" = no failed attempt)
+	Files       []matchFile `json:"files"`
+	GuessTitle  string      `json:"guessTitle"`
+	GuessYear   int         `json:"guessYear"`
 }
 
 // omdbCandidate is one OMDb search hit offered for selection.
@@ -95,16 +97,21 @@ func (s *Server) buildMatchContext(ctx context.Context, pool *sql.DB, id string)
 	cat, _ := db.CategoryName(ctx, pool, m.CategoryID)
 	files, _ := db.MediaFiles(ctx, pool, id)
 	meta, _ := importer.ReadMeta(m.Path)
-	errMsg, _ := db.EnrichError(ctx, pool, id)
+	errMsg, attemptedAt, _ := db.EnrichError(ctx, pool, id)
 	guess := recognize.FromPath(filepath.Base(m.Path))
 	plot := m.Description
 	if plot == "" {
 		plot = m.Plot
 	}
+	nextRetry := int64(0)
+	if attemptedAt > 0 {
+		nextRetry = attemptedAt + int64(enrichRetryInterval.Seconds())
+	}
 	mc := matchContext{
 		ID: m.ID, Folder: filepath.Base(m.Path), Category: cat,
 		Title: m.Title, Year: m.Year, Enriched: m.Enriched, HasPoster: m.Poster != "",
 		ImdbID: meta.Metadata["imdbID"], Plot: plot, Error: errMsg,
+		LastAttempt: fmtUnix(attemptedAt), NextRetry: fmtUnix(nextRetry),
 		Files: []matchFile{}, GuessTitle: guess.Title, GuessYear: guess.Year,
 	}
 	for _, f := range files {

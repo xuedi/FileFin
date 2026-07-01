@@ -23,6 +23,12 @@ Folder-level drift (a folder on disk but not in the cache, or vice versa) is nei
 above: it is handled by the reconcile itself, which is why this is a *discovery* agent and
 not just an auto-presser of the buttons.
 
+Alongside the refills the tick also **retries stale enrich failures**: an errored enrich task
+whose last attempt is older than a fixed 14-day interval is flipped back to pending so the
+rate-limited enrich agent tries it again. This is discovery-only - the manual "Enrich scan"
+button stays never-enriched-only and leaves error rows put (see `enricher.md`). It is the one
+place a failed OMDb match self-heals short of a full rebuild.
+
 ## Health lives in the cache, never in the media tree
 
 A `media_health` cache table records, per item, when it was last checked, a **fingerprint**
@@ -50,7 +56,8 @@ flowchart TD
     DIFF --> DEL[vanished: delete media + files + health + queued tasks]
     ADD --> REFILL[refill optimize / enrich / thumbnail queues]
     DEL --> REFILL
-    REFILL --> ROLL[select N least-recently-checked items]
+    REFILL --> RETRY[re-queue enrich errors last tried > 14 days ago]
+    RETRY --> ROLL[select N least-recently-checked items]
     ROLL --> ITEM[per item: reconcile if fingerprint changed,\nrun health checks, stamp last_checked_at + record]
     ITEM --> UNLOCK[release lock]
 ```

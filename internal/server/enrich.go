@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	enrichAgentName    = "OMDB"
-	enrichRestInterval = 2 * time.Second // pause between lookups so the API is not hammered
-	enrichIdlePoll     = 5 * time.Second // re-check interval when the queue is empty or idle
+	enrichAgentName     = "OMDB"
+	enrichRestInterval  = 2 * time.Second     // pause between lookups so the API is not hammered
+	enrichIdlePoll      = 5 * time.Second     // re-check interval when the queue is empty or idle
+	enrichRetryInterval = 14 * 24 * time.Hour // discovery re-queues a failed match this long after its last try
 )
 
 // elog returns the enrichment-scoped logger.
@@ -117,7 +118,7 @@ func (s *Server) enrichLoop() {
 func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Client, task db.EnrichTask) {
 	m, err := db.GetMedia(ctx, pool, task.MediaID)
 	if err != nil {
-		_ = db.FailEnrich(ctx, pool, task.ID, "media not found")
+		_ = db.FailEnrich(ctx, pool, task.ID, "media not found", time.Now().Unix())
 		return
 	}
 	// Belt-and-suspenders: an other-media item must never reach OMDb even if a stale task
@@ -128,14 +129,14 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 	}
 	mv, err := client.Lookup(ctx, m.Title, m.Year)
 	if err != nil {
-		_ = db.FailEnrich(ctx, pool, task.ID, err.Error())
+		_ = db.FailEnrich(ctx, pool, task.ID, err.Error(), time.Now().Unix())
 		s.elog().Info("omdb lookup failed for "+m.Title,
 			logging.Fields{"title": m.Title, "year": m.Year, "error": err.Error()})
 		return
 	}
 	// Additive: OMDb only fills gaps, keeping the folder's own title/year and any poster.
 	if err := s.applyOmdbResult(ctx, pool, m, client, mv, m.Title, m.Year, false); err != nil {
-		_ = db.FailEnrich(ctx, pool, task.ID, "write meta: "+err.Error())
+		_ = db.FailEnrich(ctx, pool, task.ID, "write meta: "+err.Error(), time.Now().Unix())
 		return
 	}
 	_ = db.FinishEnrich(ctx, pool, task.ID)
