@@ -32,7 +32,7 @@ disposable cache - see the [architecture documentation](docs/).
 ├── Films - English/                           # a category: any folder with a config.json
 │   ├── config.json                            # marks this folder as a category
 │   └── (1980) The Gods Must Be Crazy/         # a media folder: "(YYYY) Title"
-│       ├── (1980) The Gods Must Be Crazy.avi  # the media file, can also be _part1/_CD1
+│       ├── (1980) The Gods Must Be Crazy.avi  # the media file
 │       ├── poster.jpg                         # optional
 │       └── meta.json                          # title, fields, technical info, per-user state
 └── Shows - English/
