@@ -14,6 +14,7 @@
   import AdminProgress from './views/admin/AdminProgress.svelte'
   import AdminDashboard from './views/admin/AdminDashboard.svelte'
   import AdminStats from './views/admin/AdminStats.svelte'
+  import UnhealthyMedia from './views/admin/UnhealthyMedia.svelte'
   import UserSettings from './views/settings/UserSettings.svelte'
   import Toast from './components/Toast.svelte'
   import GithubLink from './components/GithubLink.svelte'
@@ -101,6 +102,7 @@
           <li><a href={null} class:is-active={app.adminView === 'stats'} onclick={() => app.go('/admin/stats')}>Statistics</a></li>
           <li><a href={null} class:is-active={app.adminView === 'library'} onclick={() => app.openAdminLibrary()}>Library</a></li>
           <li><a href={null} class:is-active={app.adminView === 'users'} onclick={() => app.go('/admin/users')}>Users</a></li>
+          <li><a href={null} class:is-active={app.adminView === 'unhealthy'} onclick={() => app.go('/admin/unhealthy')}>Unhealthy media</a></li>
           <li><a href={null} class:is-active={app.adminView === 'settings'} onclick={() => app.openSettings()}>Settings</a></li>
           <li><a href={null} class:is-active={app.adminView === 'progress'} onclick={() => app.go('/admin/progress')}>Progress</a></li>
         {/if}
@@ -128,6 +130,8 @@
         <AdminProgress />
       {:else if app.adminView === 'stats'}
         <AdminStats />
+      {:else if app.adminView === 'unhealthy'}
+        <UnhealthyMedia />
       {:else}
         <AdminDashboard />
       {/if}

@@ -87,6 +87,22 @@ func ListActiveEnrich(ctx context.Context, pool *sql.DB) ([]ActiveEnrich, error)
 		}, EnrichStatusEnriching)
 }
 
+// EnrichError returns the stored failure message of a media item's enrich task, or "" when
+// there is no task or it has not failed, for the admin match-context panel.
+func EnrichError(ctx context.Context, pool *sql.DB, mediaID string) (string, error) {
+	var msg string
+	err := pool.QueryRowContext(ctx,
+		`SELECT COALESCE(error, '') FROM enrich_tasks WHERE media_id = ? AND status = ?`,
+		mediaID, EnrichStatusError).Scan(&msg)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query enrich error %s: %w", mediaID, err)
+	}
+	return msg, nil
+}
+
 // CountPendingEnrich returns how many enrichment tasks are still waiting.
 func CountPendingEnrich(ctx context.Context, pool *sql.DB) (int, error) {
 	return enrichQueue.countPending(ctx, pool)

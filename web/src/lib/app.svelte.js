@@ -111,13 +111,20 @@ export class AppState {
   needsSetup = $state(false)
   me = $state(null) // { user, admin }
   view = $state('library') // 'library' | 'admin' | 'settings'
-  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress'
+  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress' | 'unhealthy'
   userMenuOpen = $state(false) // navbar username dropdown
 
   // user settings: MyDramaList / MyAnimeList import (username, optional category scope,
   // in-flight flags, last preview)
   mdl = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
   mal = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
+
+  // admin: unhealthy media (metadata matching). The list of unmatched items, plus a drill-in
+  // detail with an editable title/year/IMDb-id form and the OMDb candidates it searches up.
+  unhealthy = $state({
+    items: [], loading: false, detailId: '', detail: null,
+    form: { title: '', year: '', imdbId: '' }, candidates: null, searching: false, applying: false,
+  })
 
   // install form
   iuser = $state('')
@@ -805,7 +812,7 @@ export class AppState {
     const segs = location.pathname.split('/').filter(Boolean)
     if (segs[0] === 'admin' && this.me?.admin) {
       this.view = 'admin'
-      const page = ['dashboard', 'stats', 'library', 'users', 'settings', 'progress'].includes(segs[1]) ? segs[1] : 'dashboard'
+      const page = ['dashboard', 'stats', 'library', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
       this.applyAdmin(page, segs[2])
       return
     }
@@ -886,6 +893,8 @@ export class AppState {
       this.loadStats()
     } else if (page === 'progress') {
       this.startProgressPoll()
+    } else if (page === 'unhealthy') {
+      this.openUnhealthy(sub)
     }
   }
 
@@ -1090,6 +1099,106 @@ export class AppState {
       this.health = await api('/api/admin/health')
     } catch {
       this.health = null
+    }
+  }
+
+  // --- admin: unhealthy media (metadata matching) ---
+
+  // openUnhealthy loads the page's data: the disk-health section (read-only) always, then
+  // either one item's match context (when a media id is in the URL) or the unmatched list.
+  async openUnhealthy(id) {
+    this.loadHealth()
+    this.unhealthy.detailId = id || ''
+    if (id) {
+      await this.openUnmatched(id)
+    } else {
+      this.unhealthy.detail = null
+      await this.loadUnmatched()
+    }
+  }
+
+  async loadUnmatched() {
+    this.unhealthy.loading = true
+    try {
+      const r = await api('/api/admin/unmatched')
+      this.unhealthy.items = r.items || []
+    } catch {
+      this.unhealthy.items = []
+    } finally {
+      this.unhealthy.loading = false
+    }
+  }
+
+  goUnhealthy(id) {
+    this.go('/admin/unhealthy/' + id)
+  }
+
+  // openUnmatched loads one item's match context and seeds the search form from its current
+  // title/year/IMDb id.
+  async openUnmatched(id) {
+    this.unhealthy.detail = null
+    this.unhealthy.candidates = null
+    try {
+      const c = await api('/api/admin/media/' + id + '/match')
+      this.unhealthy.detail = c
+      this.unhealthy.form = { title: c.title || '', year: c.year || '', imdbId: c.imdbId || '' }
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not load that item')
+      this.go('/admin/unhealthy')
+    }
+  }
+
+  // useGuess fills the form from the folder-name guess (title + year).
+  useGuess() {
+    const d = this.unhealthy.detail
+    if (!d) return
+    this.unhealthy.form.title = d.guessTitle || ''
+    this.unhealthy.form.year = d.guessYear || ''
+  }
+
+  async searchOmdb() {
+    const d = this.unhealthy.detail
+    if (!d) return
+    this.unhealthy.searching = true
+    this.unhealthy.candidates = null
+    try {
+      const r = await api('/api/admin/media/' + d.id + '/omdb-search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: this.unhealthy.form.title.trim(),
+          year: Number(this.unhealthy.form.year) || 0,
+          imdbId: this.unhealthy.form.imdbId.trim(),
+        }),
+      })
+      this.unhealthy.candidates = r.candidates || []
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'OMDb search failed')
+      this.unhealthy.candidates = []
+    } finally {
+      this.unhealthy.searching = false
+    }
+  }
+
+  // applyMatch writes the chosen candidate (classic enrichment, in replace mode) and returns
+  // to the list, where the now-matched item no longer appears.
+  async applyMatch(cand) {
+    const d = this.unhealthy.detail
+    if (!d) return
+    const title = this.unhealthy.form.title.trim() || cand.title
+    this.unhealthy.applying = true
+    try {
+      await api('/api/admin/media/' + d.id + '/match', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ imdbId: cand.imdbId, title, year: Number(this.unhealthy.form.year) || 0 }),
+      })
+      this.toast('success', 'Matched "' + title + '".')
+      this.go('/admin/unhealthy')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not apply the match')
+    } finally {
+      this.unhealthy.applying = false
     }
   }
 

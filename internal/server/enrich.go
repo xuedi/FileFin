@@ -12,6 +12,7 @@ import (
 	"filefin/internal/importer"
 	"filefin/internal/logging"
 	"filefin/internal/omdb"
+	"filefin/internal/thumbnail"
 )
 
 const (
@@ -132,38 +133,86 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 			logging.Fields{"title": m.Title, "year": m.Year, "error": err.Error()})
 		return
 	}
-
-	// Enrichment is additive: OMDb only fills gaps, never overwriting metadata the
-	// import (e.g. Plex) already wrote. The existing meta.json wins field by field, and
-	// the write goes through the shared per-folder lock so it preserves anyone's
-	// playback state written meanwhile.
-	meta, err := s.metaMgr.Update(m.Path, func(cur importer.Meta) importer.Meta {
-		merged := importer.MergeMeta(cur, importer.MetaFromOMDb(mv, m.Title, m.Year))
-		merged.Title, merged.Year = m.Title, m.Year // always match the folder
-		merged.Enriched = true
-		return merged
-	})
-	if err != nil {
+	// Additive: OMDb only fills gaps, keeping the folder's own title/year and any poster.
+	if err := s.applyOmdbResult(ctx, pool, m, client, mv, m.Title, m.Year, false); err != nil {
 		_ = db.FailEnrich(ctx, pool, task.ID, "write meta: "+err.Error())
 		return
 	}
-
-	// A poster is only downloaded when the folder has none: an existing poster (from
-	// the import) is kept, never overwritten.
-	posterRel := folderPoster(m.Path)
-	if posterRel == "" && mv.ImdbID != "" && mv.ImdbID != "N/A" && mv.Poster != "" && mv.Poster != "N/A" {
-		if img, ct, err := client.Poster(ctx, mv.ImdbID, 600); err == nil && len(img) > 0 {
-			name := "poster" + omdb.PosterExt(ct)
-			if os.WriteFile(filepath.Join(m.Path, name), img, 0o644) == nil {
-				posterRel = name
-			}
-		}
-	}
-
-	_ = db.SetMediaEnriched(ctx, pool, task.MediaID, meta.Description, meta.Plot, posterRel)
-	_ = db.SetMediaFacets(ctx, pool, task.MediaID,
-		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
-	_ = db.ReplaceMediaFacets(ctx, pool, task.MediaID, meta.Actors, meta.Tags)
 	_ = db.FinishEnrich(ctx, pool, task.ID)
 	s.elog().Info("enriched "+m.Title, logging.Fields{"title": m.Title, "year": m.Year, "imdbID": mv.ImdbID})
+}
+
+// applyOmdbResult writes an OMDb result onto a media folder and its cache row - the shared
+// write path behind both the enrich agent and the admin manual re-match. In additive mode
+// (the agent) the existing meta.json wins field by field and an existing poster is kept; in
+// replace mode (a re-match) the chosen record wins, preserving only the base-owned technical
+// (ffprobe) and per-user state blocks, and the poster is refreshed. The write goes through
+// the shared per-folder lock so a concurrent playback event is never dropped.
+func (s *Server) applyOmdbResult(ctx context.Context, pool *sql.DB, m db.Media, client *omdb.Client, mv *omdb.Movie, title string, year int, replace bool) error {
+	meta, err := s.metaMgr.Update(m.Path, func(cur importer.Meta) importer.Meta {
+		fresh := importer.MetaFromOMDb(mv, title, year)
+		out := importer.MergeMeta(cur, fresh)
+		if replace {
+			out = fresh
+			out.Technical = cur.Technical
+			out.State = cur.State
+		}
+		out.Title, out.Year = title, year
+		out.Enriched = true
+		return out
+	})
+	if err != nil {
+		return err
+	}
+
+	posterRel := folderPoster(m.Path)
+	if replace {
+		posterRel = s.replacePoster(ctx, m.Path, client, mv)
+	} else if posterRel == "" {
+		posterRel = downloadPoster(ctx, m.Path, client, mv)
+	}
+
+	if err := db.SetMediaTitleYear(ctx, pool, m.ID, title, year); err != nil {
+		return err
+	}
+	_ = db.SetMediaEnriched(ctx, pool, m.ID, meta.Description, meta.Plot, posterRel)
+	_ = db.SetMediaFacets(ctx, pool, m.ID,
+		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
+	_ = db.ReplaceMediaFacets(ctx, pool, m.ID, meta.Actors, meta.Tags)
+	return nil
+}
+
+// downloadPoster fetches the OMDb poster into dir and returns its basename, or "" when there
+// is nothing to fetch or the download fails.
+func downloadPoster(ctx context.Context, dir string, client *omdb.Client, mv *omdb.Movie) string {
+	if mv.ImdbID == "" || mv.ImdbID == "N/A" || mv.Poster == "" || mv.Poster == "N/A" {
+		return ""
+	}
+	img, ct, err := client.Poster(ctx, mv.ImdbID, 600)
+	if err != nil || len(img) == 0 {
+		return ""
+	}
+	name := "poster" + omdb.PosterExt(ct)
+	if os.WriteFile(filepath.Join(dir, name), img, 0o644) != nil {
+		return ""
+	}
+	return name
+}
+
+// replacePoster refreshes a folder's poster for a re-match: on a successful download it
+// removes the previous base poster and its stale sized variants (so the thumbnail agent
+// rebuilds them from the new base), and returns the new basename. A failed download keeps
+// whatever poster was already there.
+func (s *Server) replacePoster(ctx context.Context, dir string, client *omdb.Client, mv *omdb.Movie) string {
+	old := folderPoster(dir)
+	name := downloadPoster(ctx, dir, client, mv)
+	if name == "" {
+		return old
+	}
+	if old != "" && old != name {
+		_ = os.Remove(filepath.Join(dir, old))
+	}
+	_ = os.Remove(filepath.Join(dir, thumbnail.DetailName()))
+	_ = os.Remove(filepath.Join(dir, thumbnail.TileName()))
+	return name
 }

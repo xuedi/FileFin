@@ -65,6 +65,17 @@ from the thumbnail agent's frame-extraction path instead (see `thumbnailer.md`).
 | `poster.*` | downloaded into the media folder **only when the folder has no poster** and OMDb returns one; an existing poster is never overwritten |
 | `media` cache row | description, plot, and poster name updated; `enriched` set |
 
+## Additive vs replace: one write path, two callers
+
+The write above is the **additive** mode of a shared write path. The admin manual re-match (see
+`../rematch.md`) reuses the same path in **replace** mode: the chosen OMDb record wins over the
+existing `meta.json`, the cache row's title/year are corrected to the admin-confirmed values (the
+agent instead pins them to the folder), and the poster is refreshed (the old base poster and its
+sized variants removed so the thumbnailer rebuilds them). Both modes preserve the ffprobe
+`technical` block and the per-user `state`, and both go through the same per-folder lock - so an
+admin fixing a wrong match and the agent filling a fresh one share one code path and one set of
+invariants.
+
 ## Dependencies
 
 - **OMDb client** (`omdb`) - the same small client the importer uses; enrichment is gated on
@@ -85,3 +96,6 @@ from the thumbnail agent's frame-extraction path instead (see `thumbnailer.md`).
 |-------------------------------------|------------------------------------------------------|
 | `POST /api/admin/enrich/scan`       | queue an enrich task per unenriched media folder     |
 | `GET  /api/admin/enrich/active`     | in-flight enrichments + count still pending          |
+
+The admin manual-match endpoints (list unmatched, search OMDb, apply a chosen record) live with
+the flow that uses them in [`../rematch.md`](../rematch.md).

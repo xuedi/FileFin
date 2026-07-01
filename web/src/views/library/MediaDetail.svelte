@@ -35,6 +35,11 @@
             <button class="button is-primary" onclick={() => app.playFile(app.currentFile)}>
               &#9654; {app.hasResume ? 'Continue' : 'Play'}
             </button>
+            {#if app.me?.admin}
+              <button class="button is-small" title="Fix or change this item's metadata match" onclick={() => app.goUnhealthy(detail.id)}>
+                Force metadata match
+              </button>
+            {/if}
           </div>
         {/if}
       </div>
