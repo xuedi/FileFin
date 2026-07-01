@@ -82,6 +82,10 @@ progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}`
 is `library`, `admin`, or `settings`; `/settings` is available to every authenticated user, while
 `/admin/*` falls back to the library for non-admins.
 
+The `category` grid offers the fullscreen **TokTok** swipe player, but only for an other-media
+category (its own flag or an inherited one from a top-level parent - see
+[`mediaformat.md`](mediaformat.md)); ordinary movie/series categories show no TokTok button.
+
 The library has a fourth `libMode`, `search`, alongside `home` / `category` / `detail`. Library
 search renders **on the home page**: `library/Home.svelte` always shows the `SearchBar` (a text
 input next to a field-scope dropdown) at the top, and `route()` reads `q` + `field` from the

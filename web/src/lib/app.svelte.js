@@ -488,6 +488,20 @@ export class AppState {
     return this.homeCategories.find((c) => c.name === name)?.alias ?? name
   }
 
+  // categoryIsOtherMedia reports whether the open category page is an other-media category,
+  // gating the TokTok button. The flag is set (via the admin checkbox) only on a top-level
+  // category and inherited by its sub-categories, so walk up the parent chain: the category
+  // counts when its own flag or any ancestor's is set.
+  get categoryIsOtherMedia() {
+    const byId = new Map(this.homeCategories.map((c) => [c.id, c]))
+    let c = this.homeCategories.find((x) => x.name === this.homeCategory)
+    while (c) {
+      if (c.otherMedia) return true
+      c = c.parentId ? byId.get(c.parentId) : null
+    }
+    return false
+  }
+
   // --- library ---
 
   async loadHome() {

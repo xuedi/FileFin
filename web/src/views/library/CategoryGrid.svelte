@@ -6,7 +6,7 @@
 
 <div class="ff-cat-head">
   <h1 class="title is-4">{app.homeCategoryAlias(app.homeCategory)}</h1>
-  {#if app.categoryMedia.length}
+  {#if app.categoryMedia.length && app.categoryIsOtherMedia}
     <button class="button is-primary" onclick={() => app.startTokTok()}>&#9654; TokTok Mode</button>
   {/if}
 </div>
