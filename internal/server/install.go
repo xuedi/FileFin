@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,10 +17,13 @@ import (
 )
 
 // handleState tells the frontend whether first-run setup is still needed, and the running
-// binary's version (shown in the UI, so it always reflects the actual deployed build).
+// binary's version (shown in the UI, so it always reflects the actual deployed build). Setup
+// is "needed" until an admin account exists; a pending config (port + token, no users) still
+// needs setup. The setup token is never exposed here - it reaches the browser only via the
+// install URL the CLI prints.
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	needsSetup := s.cfg == nil
+	needsSetup := s.cfg == nil || !s.cfg.SetupComplete()
 	s.mu.RUnlock()
 	writeJSON(w, struct {
 		NeedsSetup bool   `json:"needsSetup"`
@@ -27,14 +31,24 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	}{needsSetup, version.Version})
 }
 
-// handleInstall is the first-run setup: it creates the admin user and the config on
-// the chosen port, then fires reload so Run rebinds there. Allowed only while no
-// config exists. The cache is always local SQLite, so there is nothing to configure.
+// validSetupToken constant-time-compares a presented token against the pending config's setup
+// token. An empty configured token (or nil config) never matches, so the gate fails closed.
+func validSetupToken(cfg *config.Config, token string) bool {
+	if cfg == nil || cfg.SetupToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(cfg.SetupToken)) == 1
+}
+
+// handleInstall is the first-run setup: gated by the one-time setup token, it creates the admin
+// user, clears the token, and persists, then fires reload so Run rebuilds the handler without
+// the install routes (the port was already fixed at bootstrap). Mounted only while setup is
+// pending. The cache is always local SQLite, so there is nothing to configure.
 func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	already := s.cfg != nil
+	cfg := s.cfg
 	s.mu.RUnlock()
-	if already {
+	if cfg == nil || cfg.SetupComplete() {
 		http.Error(w, "already installed", http.StatusConflict)
 		return
 	}
@@ -42,13 +56,25 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
-		Port     int    `json:"port"`
 		DataDir  string `json:"dataDir"`
+		Token    string `json:"token"`
 	}](w, r)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+
+	// The setup token gates the whole endpoint: it arrives as the X-Setup-Token header (what
+	// the SPA sends) or, as a fallback, the body's token field.
+	token := r.Header.Get("X-Setup-Token")
+	if token == "" {
+		token = req.Token
+	}
+	if !validSetupToken(cfg, token) {
+		http.Error(w, "invalid or missing setup token", http.StatusForbidden)
+		return
+	}
+
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" || req.Password == "" {
 		http.Error(w, "username and password are required", http.StatusBadRequest)
@@ -57,9 +83,6 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 	if msg := passwordPolicyError(req.Password); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
-	}
-	if req.Port < 1 || req.Port > 65535 {
-		req.Port = config.DefaultPort
 	}
 	req.DataDir = filepath.Clean(strings.TrimSpace(req.DataDir))
 	if !filepath.IsAbs(req.DataDir) {
@@ -76,14 +99,15 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	cfg := &config.Config{
-		Port: req.Port,
-		Users: map[string]config.User{req.Username: {
-			Hash: string(hash), Admin: true, CreatedAt: time.Now().Unix(),
-		}},
-		DataDir: req.DataDir,
-	}
-	if err := config.Save(cfg); err != nil {
+	// Start from the pending config so the bootstrap-chosen port and bind address carry over;
+	// only the admin user and data folder are added and the token cleared.
+	next := *cfg
+	next.Users = map[string]config.User{req.Username: {
+		Hash: string(hash), Admin: true, CreatedAt: time.Now().Unix(),
+	}}
+	next.DataDir = req.DataDir
+	next.ClearSetupToken()
+	if err := config.Save(&next); err != nil {
 		http.Error(w, "could not write config", http.StatusInternalServerError)
 		return
 	}
@@ -98,7 +122,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, struct {
 		Port int `json:"port"`
-	}{req.Port})
+	}{next.Port})
 	select {
 	case s.reload <- struct{}{}:
 	default:

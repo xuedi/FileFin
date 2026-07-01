@@ -120,7 +120,7 @@ func (s *Server) startOptimizeRun(ctx context.Context, wg *sync.WaitGroup) {
 	s.mu.RLock()
 	cfg := s.cfg
 	s.mu.RUnlock()
-	if cfg == nil {
+	if cfg == nil || !cfg.SetupComplete() {
 		return
 	}
 

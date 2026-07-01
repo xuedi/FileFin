@@ -36,3 +36,6 @@ Thumbs.db
 
 # Local-only working files (security reports, scratch notes) - never publish.
 /tmp_*
+
+# GoReleaser output
+/dist/

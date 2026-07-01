@@ -41,7 +41,7 @@ func (s *Server) pollLoop() {
 	for {
 		time.Sleep(5 * time.Second)
 		s.mu.RLock()
-		installed := s.cfg != nil
+		installed := s.cfg != nil && s.cfg.SetupComplete()
 		s.mu.RUnlock()
 		if !installed {
 			continue

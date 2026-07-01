@@ -38,8 +38,10 @@
       app.needsSetup = st.needsSetup
       app.version = st.version || ''
       if (app.needsSetup) {
+        app.captureSetupToken() // read ?token= from the install URL before any setup call
         try {
-          const r = await api('/api/install/browse') // defaults to the app's current directory
+          // defaults to the app's current directory; token-gated in install mode
+          const r = await api('/api/install/browse', { headers: app.setupHeaders() })
           app.dataDir = r.path
         } catch {
           app.dataDir = ''

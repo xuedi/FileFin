@@ -31,10 +31,24 @@ func waitForRebuild(t *testing.T, s *Server) {
 	t.Fatal("rebuild did not finish in time")
 }
 
-func TestInstallFlow(t *testing.T) {
+// pendingServer builds an install-mode server: a pending config (the chosen port plus a fresh
+// setup token, no users) written to a throwaway HOME/cache, plus the minted token. The install
+// routes are mounted and gated by that token.
+func pendingServer(t *testing.T, port int) (*Server, http.Handler, string) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	s := New() // cfg nil -> install mode
-	h := s.handler()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	token, err := config.NewSetupToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New()
+	s.cfg = &config.Config{Port: port, SetupToken: token, Users: map[string]config.User{}}
+	return s, s.handler(), token
+}
+
+func TestInstallFlow(t *testing.T) {
+	s, h, token := pendingServer(t, 9999)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/state", nil))
@@ -43,9 +57,32 @@ func TestInstallFlow(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	body := `{"username":"admin","password":"password1","port":9999,"dataDir":"` + dataDir + `"}`
+	body := `{"username":"admin","password":"password1","dataDir":"` + dataDir + `"}`
+
+	// Without the token the install is refused; nothing is written.
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
+	if rr.Code != 403 {
+		t.Fatalf("install without token: %d, want 403", rr.Code)
+	}
+	if config.Exists() {
+		t.Fatal("config should not be written without a valid token")
+	}
+
+	// A wrong token is refused too.
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", "not-the-token")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 403 {
+		t.Fatalf("install with wrong token: %d, want 403", rr.Code)
+	}
+
+	// The right token completes setup on the bootstrap port (9999, not sent in the body).
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", token)
+	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("install: %d %s", rr.Code, rr.Body.String())
 	}
@@ -64,13 +101,36 @@ func TestInstallFlow(t *testing.T) {
 	if got.DataDir != dataDir {
 		t.Fatalf("dataDir not persisted: %q want %q", got.DataDir, dataDir)
 	}
+	if got.SetupToken != "" {
+		t.Fatal("setup token should be cleared once setup completes")
+	}
+	if !got.SetupComplete() {
+		t.Fatal("config should be complete after install")
+	}
+
+	// The installer disappears once complete: rebuild the handler with the completed config
+	// (as Run does after the reload) and confirm the install POST no longer runs - the SPA
+	// fallback answers with HTML - while an app route is now mounted.
+	s.cfg = got
+	h2 := s.handler()
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", token)
+	h2.ServeHTTP(rr, req)
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("install route should be gone after setup (SPA fallback), got content-type %q", ct)
+	}
+	rr = httptest.NewRecorder()
+	h2.ServeHTTP(rr, httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"username":"admin","password":"nope"}`)))
+	if rr.Code != 401 {
+		t.Fatalf("app login route should be mounted after setup: %d, want 401", rr.Code)
+	}
 }
 
 // TestInstallRemovesOldCache checks that a fresh install drops a leftover disposable
 // cache, so stale rows from a previous install never carry over.
 func TestInstallRemovesOldCache(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	_, h, token := pendingServer(t, 9999)
 
 	cachePath, err := db.Path()
 	if err != nil {
@@ -83,12 +143,12 @@ func TestInstallRemovesOldCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New()
-	h := s.handler()
 	dataDir := t.TempDir()
-	body := `{"username":"admin","password":"password1","port":9999,"dataDir":"` + dataDir + `"}`
+	body := `{"username":"admin","password":"password1","dataDir":"` + dataDir + `"}`
+	req := httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", token)
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
+	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("install: %d %s", rr.Code, rr.Body.String())
 	}
@@ -98,15 +158,15 @@ func TestInstallRemovesOldCache(t *testing.T) {
 }
 
 func TestInstallRejectsBadDataDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	s := New()
-	h := s.handler()
+	_, h, token := pendingServer(t, 9999)
 	for _, body := range []string{
-		`{"username":"admin","password":"password1","port":9999}`,                        // missing dataDir
-		`{"username":"admin","password":"password1","port":9999,"dataDir":"/no/such/x"}`, // nonexistent
+		`{"username":"admin","password":"password1"}`,                        // missing dataDir
+		`{"username":"admin","password":"password1","dataDir":"/no/such/x"}`, // nonexistent
 	} {
+		req := httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+		req.Header.Set("X-Setup-Token", token)
 		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
+		h.ServeHTTP(rr, req)
 		if rr.Code != 400 {
 			t.Fatalf("install %q: %d, want 400", body, rr.Code)
 		}
@@ -117,17 +177,30 @@ func TestInstallRejectsBadDataDir(t *testing.T) {
 }
 
 func TestBrowse(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	s := New()
-	h := s.handler()
+	_, h, token := pendingServer(t, 9999)
 
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "movies"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
+	// Without the token the install-mode browser is refused (closes the unauthenticated
+	// filesystem-listing hole).
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/install/browse?path="+root, nil))
+	if rr.Code != 403 {
+		t.Fatalf("browse without token: %d, want 403", rr.Code)
+	}
+
+	get := func(q string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/install/browse"+q, nil)
+		req.Header.Set("X-Setup-Token", token)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	rr = get("?path=" + root)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"name":"movies"`) {
 		t.Fatalf("browse: %d %s", rr.Code, rr.Body.String())
 	}
@@ -140,10 +213,34 @@ func TestBrowse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/install/browse", nil))
+	rr = get("")
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"path":"`+wd+`"`) {
 		t.Fatalf("browse default: %d %s, want path %s", rr.Code, rr.Body.String(), wd)
+	}
+}
+
+// TestInstallBindAddress checks that a bootstrap bind address survives setup, so a pending
+// config pinned to loopback stays pinned once complete.
+func TestInstallBindAddress(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	token, _ := config.NewSetupToken()
+	s := New()
+	s.cfg = &config.Config{Port: 8081, BindAddress: "127.0.0.1", SetupToken: token, Users: map[string]config.User{}}
+	h := s.handler()
+
+	dataDir := t.TempDir()
+	body := `{"username":"admin","password":"password1","dataDir":"` + dataDir + `"}`
+	req := httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("install: %d %s", rr.Code, rr.Body.String())
+	}
+	got, _ := config.Load()
+	if got.BindAddress != "127.0.0.1" || got.Bind() != "127.0.0.1:8081" {
+		t.Fatalf("bind address not preserved through setup: %q / %q", got.BindAddress, got.Bind())
 	}
 }
 

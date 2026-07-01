@@ -85,7 +85,7 @@ func (s *Server) enrichLoop() {
 	recovered := false
 	for {
 		s.mu.RLock()
-		installed := s.cfg != nil
+		installed := s.cfg != nil && s.cfg.SetupComplete()
 		s.mu.RUnlock()
 		client := s.omdbClient()
 		if !installed || client == nil {

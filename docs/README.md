@@ -25,5 +25,6 @@ subsystem you are working in.
 | [`playback-state.md`](playback-state.md) | Playback state | Per-user state in `meta.json`: resume pointer, watched flag, favorite, rating |
 | [`mdl.md`](mdl.md) | MyDramaList import | Scrape a public MDL list, match to the library, import watched + 1-10 ratings |
 | [`mal.md`](mal.md) | MyAnimeList import | Read a public MAL list via API v2 (client id), shared year-strict matcher, category scope |
+| [`install.md`](install.md) | Install | Two-phase install: CLI bootstrap + setup token, token-gated web setup, self-disabling installer, packaging |
 | [`runtime.md`](runtime.md) | Server runtime | Install mode, port rebind, auth/sessions, live settings, the background agents |
 | [`frontend.md`](frontend.md) | Frontend | Svelte + Bulma: app state in context, component tree, routing, player effects |

@@ -86,7 +86,7 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 	defer wg.Done()
 	for {
 		s.mu.RLock()
-		installed := s.cfg != nil
+		installed := s.cfg != nil && s.cfg.SetupComplete()
 		s.mu.RUnlock()
 		if installed {
 			if _, err := s.ensureDB(ctx); err == nil {

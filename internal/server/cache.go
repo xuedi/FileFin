@@ -25,7 +25,7 @@ func (s *Server) ensureDB(ctx context.Context) (*sql.DB, error) {
 	s.mu.RLock()
 	pool, cfg := s.db, s.cfg
 	s.mu.RUnlock()
-	if cfg == nil {
+	if cfg == nil || !cfg.SetupComplete() {
 		return nil, errors.New("not installed")
 	}
 

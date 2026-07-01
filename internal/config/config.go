@@ -4,10 +4,13 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"filefin/internal/fsutil"
 )
@@ -49,6 +52,8 @@ func (c *Config) ActiveAdmins() int {
 // internal/db), so there is no database backend to configure here.
 type Config struct {
 	Port         int             `json:"port"`
+	BindAddress  string          `json:"bindAddress,omitempty"` // "" => all interfaces; set to loopback when behind a proxy
+	SetupToken   string          `json:"setupToken,omitempty"`  // one-time web-install token; present only while pending, cleared on completion
 	Users        map[string]User `json:"users"`
 	DataDir      string          `json:"dataDir"`
 	MediaFormat  string          `json:"mediaFormat"`  // "" until permanently chosen in Settings
@@ -132,6 +137,57 @@ func (c *Config) SubLang() string {
 		return "en"
 	}
 	return c.SubtitleLanguage
+}
+
+// SetupComplete reports whether first-run setup has finished, i.e. an admin account exists.
+// This - not the mere presence of the config file - is the install/app mode switch: a config
+// that holds only a port and a setup token (no users) is a normal, expected pending state.
+func (c *Config) SetupComplete() bool {
+	return len(c.Users) > 0
+}
+
+// Bind is the listen address the HTTP server binds: the configured bind address (empty means
+// all interfaces) joined with the port. A loopback bind address pins the server to localhost,
+// which is the recommended choice behind a reverse proxy.
+func (c *Config) Bind() string {
+	return c.BindAddress + ":" + strconv.Itoa(c.Port)
+}
+
+// ClearSetupToken removes the one-time web-install token, called once setup completes so the
+// token can never be reused.
+func (c *Config) ClearSetupToken() {
+	c.SetupToken = ""
+}
+
+// NewSetupToken mints a fresh one-time setup token: 32 bytes of crypto/rand rendered as
+// URL-safe base64 (no padding), so it survives intact in a URL query string.
+func NewSetupToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// Create writes a fresh pending config - the chosen port and bind address plus a new setup
+// token, with no users yet - atomically at 0600, and returns it. This is the CLI bootstrap
+// path: the operator sets the port here, then completes setup (admin + data folder) over the
+// web with the token.
+func Create(port int, bind string) (*Config, error) {
+	token, err := NewSetupToken()
+	if err != nil {
+		return nil, err
+	}
+	c := &Config{
+		Port:        port,
+		BindAddress: bind,
+		SetupToken:  token,
+		Users:       map[string]User{},
+	}
+	if err := Save(c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // Path is ~/.filefin.json.

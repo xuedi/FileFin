@@ -93,12 +93,12 @@ func TestLoginThrottle(t *testing.T) {
 }
 
 func TestPasswordPolicyOnInstall(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	s := New()
-	h := s.handler()
-	body := `{"username":"admin","password":"short","port":9999,"dataDir":"` + t.TempDir() + `"}`
+	_, h, token := pendingServer(t, 9999)
+	body := `{"username":"admin","password":"short","dataDir":"` + t.TempDir() + `"}`
+	req := httptest.NewRequest("POST", "/api/install", strings.NewReader(body))
+	req.Header.Set("X-Setup-Token", token)
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
+	h.ServeHTTP(rr, req)
 	if rr.Code != 400 {
 		t.Fatalf("short install password: %d, want 400", rr.Code)
 	}

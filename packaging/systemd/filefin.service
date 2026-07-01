@@ -1,0 +1,47 @@
+[Unit]
+Description=FileFin media server
+Documentation=https://github.com/xuedi/FileFin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=filefin
+Group=filefin
+ExecStart=/usr/bin/filefin serve
+WorkingDirectory=/var/lib/filefin
+# HOME under the state dir so the config (~/.filefin.json) and the disposable cache
+# (~/.cache/filefin) both land in the one writable path below.
+Environment=HOME=/var/lib/filefin
+Restart=on-failure
+RestartSec=5
+
+# Hardening. The service runs as a dedicated unprivileged user in a tight sandbox.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# The only writable path. The data folder is chosen in the web installer; if it lives
+# outside /var/lib/filefin, add it here (a drop-in `ReadWritePaths=` line) or the app cannot
+# write meta.json / imports there. Keeping media under /var/lib/filefin needs no change.
+ReadWritePaths=/var/lib/filefin
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+UMask=0027
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallFilter=@system-service
+# Allow binding ports below 1024 (e.g. 80) as a non-root user.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# GPU optimize (OptimizeMode gpu/all): the encoder needs the render node, so drop
+# PrivateDevices above and grant it explicitly:
+#   PrivateDevices=no
+#   DeviceAllow=/dev/dri rw
+
+[Install]
+WantedBy=multi-user.target

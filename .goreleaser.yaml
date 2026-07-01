@@ -1,0 +1,79 @@
+# GoReleaser builds the binary and every distro package from one config. The in-binary
+# version lives in internal/version/version.go; the release tag must equal it (the
+# `just release` guard enforces that). No -ldflags version stamping is used.
+version: 2
+
+project_name: filefin
+
+before:
+  hooks:
+    # Populate web/dist before the Go build embeds it.
+    - npm ci --prefix web
+    - npm run build --prefix web
+
+builds:
+  - id: filefin
+    main: ./cmd/filefin
+    binary: filefin
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Strip only; version.go is the source of truth, so nothing is injected here.
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: filefin
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+nfpms:
+  - id: filefin
+    package_name: filefin
+    vendor: FileFin
+    homepage: https://github.com/xuedi/FileFin
+    maintainer: Daniel Koch <xuedi@beijingcode.org>
+    description: A small, self-hosted media server that treats the filesystem as the source of truth.
+    license: EUPL-1.2
+    formats:
+      - deb
+      - rpm
+      - archlinux
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/filefin.service
+        dst: /usr/lib/systemd/system/filefin.service
+    scripts:
+      postinstall: packaging/nfpm/postinstall.sh
+    # ffmpeg is a recommended, not hard, dependency (only needed to transcode).
+    recommends:
+      - ffmpeg
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: xuedi
+    name: FileFin

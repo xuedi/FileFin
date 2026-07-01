@@ -119,7 +119,7 @@ func (s *Server) thumbnailLoop() {
 	recovered := false
 	for {
 		s.mu.RLock()
-		installed := s.cfg != nil
+		installed := s.cfg != nil && s.cfg.SetupComplete()
 		s.mu.RUnlock()
 		if !installed {
 			time.Sleep(thumbnailIdlePoll)

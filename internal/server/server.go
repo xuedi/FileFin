@@ -184,12 +184,16 @@ func Run() error {
 		s.signalReconfigDisc()
 
 		port := config.DefaultPort
+		addr := ":" + strconv.Itoa(port)
 		mode := "install"
 		if cfg != nil {
-			port, mode = cfg.Port, "app"
+			port, addr = cfg.Port, cfg.Bind()
+			if cfg.SetupComplete() {
+				mode = "app"
+			}
 		}
 		srv := &http.Server{
-			Addr:    ":" + strconv.Itoa(port),
+			Addr:    addr,
 			Handler: s.handler(),
 			// ReadHeaderTimeout bounds a slow-header (Slowloris) client; IdleTimeout reclaims
 			// kept-alive connections. ReadTimeout/WriteTimeout are left at 0 on purpose so a
@@ -204,6 +208,12 @@ func Run() error {
 		s.logger().For(logging.Backend).Info(
 			fmt.Sprintf("serving on http://localhost:%d", port),
 			logging.Fields{"port": port, "mode": mode})
+		if mode == "install" && cfg != nil {
+			for _, u := range SetupURLs(cfg) {
+				s.logger().For(logging.Backend).Info("setup required: open the install page in a browser",
+					logging.Fields{"url": u})
+			}
+		}
 
 		select {
 		case err := <-errCh:
@@ -218,18 +228,21 @@ func Run() error {
 	}
 }
 
-// handler builds the routes for the current mode. Install routes are always present;
-// authenticated app routes only once a config exists.
+// handler builds the routes for the current mode. /api/state is always present; the
+// token-gated install routes are mounted only while setup is pending, and disappear (404)
+// once complete; the authenticated app routes mount only once setup is complete.
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", s.handleState)
-	mux.HandleFunc("POST /api/install", s.handleInstall)
-	mux.HandleFunc("GET /api/install/browse", s.handleBrowse)
 
 	s.mu.RLock()
-	installed := s.cfg != nil
+	complete := s.cfg != nil && s.cfg.SetupComplete()
 	s.mu.RUnlock()
-	if installed {
+	if !complete {
+		mux.HandleFunc("POST /api/install", s.handleInstall)
+		mux.HandleFunc("GET /api/install/browse", s.handleBrowse)
+	}
+	if complete {
 		mux.HandleFunc("POST /api/login", s.handleLogin)
 		mux.HandleFunc("POST /api/logout", s.handleLogout)
 		mux.Handle("GET /api/me", s.auth(s.handleMe))

@@ -135,10 +135,11 @@ export class AppState {
     loading: false, saving: false, uploadingPoster: false, form: null,
   })
 
-  // install form
+  // install form. The port is fixed at bootstrap (not entered here); the one-time setup token
+  // arrives in the install URL and is held in memory, sent as a header on every setup call.
   iuser = $state('')
   ipass = $state('')
-  iport = $state(8080)
+  setupToken = $state('')
   installError = $state('')
 
   // login form
@@ -401,6 +402,22 @@ export class AppState {
 
   // --- install / auth ---
 
+  // captureSetupToken reads the one-time token from the install URL's ?token=..., keeps it in
+  // memory, and scrubs it from the address bar (and browser history) so it is never re-sent in
+  // a query string or left visible - every setup call carries it as the X-Setup-Token header.
+  captureSetupToken() {
+    const t = new URLSearchParams(location.search).get('token')
+    if (t) {
+      this.setupToken = t
+      history.replaceState({}, '', location.pathname)
+    }
+  }
+
+  // setupHeaders is the header set for a token-gated setup call, merged with any extras.
+  setupHeaders(extra = {}) {
+    return this.setupToken ? { 'X-Setup-Token': this.setupToken, ...extra } : { ...extra }
+  }
+
   async openBrowser() {
     this.browseOpen = true
     await this.navigate('') // empty path: server starts at the app's current directory
@@ -410,7 +427,7 @@ export class AppState {
     this.browseError = ''
     try {
       const q = path ? '?path=' + encodeURIComponent(path) : ''
-      const r = await api('/api/install/browse' + q)
+      const r = await api('/api/install/browse' + q, { headers: this.setupHeaders() })
       this.browsePath = r.path
       this.browseParent = r.parent
       this.browseEntries = r.entries
@@ -427,19 +444,24 @@ export class AppState {
   async doInstall(e) {
     e.preventDefault()
     this.installError = ''
+    if (!this.setupToken) {
+      this.installError = 'No setup token - open the link printed by `filefin setup`.'
+      return
+    }
     try {
       const r = await api('/api/install', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: this.iuser, password: this.ipass, port: Number(this.iport), dataDir: this.dataDir }),
+        headers: this.setupHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ username: this.iuser, password: this.ipass, dataDir: this.dataDir }),
       })
-      // The server is rebinding to the chosen port; reload the page there.
+      // Setup is complete: the installer is now gone. Reload on the (unchanged) port to land on
+      // the login page, without the token in the URL.
       const url = window.location.protocol + '//' + window.location.hostname + ':' + r.port + '/'
       setTimeout(() => {
         window.location.href = url
       }, 800)
-    } catch {
-      this.installError = 'Setup failed'
+    } catch (e) {
+      this.installError = (await errText(e)) || 'Setup failed'
     }
   }
 

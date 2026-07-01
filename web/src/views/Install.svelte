@@ -6,6 +6,20 @@
 
 <form class="box ff-auth" onsubmit={(e) => app.doInstall(e)}>
   <h1 class="title is-4 has-text-centered">FileFin Setup</h1>
+
+  {#if !app.setupToken}
+    <div class="notification is-warning is-light">
+      <p>This installer needs the one-time setup token.</p>
+      <p class="is-size-7">Open the link printed by <code>filefin setup</code>, or paste the token below.</p>
+    </div>
+    <div class="field">
+      <p class="label is-small has-text-grey">Setup token</p>
+      <div class="control">
+        <input class="input" placeholder="Paste setup token" bind:value={app.setupToken} />
+      </div>
+    </div>
+  {/if}
+
   <div class="field">
     <div class="control">
       <input class="input" placeholder="Admin username" bind:value={app.iuser} autocomplete="username" />
@@ -14,11 +28,6 @@
   <div class="field">
     <div class="control">
       <input class="input" type="password" placeholder="Password" bind:value={app.ipass} autocomplete="new-password" />
-    </div>
-  </div>
-  <div class="field">
-    <div class="control">
-      <input class="input" type="number" placeholder="Server port" bind:value={app.iport} min="1" max="65535" />
     </div>
   </div>
 
@@ -48,7 +57,7 @@
   {/if}
 
   <div class="field">
-    <button type="submit" class="button is-primary is-fullwidth" disabled={!app.dataDir}>Set up</button>
+    <button type="submit" class="button is-primary is-fullwidth" disabled={!app.dataDir || !app.setupToken}>Set up</button>
   </div>
   {#if app.installError}<p class="has-text-danger">{app.installError}</p>{/if}
 </form>

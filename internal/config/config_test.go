@@ -74,6 +74,88 @@ func TestOptimizeModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSetupComplete(t *testing.T) {
+	var c Config
+	if c.SetupComplete() {
+		t.Fatal("empty config should not be setup-complete")
+	}
+	c.Users = map[string]User{}
+	if c.SetupComplete() {
+		t.Fatal("config with no users should not be setup-complete")
+	}
+	c.Users["admin"] = User{Admin: true}
+	if !c.SetupComplete() {
+		t.Fatal("config with a user should be setup-complete")
+	}
+}
+
+func TestBind(t *testing.T) {
+	if got := (&Config{Port: 8080}).Bind(); got != ":8080" {
+		t.Fatalf("all-interfaces bind = %q, want :8080", got)
+	}
+	if got := (&Config{Port: 80, BindAddress: "127.0.0.1"}).Bind(); got != "127.0.0.1:80" {
+		t.Fatalf("loopback bind = %q, want 127.0.0.1:80", got)
+	}
+}
+
+func TestNewSetupToken(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		tok, err := NewSetupToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 32 bytes -> 43 chars of unpadded base64url; enough entropy that a guess is infeasible.
+		if len(tok) < 40 {
+			t.Fatalf("token too short: %q (%d chars)", tok, len(tok))
+		}
+		if seen[tok] {
+			t.Fatalf("duplicate token minted: %q", tok)
+		}
+		seen[tok] = true
+	}
+}
+
+func TestClearSetupToken(t *testing.T) {
+	c := &Config{SetupToken: "secret"}
+	c.ClearSetupToken()
+	if c.SetupToken != "" {
+		t.Fatalf("token not cleared: %q", c.SetupToken)
+	}
+}
+
+func TestCreatePendingConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := Create(80, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Port != 80 || cfg.BindAddress != "127.0.0.1" {
+		t.Fatalf("unexpected port/bind: %+v", cfg)
+	}
+	if cfg.SetupToken == "" {
+		t.Fatal("Create did not mint a setup token")
+	}
+	if cfg.SetupComplete() {
+		t.Fatal("a freshly created config must be pending, not complete")
+	}
+	if !Exists() {
+		t.Fatal("Create did not write the config file")
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SetupToken != cfg.SetupToken || got.Port != 80 || got.BindAddress != "127.0.0.1" {
+		t.Fatalf("loaded config differs from created: %+v vs %+v", got, cfg)
+	}
+	if got.SetupComplete() {
+		t.Fatal("loaded pending config must not be complete")
+	}
+}
+
 func TestTranscodeDefaults(t *testing.T) {
 	c := &Config{}
 	if !c.TranscodeOn() {

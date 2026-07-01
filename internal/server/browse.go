@@ -8,12 +8,6 @@ import (
 	"strings"
 )
 
-func (s *Server) installed() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cfg != nil
-}
-
 // appDir is the installer's default browse location: the directory the app was
 // started from, so the data folder defaults to the current path.
 func appDir() string {
@@ -37,11 +31,20 @@ type browseEntry struct {
 	IsDir bool   `json:"isDir"`
 }
 
-// handleBrowse lists the subdirectories of a path so the installer can pick a data
-// folder. Install-mode only (no auth), like the other /api/install endpoints.
+// handleBrowse lists the subdirectories of a path so the installer can pick a data folder.
+// Mounted only while setup is pending, and gated by the one-time setup token (the same header
+// the install POST uses), so an unauthenticated remote caller cannot use it to walk the
+// server's filesystem.
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	if s.installed() {
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+	if cfg == nil || cfg.SetupComplete() {
 		http.Error(w, "already installed", http.StatusConflict)
+		return
+	}
+	if !validSetupToken(cfg, r.Header.Get("X-Setup-Token")) {
+		http.Error(w, "invalid or missing setup token", http.StatusForbidden)
 		return
 	}
 	writeBrowse(w, r, appDir(), false)

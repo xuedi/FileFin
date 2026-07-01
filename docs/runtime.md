@@ -6,33 +6,40 @@ runtime: one process, one embedded frontend, one JSON API, no external services.
 
 ## Two modes from one binary
 
-There is a single persisted file - `~/.filefin.json` - holding the port, the data dir, the
-user accounts, and all settings. Its presence is the mode switch: no config means **install
-mode**, a config means **app mode**. The cache is always local SQLite (see `library.md`), so
-there is nothing else to provision.
+There is a single persisted file - `~/.filefin.json` - holding the port, the bind address, the
+data dir, the user accounts, and all settings. The mode switch is **whether an admin account
+exists** (`SetupComplete()`), not merely whether the file is present: a config that holds only
+a port, bind address, and a one-time setup token (no users) is a normal **pending** state that
+keeps the server in install mode. See `install.md` for the full absent -> pending -> complete
+lifecycle, the setup token, and the CLI. The cache is always local SQLite (see `library.md`),
+so there is nothing else to provision.
 
 ```mermaid
 flowchart TD
-    START[Run] --> EX{config exists?}
-    EX -->|no| INS[install mode: serve setup on the default port]
+    START[Run] --> EX{setup complete?<br/>(any users)}
+    EX -->|no| INS[install mode: serve the token-gated setup on the pending port]
     EX -->|yes| APP[app mode: serve GUI + API on the configured port]
-    INS -->|POST /api/install writes config| REL[reload signal]
+    INS -->|POST /api/install: create admin, clear token| REL[reload signal]
     REL --> APP
 ```
 
 The server loop owns this: it loads the config (if any), starts the background workers, binds
-an HTTP listener, and serves until a **reload signal** arrives - at which point it shuts the
-current listener and re-binds from the freshly loaded config. That signal is how first-run
-setup makes the chosen port take effect **without a restart**: `POST /api/install` creates the
-admin user and writes the config, then fires reload and the loop rebinds in app mode.
+an HTTP listener at `bindAddress:port`, and serves until a **reload signal** arrives - at which
+point it shuts the current listener and re-binds from the freshly loaded config. That signal is
+how completing setup swaps the server into app mode **without a restart**: `POST /api/install`
+creates the admin user, clears the setup token, writes the config, then fires reload and the
+loop rebuilds the handler in app mode (the port was already fixed when the pending config was
+bootstrapped, so it does not change here).
 
 ## Routes by mode
 
-The router is rebuilt per bind. Install routes (`/api/state`, `/api/install`,
-`/api/install/browse`) are always present; the authenticated end-user and admin routes are
-mounted only once a config exists. Everything else falls through to the SPA handler, which
-serves the embedded Svelte build and falls back to `index.html` for client-side routes, so the
-app works fully offline with no external assets.
+The router is rebuilt per bind. `/api/state` is always present. The token-gated install routes
+(`/api/install`, `/api/install/browse`) are mounted **only while setup is pending** and
+disappear once it is complete; the authenticated end-user and admin routes mount **only** once
+setup is complete. Everything else falls through to the SPA handler, which serves the embedded
+Svelte build and falls back to `index.html` for client-side routes, so the app works fully
+offline with no external assets - and so a completed server answers a stale `/api/install` with
+the SPA rather than an installer.
 
 ## Auth
 
@@ -184,9 +191,9 @@ stdout.
 
 | method + path                    | purpose                                         |
 |----------------------------------|-------------------------------------------------|
-| `GET  /api/state`                | whether first-run setup is still needed         |
-| `POST /api/install`              | first-run: create admin + config, rebind        |
-| `GET  /api/install/browse`       | pick a data folder (install mode only)          |
+| `GET  /api/state`                | whether first-run setup is still needed (never exposes the token) |
+| `POST /api/install`              | first-run: token-gated create admin, clear token, rebind (pending only) |
+| `GET  /api/install/browse`       | pick a data folder (pending only, token-gated)  |
 | `POST /api/login` / `logout`     | session create / destroy                        |
 | `GET  /api/me`                   | current user + admin flag + alias               |
 | `GET  /api/admin/summary`        | dashboard overview (library/users/optimizer/enrich/imports/health) |
