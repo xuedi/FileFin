@@ -25,6 +25,7 @@ import (
 var videoExts = map[string]bool{
 	".mp4": true, ".webm": true, ".mkv": true, ".avi": true,
 	".mov": true, ".m4v": true, ".ts": true, ".m2ts": true, ".wmv": true,
+	".mpg": true, ".mpeg": true,
 }
 
 var imageExts = map[string]bool{

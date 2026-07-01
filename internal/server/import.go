@@ -29,6 +29,7 @@ import (
 var videoExts = map[string]bool{
 	".mp4": true, ".webm": true, ".mkv": true, ".avi": true,
 	".mov": true, ".m4v": true, ".ts": true, ".m2ts": true,
+	".mpg": true, ".mpeg": true,
 }
 
 // categoryByID returns the category whose stored id matches, reading the filesystem
