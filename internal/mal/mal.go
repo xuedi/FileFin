@@ -52,7 +52,8 @@ type listResponse struct {
 		Node struct {
 			Title             string `json:"title"`
 			AlternativeTitles struct {
-				En string `json:"en"`
+				En       string   `json:"en"`
+				Synonyms []string `json:"synonyms"`
 			} `json:"alternative_titles"`
 			StartSeason struct {
 				Year int `json:"year"`
@@ -124,7 +125,8 @@ func (c *Client) fetch(ctx context.Context, u string) (listResponse, error) {
 }
 
 // mapEntries turns one decoded page into matcher entries. The romaji node title is the
-// primary; the English alternative becomes an alias so either side can match the library.
+// primary; the English alternative and any synonyms become aliases so either side can match
+// the library. A synonym that carries no latin letters folds to an empty key and is dropped.
 func mapEntries(page listResponse) []watchlist.Entry {
 	out := make([]watchlist.Entry, 0, len(page.Data))
 	for _, d := range page.Data {
@@ -137,10 +139,25 @@ func mapEntries(page listResponse) []watchlist.Entry {
 		if e.Year == 0 {
 			e.Year = yearOf(d.Node.StartDate)
 		}
-		if alt := strings.TrimSpace(d.Node.AlternativeTitles.En); alt != "" && alt != d.Node.Title {
-			e.Aliases = []string{alt}
-		}
+		e.Aliases = aliasesFor(d.Node.Title, d.Node.AlternativeTitles.En, d.Node.AlternativeTitles.Synonyms)
 		out = append(out, e)
+	}
+	return out
+}
+
+// aliasesFor keeps the English title and synonyms that carry a title distinct (after the
+// shared normalization) from the primary title and from one another.
+func aliasesFor(title, en string, synonyms []string) []string {
+	seen := map[string]bool{watchlist.Normalize(title): true}
+	var out []string
+	for _, alt := range append([]string{en}, synonyms...) {
+		alt = strings.TrimSpace(alt)
+		key := watchlist.Normalize(alt)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, alt)
 	}
 	return out
 }

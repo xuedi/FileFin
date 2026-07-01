@@ -25,9 +25,9 @@ flowchart TD
     U["user settings: MyDramaList"] -->|save username| P[(config.User.MDLUsername)]
     U -->|Import| PV["POST /api/mdl/preview"]
     PV --> F["fetch public list page"]
-    F --> PARSE["parse status tables -> entries<br/>(title, year, 1-10 rating, status)"]
-    PARSE --> M["match entries to library<br/>by normalized title (+ year)"]
-    M --> R["review table:<br/>matched (selectable) + unmatched"]
+    F --> PARSE["parse status tables -> entries<br/>(title + aliases, year, 1-10 rating, status)"]
+    PARSE --> M["match entries to library<br/>(shared confidence-tiered matcher)"]
+    M --> R["review table:<br/>matched (tiered, selectable) + unmatched"]
     R -->|Confirm| AP["POST /api/mdl/apply"]
     AP --> W["per item: write rating<br/>+ watched via UpdateState"]
     W --> MJ[(meta.json state)]
@@ -52,19 +52,50 @@ flowchart TD
 ## Matching
 
 Matching is a shared, source-neutral matcher (the MyAnimeList importer in [`mal.md`](mal.md) uses
-the same one, so the year-strict rules live in one place). Both sides are normalized to lowercase
-alphanumerics (punctuation and spacing dropped, `&` folded to `and`) and paired on that key. An
-entry may also carry alternative titles (aliases) to try when its primary title matches nothing;
-MyDramaList carries a single title, so it brings none.
+the same one, so every rule below lives in one place and improves both sources at once).
 
-The **year is part of the decision**, which stops a shared normalized title (an anime "Kingdom" and
-a Korean drama "Kingdom") from auto-selecting the wrong release:
+**Normalization.** Both sides are reduced to a comparison key: lowercased, `&` folded to `and`,
+diacritics folded to their base letters (so a macron or accent no longer blocks a romanization
+match), a single leading article (`the` / `a` / `an`) dropped, and everything else reduced to
+alphanumerics. Titles are paired on that key.
 
-- When a candidate's year equals the entry's year, it is picked and flagged **exact**.
-- Otherwise the candidate whose year is **closest** is offered (not blindly the first), flagged
-  **approximate**, and the review table shows `approx: year x != y`.
-- Only exact rows are **pre-selected**; approximate rows arrive **unchecked**, so a year-mismatched
-  match is never applied without a deliberate tick.
+**Aliases.** An entry may carry alternative titles to try when its primary title keys to nothing.
+MyDramaList serves two for free on each title anchor - the `oldtitle` attribute and the title's URL
+slug (de-slugged, e.g. `/734-i-will-die-soon` -> `i will die soon`) - so a drama filed under a
+different romanization can still match. Aliases that collapse to the same key as the primary title
+are dropped.
+
+**Confidence tiers.** Each match is graded, and the grade decides pre-selection. The year sharpens
+the grade but is only strict where it has to be - to break a *collision* (an anime "Kingdom" and a
+Korean drama "Kingdom" sharing a key); for a title unique in the library it adds no friction. The
+tolerance for "close enough" is **+/-1 year**.
+
+```mermaid
+flowchart TD
+    K{"how many library<br/>items share the key?"}
+    K -->|zero| FZ{"a single library key is<br/>very similar and clearly<br/>beats the runner-up?"}
+    FZ -->|no| U0["unmatched"]
+    FZ -->|yes| AX["approximate<br/>(approx: similar title)"]
+    K -->|one| UNI{"year vs the entry"}
+    UNI -->|equal| E1["exact"]
+    UNI -->|absent, or within +/-1| C1["confident"]
+    UNI -->|off by more than 1| A1["approximate"]
+    K -->|many| COL{"year vs the candidates"}
+    COL -->|a candidate's year is equal| E2["exact (that one)"]
+    COL -->|exactly one within +/-1| C2["confident (that one)"]
+    COL -->|otherwise| A2["approximate (closest year)"]
+```
+
+- **exact** and **confident** rows arrive **pre-selected**; **approximate** rows arrive
+  **unchecked**, so a weaker match is never applied without a deliberate tick.
+- The review table tags each row with its tier: `exact`, `confident`, or `approx: <reason>` (a year
+  mismatch shows `approx: year x != y`; a fuzzy hit shows `approx: similar title`).
+
+**Fuzzy fallback.** When the primary title and every alias key to nothing, a bounded similarity
+pass scores the entry against the library keys by edit-distance ratio and offers the best only when
+it clears a high threshold **and** clearly beats the runner-up (so a near-tie never produces a
+silent guess). A fuzzy hit is always **approximate**. The personal library is small, so the pass is
+cheap; length-gap pruning bounds it further.
 
 Unmatched titles are listed so the user can see what was skipped.
 

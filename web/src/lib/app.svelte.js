@@ -590,9 +590,10 @@ export class AppState {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ categoryId: Number(this.mdl.categoryId) }),
       })
-      // Only exact (title + year) matches are pre-selected; a year-mismatched row arrives
-      // unchecked so a wrong cross-title match is never applied without a deliberate tick.
-      p.matched = p.matched.map((m) => ({ ...m, selected: m.exact }))
+      // Exact and confident (a unique title trusted despite an off/absent year) matches are
+      // pre-selected; weaker approximate rows arrive unchecked so a wrong cross-title match is
+      // never applied without a deliberate tick.
+      p.matched = p.matched.map((m) => ({ ...m, selected: m.confidence === 'exact' || m.confidence === 'confident' }))
       this.mdl.preview = p
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not read your MyDramaList list')
@@ -632,7 +633,7 @@ export class AppState {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ categoryId: Number(this.mal.categoryId) }),
       })
-      p.matched = p.matched.map((m) => ({ ...m, selected: m.exact }))
+      p.matched = p.matched.map((m) => ({ ...m, selected: m.confidence === 'exact' || m.confidence === 'confident' }))
       this.mal.preview = p
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not read your MyAnimeList list')

@@ -53,7 +53,8 @@ type mdlMatch struct {
 	Year            int    `json:"year"`
 	Rating          int    `json:"rating"`
 	WillMarkWatched bool   `json:"willMarkWatched"`
-	Exact           bool   `json:"exact"`
+	Confidence      string `json:"confidence"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 // mdlPreview is the preview response: the matched proposals plus the MDL titles that found
@@ -119,7 +120,8 @@ func (s *Server) handleMDLPreview(w http.ResponseWriter, r *http.Request) {
 			Year:            m.Entry.Year,
 			Rating:          m.Entry.Rating,
 			WillMarkWatched: m.Entry.Watched,
-			Exact:           m.Exact,
+			Confidence:      string(m.Confidence),
+			Reason:          m.Reason,
 		})
 	}
 	writeJSON(w, out)
