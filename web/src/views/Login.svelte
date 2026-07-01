@@ -22,5 +22,5 @@
   {#if app.loginError}<p class="has-text-danger">{app.loginError}</p>{/if}
 </form>
 <div class="ff-auth-foot has-text-centered">
-  <GithubLink />
+  <GithubLink version={app.version} />
 </div>

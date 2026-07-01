@@ -109,6 +109,7 @@ function uploadFile(file, session, onProgress) {
 export class AppState {
   booting = $state(true)
   needsSetup = $state(false)
+  version = $state('') // running binary's release version, from /api/state
   me = $state(null) // { user, admin }
   view = $state('library') // 'library' | 'admin' | 'settings'
   adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress' | 'unhealthy'

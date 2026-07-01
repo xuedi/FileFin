@@ -12,16 +12,19 @@ import (
 	"filefin/internal/config"
 	"filefin/internal/db"
 	"filefin/internal/logging"
+	"filefin/internal/version"
 )
 
-// handleState tells the frontend whether first-run setup is still needed.
+// handleState tells the frontend whether first-run setup is still needed, and the running
+// binary's version (shown in the UI, so it always reflects the actual deployed build).
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	needsSetup := s.cfg == nil
 	s.mu.RUnlock()
 	writeJSON(w, struct {
-		NeedsSetup bool `json:"needsSetup"`
-	}{needsSetup})
+		NeedsSetup bool   `json:"needsSetup"`
+		Version    string `json:"version"`
+	}{needsSetup, version.Version})
 }
 
 // handleInstall is the first-run setup: it creates the admin user and the config on

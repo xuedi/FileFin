@@ -45,6 +45,15 @@ body { min-height: 100vh; }
 .ff-main { flex: 1; padding: 1.25rem; overflow-y: auto; }
 
 .ff-auth-foot { margin-top: 1.25rem; }
+.ff-foot-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.ff-version {
+  color: var(--bulma-text-weak);
+  font-size: 0.85rem;
+}
 .ff-github {
   display: inline-flex;
   align-items: center;

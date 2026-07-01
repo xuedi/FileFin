@@ -36,6 +36,7 @@
     try {
       const st = await api('/api/state')
       app.needsSetup = st.needsSetup
+      app.version = st.version || ''
       if (app.needsSetup) {
         try {
           const r = await api('/api/install/browse') // defaults to the app's current directory
@@ -108,7 +109,7 @@
         {/if}
       </ul>
       <div class="ff-sidebar-foot">
-        <GithubLink />
+        <GithubLink version={app.version} />
       </div>
     </aside>
     <main class="ff-main">
