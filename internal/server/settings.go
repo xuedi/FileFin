@@ -228,7 +228,7 @@ func (s *Server) handleSetLogging(w http.ResponseWriter, r *http.Request) {
 		}
 		// Verify the path is writable before committing it, so a bad path is rejected
 		// here rather than silently keeping the old destination at apply time.
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 		if err != nil {
 			http.Error(w, "log output path is not writable", http.StatusBadRequest)
 			return

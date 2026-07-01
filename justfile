@@ -23,17 +23,14 @@ check:
     go vet ./...
     go test ./...
 
-# mount backspace's Plex home (DB + Metadata) and media root read-only, for manual
-# Plex-import testing through the GUI. backspace is strictly read-only; this never writes.
-plex-mount:
-    mkdir -p /tmp/filefin-plex/lib /tmp/filefin-plex/data
-    mountpoint -q /tmp/filefin-plex/lib || sshfs -o ro,reconnect "backspace:/var/lib/plex/Plex Media Server" /tmp/filefin-plex/lib
-    mountpoint -q /tmp/filefin-plex/data || sshfs -o ro,reconnect backspace:/mnt/data/plex /tmp/filefin-plex/data
-    @echo "DB path:      /tmp/filefin-plex/lib/Plug-in Support/Databases/com.plexapp.plugins.library.db"
-    @echo "metadata-dir: /tmp/filefin-plex/lib/Metadata"
-    @echo "media base:   /tmp/filefin-plex/data"
+# scan Go dependencies for known vulnerabilities (needs the online vuln database)
+sec-vuln:
+    govulncheck ./...
 
-# unmount the read-only backspace Plex mounts
-plex-unmount:
-    -fusermount -u /tmp/filefin-plex/data
-    -fusermount -u /tmp/filefin-plex/lib
+# static security-oriented checks: gosec if installed, else go vet as a floor
+sec-static:
+    @command -v gosec >/dev/null 2>&1 && gosec ./... || (echo "gosec not installed; running go vet as a floor" && go vet ./...)
+
+# audit the bundled frontend dependencies
+sec-web:
+    cd web && npm audit

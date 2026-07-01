@@ -30,6 +30,7 @@ type Server struct {
 	mu       sync.RWMutex
 	cfg      *config.Config
 	sessions *sessionStore
+	logins   *loginLimiter
 	reload   chan struct{}
 
 	db *sql.DB // lazily opened SQLite cache pool (nil until an admin page is entered)
@@ -98,6 +99,7 @@ type Server struct {
 func New() *Server {
 	return &Server{
 		sessions:     newSessionStore(),
+		logins:       newLoginLimiter(),
 		reload:       make(chan struct{}, 1),
 		progress:     map[int64]progressEntry{},
 		metaMgr:      importer.NewManager(),
@@ -186,7 +188,17 @@ func Run() error {
 		if cfg != nil {
 			port, mode = cfg.Port, "app"
 		}
-		srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: s.handler()}
+		srv := &http.Server{
+			Addr:    ":" + strconv.Itoa(port),
+			Handler: s.handler(),
+			// ReadHeaderTimeout bounds a slow-header (Slowloris) client; IdleTimeout reclaims
+			// kept-alive connections. ReadTimeout/WriteTimeout are left at 0 on purpose so a
+			// large multipart upload or a long HLS/ServeContent video response is never
+			// truncated mid-stream.
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			MaxHeaderBytes:    1 << 20,
+		}
 		errCh := make(chan error, 1)
 		go func() { errCh <- srv.ListenAndServe() }()
 		s.logger().For(logging.Backend).Info(
@@ -304,7 +316,30 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("DELETE /api/admin/imports/{id}", s.admin(s.handleDeleteImport))
 	}
 	mux.Handle("/", s.spa())
-	return mux
+	return securityHeaders(mux)
+}
+
+// contentSecurityPolicy is strict - no unsafe-inline - because the bundled Svelte app ships
+// only external hashed script/style assets and the source has no inline styles. blob: is
+// allowed for media and workers so hls.js playback works; HSTS is intentionally omitted, as
+// it belongs at the TLS edge (Caddy).
+const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
+	"img-src 'self'; media-src 'self' blob:; connect-src 'self'; worker-src blob:; " +
+	"font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+// securityHeaders wraps the mux with a baseline set of hardening response headers applied
+// to every route. media/subtitle/HLS handlers set accurate explicit Content-Types, so
+// nosniff does not break playback.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // spa serves the embedded frontend, falling back to index.html for client routes.

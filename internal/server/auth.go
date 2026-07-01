@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,6 +15,17 @@ import (
 )
 
 const sessionCookie = "filefin_session"
+
+// dummyHash is a valid bcrypt hash the login handler compares against when the account is
+// unknown or blocked, so every rejection path spends the same time in bcrypt and cannot be
+// distinguished by timing (which would otherwise reveal whether an account exists).
+var dummyHash = func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("filefin/constant-time-login-placeholder"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}()
 
 type userKey struct{}
 
@@ -108,16 +120,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	ip := clientIP(r)
+	now := time.Now()
+	if ok, retry := s.logins.allowed(req.Username, ip, now); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	s.mu.RLock()
 	u, ok := s.cfg.Users[req.Username]
 	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
-	// A blocked account is rejected exactly like a bad password, so a block leaks
-	// nothing about which accounts exist.
-	if !ok || u.Blocked || bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(req.Password)) != nil {
+	// Always run exactly one bcrypt compare. For an unknown or blocked account, compare
+	// against a fixed dummy hash so the rejection takes the same time as a wrong password
+	// (constant-time), and a block still leaks nothing about which accounts exist.
+	hash := dummyHash
+	if ok && !u.Blocked && u.Hash != "" {
+		hash = []byte(u.Hash)
+	}
+	valid := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil && ok && !u.Blocked
+	if !valid {
+		s.logins.fail(req.Username, ip, now)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	s.logins.success(req.Username)
 	id, err := s.sessions.create(req.Username)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -129,6 +157,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    id,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
@@ -139,7 +168,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.sessions.delete(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/",
+		HttpOnly: true, Secure: cookieSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

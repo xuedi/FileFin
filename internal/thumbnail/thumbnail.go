@@ -66,7 +66,8 @@ func FramePoster(ctx context.Context, ffmpeg, video, dst string) error {
 func encode(ctx context.Context, ffmpeg string, preInput []string, src, vf, dst string) error {
 	tmp := dst + ".tmp"
 	args := append([]string{"-y", "-nostdin"}, preInput...)
-	args = append(args, "-i", src, "-vf", vf, "-frames:v", "1", "-an", "-f", "webp", tmp)
+	// Confine ffmpeg to local files so a crafted media file cannot pivot to a network input.
+	args = append(args, "-protocol_whitelist", "file,crypto,data", "-i", src, "-vf", vf, "-frames:v", "1", "-an", "-f", "webp", tmp)
 
 	if err := ffrun.Run(ctx, ffmpeg, args...); err != nil {
 		os.Remove(tmp)

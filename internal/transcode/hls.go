@@ -349,7 +349,10 @@ func (m *Manager) startFFmpeg(ctx context.Context, dir, inputPath, title string,
 		// the relaunched encoder's segments stay aligned with the up-front VOD playlist.
 		args = append(args, "-copyts", "-ss", fmt.Sprint(startSeg*segmentSeconds))
 	}
-	args = append(args, "-i", inputPath)
+	// Confine ffmpeg to local files so a media file whose bytes are actually a playlist
+	// cannot pivot to an http:/concat: input (the crypto/data layers a normal container may
+	// legitimately use stay allowed).
+	args = append(args, "-protocol_whitelist", "file,crypto,data", "-i", inputPath)
 	if remux {
 		args = append(args, "-c", "copy")
 	} else {

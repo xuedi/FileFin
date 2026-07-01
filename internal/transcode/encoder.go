@@ -60,7 +60,9 @@ func videoCodecArgs(enc Encoder) (preInput, vcodec []string) {
 func OptimizeArgs(enc Encoder, inputPath, outputPath string, extra ...string) []string {
 	preInput, vcodec := videoCodecArgs(enc)
 	args := append([]string{"-nostdin", "-y"}, preInput...)
-	args = append(args, "-i", inputPath)
+	// Confine ffmpeg to local files (plus the crypto/data layers a normal container may use)
+	// so a crafted input cannot pivot to a network/other-file protocol.
+	args = append(args, "-protocol_whitelist", "file,crypto,data", "-i", inputPath)
 	args = append(args, vcodec...)
 	// -f mp4 is explicit because the worker writes to a ".tmp" path ffmpeg cannot infer.
 	args = append(args, "-c:a", "aac", "-b:a", "160k", "-ac", "2",

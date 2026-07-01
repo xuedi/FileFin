@@ -43,7 +43,7 @@ func TestInstallFlow(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	body := `{"username":"admin","password":"pw","port":9999,"dataDir":"` + dataDir + `"}`
+	body := `{"username":"admin","password":"password1","port":9999,"dataDir":"` + dataDir + `"}`
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
 	if rr.Code != 200 {
@@ -86,7 +86,7 @@ func TestInstallRemovesOldCache(t *testing.T) {
 	s := New()
 	h := s.handler()
 	dataDir := t.TempDir()
-	body := `{"username":"admin","password":"pw","port":9999,"dataDir":"` + dataDir + `"}`
+	body := `{"username":"admin","password":"password1","port":9999,"dataDir":"` + dataDir + `"}`
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))
 	if rr.Code != 200 {
@@ -102,8 +102,8 @@ func TestInstallRejectsBadDataDir(t *testing.T) {
 	s := New()
 	h := s.handler()
 	for _, body := range []string{
-		`{"username":"admin","password":"pw","port":9999}`,                        // missing dataDir
-		`{"username":"admin","password":"pw","port":9999,"dataDir":"/no/such/x"}`, // nonexistent
+		`{"username":"admin","password":"password1","port":9999}`,                        // missing dataDir
+		`{"username":"admin","password":"password1","port":9999,"dataDir":"/no/such/x"}`, // nonexistent
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest("POST", "/api/install", strings.NewReader(body)))

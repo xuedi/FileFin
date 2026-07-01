@@ -126,7 +126,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer fh.Close()
 	fi, err := fh.Stat()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.logger().For(logging.Backend).Error("could not stat media file", logging.Fields{"error": err.Error()})
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), fh)

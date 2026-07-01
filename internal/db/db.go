@@ -50,7 +50,9 @@ func Open() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// 0700: the cache mirrors library metadata and per-user playback state, so it should not
+	// be readable by other local accounts on a multi-user host.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
 	pool, err := sql.Open("sqlite",

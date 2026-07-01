@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"filefin/internal/httpsafe"
 	"filefin/internal/watchlist"
 )
 
@@ -43,7 +44,11 @@ type Client struct {
 
 // New returns a Client with a sane timeout.
 func New(clientID string) *Client {
-	return &Client{http: &http.Client{Timeout: 30 * time.Second}, baseURL: "https://api.myanimelist.net", clientID: clientID}
+	return &Client{
+		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: httpsafe.NoInternalRedirect},
+		baseURL:  "https://api.myanimelist.net",
+		clientID: clientID,
+	}
 }
 
 // listResponse is one page of the animelist endpoint.
@@ -113,7 +118,7 @@ func (c *Client) fetch(ctx context.Context, u string) (listResponse, error) {
 	default:
 		return listResponse{}, fmt.Errorf("mal: http %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(httpsafe.LimitBody(resp.Body))
 	if err != nil {
 		return listResponse{}, fmt.Errorf("mal read: %w", err)
 	}

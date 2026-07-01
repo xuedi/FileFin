@@ -55,7 +55,7 @@ func TestUserManagement(t *testing.T) {
 
 	// Create a user: it gets a minted id and can then log in.
 	rr := do(t, h, "POST", "/api/admin/users",
-		`{"email":"Carol@Example.com","alias":"Carol","password":"hunter2","admin":false}`, admin)
+		`{"email":"Carol@Example.com","alias":"Carol","password":"hunter22","admin":false}`, admin)
 	if rr.Code != 200 {
 		t.Fatalf("create: %d %s", rr.Code, rr.Body.String())
 	}
@@ -68,7 +68,7 @@ func TestUserManagement(t *testing.T) {
 	}
 
 	// Duplicate email is rejected; bad email is rejected.
-	if rr := do(t, h, "POST", "/api/admin/users", `{"email":"carol@example.com","password":"p"}`, admin); rr.Code != 409 {
+	if rr := do(t, h, "POST", "/api/admin/users", `{"email":"carol@example.com","password":"password1"}`, admin); rr.Code != 409 {
 		t.Fatalf("duplicate: %d, want 409", rr.Code)
 	}
 	if rr := do(t, h, "POST", "/api/admin/users", `{"email":"nope","password":"p"}`, admin); rr.Code != 400 {
@@ -76,7 +76,7 @@ func TestUserManagement(t *testing.T) {
 	}
 
 	// Carol can log in and gets a session.
-	login := do(t, h, "POST", "/api/login", `{"username":"carol@example.com","password":"hunter2"}`, nil)
+	login := do(t, h, "POST", "/api/login", `{"username":"carol@example.com","password":"hunter22"}`, nil)
 	if login.Code != 200 {
 		t.Fatalf("carol login: %d %s", login.Code, login.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestUserManagement(t *testing.T) {
 	if rr := do(t, h, "GET", "/api/me", "", carolCookie); rr.Code != 401 {
 		t.Fatalf("blocked session still valid: %d, want 401", rr.Code)
 	}
-	if rr := do(t, h, "POST", "/api/login", `{"username":"carol@example.com","password":"hunter2"}`, nil); rr.Code != 401 {
+	if rr := do(t, h, "POST", "/api/login", `{"username":"carol@example.com","password":"hunter22"}`, nil); rr.Code != 401 {
 		t.Fatalf("blocked login: %d, want 401", rr.Code)
 	}
 
@@ -170,7 +170,7 @@ func TestUserManagementGuardrails(t *testing.T) {
 
 	// Add a second admin, then de-admining the first (non-self) is allowed because an
 	// active admin still remains.
-	rr := do(t, h, "POST", "/api/admin/users", `{"email":"dee@example.com","password":"pw","admin":true}`, admin)
+	rr := do(t, h, "POST", "/api/admin/users", `{"email":"dee@example.com","password":"password1","admin":true}`, admin)
 	if rr.Code != 200 {
 		t.Fatalf("create admin: %d %s", rr.Code, rr.Body.String())
 	}

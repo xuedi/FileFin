@@ -33,3 +33,6 @@ Thumbs.db
 # Local runtime log
 /app.log
 /app.log.json
+
+# Local-only working files (security reports, scratch notes) - never publish.
+/tmp_*

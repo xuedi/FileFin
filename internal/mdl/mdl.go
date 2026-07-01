@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"filefin/internal/httpsafe"
 	"filefin/internal/watchlist"
 )
 
@@ -70,7 +71,10 @@ type Client struct {
 
 // New returns a Client with a sane timeout.
 func New() *Client {
-	return &Client{http: &http.Client{Timeout: 30 * time.Second}, baseURL: "https://mydramalist.com"}
+	return &Client{
+		http:    &http.Client{Timeout: 30 * time.Second, CheckRedirect: httpsafe.NoInternalRedirect},
+		baseURL: "https://mydramalist.com",
+	}
 }
 
 // GetUserList fetches and parses the public drama list for username.
@@ -92,7 +96,8 @@ func (c *Client) GetUserList(ctx context.Context, username string) ([]Entry, err
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mdl: http %d", resp.StatusCode)
 	}
-	entries, err := parseList(resp.Body)
+	// Cap the page body so a hostile or oversized upstream cannot balloon the parsed DOM.
+	entries, err := parseList(httpsafe.LimitBody(resp.Body))
 	if err != nil {
 		return nil, err
 	}

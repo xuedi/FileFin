@@ -10,17 +10,24 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // stderrCap bounds the captured ffmpeg stderr so a long-running encode never grows it
 // without limit; only the tail matters for an error message.
 const stderrCap = 4096
 
+// waitDelay is how long Wait tolerates a process holding the stdout pipe open after its
+// context is cancelled before the process is force-killed, so a wedged encoder is reaped
+// promptly instead of stalling the caller.
+const waitDelay = 5 * time.Second
+
 // Run executes bin with args and waits for it to finish, capturing stderr. A non-zero
 // exit is returned as "ffmpeg: <err>: <last stderr line>". Use this for one-shot encodes
 // (thumbnails, subtitle muxing); use Start for a process whose output is consumed live.
 func Run(ctx context.Context, bin string, args ...string) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = waitDelay
 	stderr := newRingBuffer(stderrCap)
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -44,6 +51,7 @@ type Process struct {
 // or cancel ctx to stop it.
 func Start(ctx context.Context, bin string, args ...string) (*Process, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = waitDelay
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg stdout pipe: %w", err)

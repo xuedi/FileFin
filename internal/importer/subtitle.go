@@ -142,7 +142,9 @@ func runFFmpegToSRT(ctx context.Context, ffmpegBin, src, dst string, extraArgs .
 		return os.ErrNotExist
 	}
 	tmp := dst + ".tmp.srt" // ffmpeg picks the muxer by extension, so keep .srt
-	args := append([]string{"-nostdin", "-y", "-i", src}, extraArgs...)
+	// Confine ffmpeg to local files so a crafted subtitle/media source cannot pivot to a
+	// network input.
+	args := append([]string{"-nostdin", "-y", "-protocol_whitelist", "file,crypto,data", "-i", src}, extraArgs...)
 	args = append(args, tmp)
 	if err := ffrun.Run(ctx, ffmpegBin, args...); err != nil {
 		os.Remove(tmp)

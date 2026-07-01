@@ -41,11 +41,27 @@ hash, rejects a **blocked** account (with the same 401 as a bad password, so a b
 nothing), records the last-login time, and creates an in-memory session handed back as an
 `HttpOnly` cookie; sessions are cleared on restart (there is no persistent session store).
 
+Login is hardened against guessing and enumeration. Every attempt spends the same time in
+one bcrypt compare - an unknown or blocked account is checked against a fixed dummy hash - so
+timing never reveals whether an account exists. A throttle locks an account (and, separately,
+a source IP) after too many failures within a sliding window, returning `429 Too Many
+Requests` until the short lockout lifts; a correct login clears the account's counter. The
+client IP is taken from `X-Forwarded-For` only when the immediate peer is loopback (the
+co-located proxy), so it cannot be spoofed. Passwords have a minimum length and a 72-byte
+ceiling (bcrypt ignores bytes past 72) enforced on install, create, and change.
+
+The session cookie is `HttpOnly` + `SameSite=Lax`, and carries `Secure` when the request
+arrived over TLS or through a loopback proxy that set `X-Forwarded-Proto: https` - so a
+production instance behind Caddy gets `Secure` while a plain-HTTP LAN box is not silently
+logged out. HSTS belongs at the TLS edge (Caddy), not the app.
+
 ```mermaid
 flowchart TD
-    L[POST /api/login] --> V{hash match and not blocked?}
-    V -->|no| U401[401]
-    V -->|yes| SES[stamp last login + create in-memory session -> cookie]
+    L[POST /api/login] --> T{throttled? account/IP over limit}
+    T -->|yes| U429[429 + Retry-After]
+    T -->|no| V{constant-time hash match and not blocked?}
+    V -->|no| U401[401 + record failure]
+    V -->|yes| SES[clear counter, stamp last login, create session -> cookie]
     REQ[any app route] --> AUTH[auth: valid session cookie?]
     AUTH -->|no| R401[401]
     AUTH -->|yes| ADM{admin route?}
@@ -53,6 +69,13 @@ flowchart TD
     ADM -->|admin user?| OK
     ADM -->|not admin| F403[403]
 ```
+
+Every response carries a baseline set of security headers (a strict `Content-Security-Policy`
+with no `unsafe-inline`, since the bundled frontend ships only external hashed assets;
+`X-Content-Type-Options: nosniff`; `X-Frame-Options: DENY`; `Referrer-Policy`;
+`Permissions-Policy`). The `http.Server` sets a read-header and idle timeout (Slowloris guard)
+while leaving the body read/write timeouts open so large uploads and long video responses are
+never truncated.
 
 Two middlewares wrap handlers: `auth` requires a valid session and stashes the username;
 `admin` additionally requires the user be flagged admin, and lazily ensures the cache is built
@@ -72,10 +95,11 @@ stable across a cache wipe, and the cache stays fully rebuildable from the confi
 
 The admin **Users** page (`/admin/users`) lists every account and can add a user, edit an
 alias, grant/revoke admin, and **block/unblock** (the moderation primitive - there is no hard
-delete). Blocking drops the account's active sessions immediately. Guardrails refuse any change
-that would lock the install out: an admin cannot block or de-admin their own account, and no
-change may leave zero **active** (admin and not blocked) admins. The first user, created at
-install, is admin.
+delete). Blocking **or changing a password** drops the account's active sessions immediately,
+so a password reset actually locks out anyone holding an old session rather than leaving it
+valid until restart. Guardrails refuse any change that would lock the install out: an admin
+cannot block or de-admin their own account, and no change may leave zero **active** (admin and
+not blocked) admins. The first user, created at install, is admin.
 
 ```mermaid
 flowchart TD

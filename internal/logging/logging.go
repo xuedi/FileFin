@@ -113,7 +113,7 @@ func ResolveOutput(output string) (io.Writer, io.Closer, error) {
 	case "STDERR":
 		return os.Stderr, nopCloser{}, nil
 	default:
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 		if err != nil {
 			return nil, nil, err
 		}

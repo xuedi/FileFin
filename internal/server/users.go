@@ -77,6 +77,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a password is required", http.StatusBadRequest)
 		return
 	}
+	if msg := passwordPolicyError(req.Password); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 	s.mu.RLock()
 	_, exists := s.cfg.Users[email]
 	s.mu.RUnlock()
@@ -183,7 +187,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Password != nil && *req.Password != "" {
+	pwChanged := req.Password != nil && *req.Password != ""
+	if pwChanged {
+		if msg := passwordPolicyError(*req.Password); msg != "" {
+			s.mu.Unlock()
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
 		hash, herr := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
 		if herr != nil {
 			s.mu.Unlock()
@@ -205,7 +215,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if pool != nil {
 		s.bestEffort(db.UpsertUser(r.Context(), pool, dbUser(name, updated)), "user mirror")
 	}
-	if nowBlocked {
+	// Blocking, or changing the password, drops the account's live sessions so a resettable
+	// remediation actually locks an attacker out (a password reset that left the old session
+	// valid until restart would not).
+	if nowBlocked || pwChanged {
 		s.sessions.deleteUser(name)
 	}
 	writeJSON(w, dto(name, updated))
@@ -296,6 +309,26 @@ func (s *Server) reconcileUsers(ctx context.Context, pool *sql.DB) error {
 		return config.Save(s.cfg)
 	}
 	return nil
+}
+
+// Password policy. bcrypt ignores input past 72 bytes, so an overlong password is rejected
+// rather than silently truncated; a floor stops trivially guessable secrets on install,
+// create, and change.
+const (
+	minPasswordLen = 8
+	maxPasswordLen = 72
+)
+
+// passwordPolicyError returns a user-facing message when pw violates the policy, or "" when
+// it is acceptable.
+func passwordPolicyError(pw string) string {
+	switch {
+	case len(pw) < minPasswordLen:
+		return "password must be at least 8 characters"
+	case len(pw) > maxPasswordLen:
+		return "password must be at most 72 bytes"
+	}
+	return ""
 }
 
 // validEmail is a loose check: a single "@" with non-empty, space-free parts on each

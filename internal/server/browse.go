@@ -67,7 +67,9 @@ func writeBrowse(w http.ResponseWriter, r *http.Request, def string, includeFile
 	}
 	infos, err := os.ReadDir(path)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// A generic message: the raw error would echo the absolute path and OS state back to
+		// the caller (and this route is unauthenticated in install mode).
+		http.Error(w, "could not read the folder", http.StatusBadRequest)
 		return
 	}
 	entries := []browseEntry{}

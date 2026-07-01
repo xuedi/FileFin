@@ -8,6 +8,7 @@ import (
 
 	"filefin/internal/db"
 	"filefin/internal/library"
+	"filefin/internal/logging"
 )
 
 // dataDir returns the configured data directory under lock.
@@ -55,7 +56,8 @@ func categoryDTOs(cats []library.Category) []categoryDTO {
 func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 	cats, err := library.List(s.dataDir())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.logger().For(logging.Backend).Error("could not list categories", logging.Fields{"error": err.Error()})
+		http.Error(w, "could not read categories", http.StatusInternalServerError)
 		return
 	}
 	dtos := categoryDTOs(cats)

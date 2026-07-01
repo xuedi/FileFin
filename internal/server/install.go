@@ -54,6 +54,10 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username and password are required", http.StatusBadRequest)
 		return
 	}
+	if msg := passwordPolicyError(req.Password); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 	if req.Port < 1 || req.Port > 65535 {
 		req.Port = config.DefaultPort
 	}

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"filefin/internal/httpsafe"
 )
 
 // Movie is the subset of OMDb fields used for enrichment. Absent values come back as
@@ -88,7 +90,7 @@ type Client struct {
 func New(key string) *Client {
 	return &Client{
 		key:     key,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    &http.Client{Timeout: 15 * time.Second, CheckRedirect: httpsafe.NoInternalRedirect},
 		baseURL: "https://www.omdbapi.com",
 		imgURL:  "https://img.omdbapi.com",
 	}
@@ -109,7 +111,7 @@ func (c *Client) get(ctx context.Context, q url.Values, v any) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+	if err := json.NewDecoder(httpsafe.LimitBody(resp.Body)).Decode(v); err != nil {
 		return err
 	}
 	return nil
@@ -199,7 +201,7 @@ func (c *Client) Poster(ctx context.Context, imdbID string, height int) ([]byte,
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("omdb poster: http %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(httpsafe.LimitBody(resp.Body))
 	if err != nil {
 		return nil, "", fmt.Errorf("omdb poster read %s: %w", imdbID, err)
 	}

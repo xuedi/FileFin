@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 )
 
@@ -67,8 +68,16 @@ func decode(ctx context.Context, bin, path string) (probeOutput, error) {
 	if bin == "" {
 		bin = "ffprobe"
 	}
+	// -protocol_whitelist confines ffprobe to local files (plus the crypto/data layers a
+	// normal container may use), so a file whose bytes are actually a playlist cannot make it
+	// open an http:/concat: target. A relative path is made explicit with "./" so a name
+	// beginning with "-" is never parsed as an option (ffprobe has no "--" terminator).
+	if !filepath.IsAbs(path) {
+		path = "." + string(filepath.Separator) + path
+	}
 	out, err := exec.CommandContext(ctx, bin,
-		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path).Output()
+		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
+		"-protocol_whitelist", "file,crypto,data", path).Output()
 	if err != nil {
 		return probeOutput{}, fmt.Errorf("ffprobe %s: %w", path, err)
 	}
