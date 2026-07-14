@@ -28,6 +28,8 @@ func main() {
 		runServe(args)
 	case "setup":
 		runSetup(args)
+	case "rename-user":
+		runRenameUser(args)
 	case "version", "--version", "-v":
 		fmt.Println(version.Version)
 	case "help", "--help", "-h":
@@ -46,6 +48,8 @@ Usage:
   filefin [serve] [--port N] [--bind ADDR]   run the server (default command)
   filefin setup [--port N] [--bind ADDR] [--data DIR]
                                              prepare a pending install and print the setup URL
+  filefin rename-user [--dry-run] OLD NEW    rename an account across the config and every
+                                             folder's playback state (stop the service first)
   filefin version                            print the release version
 
 Ports below 1024 need CAP_NET_BIND_SERVICE (the packaged systemd unit grants it) or root.

@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.10.2-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.11.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -71,6 +71,7 @@ FileFin is one binary with a tiny CLI; everything after setup is driven from the
 ```sh
 filefin serve                 # run the server (the default command)
 filefin setup --port 80       # prepare a pending install and print the setup URL
+filefin rename-user OLD NEW   # rename an account (stop the service first); --dry-run to preview
 filefin version               # print the release version
 ```
 
