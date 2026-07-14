@@ -34,14 +34,13 @@ func (s *Server) handleMDLProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	u.MDLUsername = strings.TrimSpace(req.MDLUsername)
 	s.cfg.Users[user] = u
-	malConfigured := s.cfg.MALClientID != ""
 	saveErr := config.Save(s.cfg)
 	s.mu.Unlock()
 	if saveErr != nil {
 		http.Error(w, "could not write config", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, authResultOf(user, u, malConfigured))
+	writeJSON(w, authResultOf(user, u))
 }
 
 // mdlMatch is one proposed import row in a preview.

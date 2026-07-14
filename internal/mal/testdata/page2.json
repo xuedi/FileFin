@@ -1,15 +1,9 @@
-{
-  "data": [
-    {
-      "node": {
-        "id": 18277,
-        "title": "Kingdom",
-        "alternative_titles": { "synonyms": [], "en": "Kingdom", "ja": "キングダム" },
-        "start_season": { "year": 2012, "season": "summer" },
-        "start_date": "2012-06-04"
-      },
-      "list_status": { "status": "completed", "score": 8 }
-    }
-  ],
-  "paging": {}
-}
+[
+  {
+    "status": 2,
+    "score": 8,
+    "anime_title": "Kingdom",
+    "anime_title_eng": "",
+    "anime_start_date_string": "06-04-12"
+  }
+]

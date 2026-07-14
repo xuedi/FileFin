@@ -6,4 +6,4 @@ package version
 // rather than a build-time -ldflags stamp so every build path (go build, the cross-compiled
 // release binaries, the deploy script) reports the same number without extra flags. Bump it
 // here and in the README badge when cutting a release.
-const Version = "0.11.1"
+const Version = "0.12.0"

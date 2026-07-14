@@ -31,14 +31,13 @@ func (s *Server) handleMALProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	u.MALUsername = strings.TrimSpace(req.MALUsername)
 	s.cfg.Users[user] = u
-	malConfigured := s.cfg.MALClientID != ""
 	saveErr := config.Save(s.cfg)
 	s.mu.Unlock()
 	if saveErr != nil {
 		http.Error(w, "could not write config", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, authResultOf(user, u, malConfigured))
+	writeJSON(w, authResultOf(user, u))
 }
 
 // malMatch is one proposed import row in a MyAnimeList preview.
@@ -61,8 +60,8 @@ type malPreview struct {
 	Total     int        `json:"total"`
 }
 
-// handleMALPreview fetches the user's public MyAnimeList list through the official API and
-// matches it against the library (optionally scoped to a category subtree). It writes nothing.
+// handleMALPreview fetches the user's public MyAnimeList list and matches it against the
+// library (optionally scoped to a category subtree). It writes nothing.
 func (s *Server) handleMALPreview(w http.ResponseWriter, r *http.Request) {
 	categoryID, ok := previewCategoryID(w, r)
 	if !ok {
@@ -71,15 +70,10 @@ func (s *Server) handleMALPreview(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r)
 	s.mu.RLock()
 	u := s.cfg.Users[user]
-	clientID := s.cfg.MALClientID
 	s.mu.RUnlock()
 	name := strings.TrimSpace(u.MALUsername)
 	if name == "" {
 		http.Error(w, "no MyAnimeList username set", http.StatusBadRequest)
-		return
-	}
-	if clientID == "" {
-		http.Error(w, "MyAnimeList client ID is not configured", http.StatusBadRequest)
 		return
 	}
 	lib, ok := s.watchlistLibrary(w, r, categoryID)
@@ -87,17 +81,13 @@ func (s *Server) handleMALPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := mal.New(clientID).GetUserList(r.Context(), name)
+	entries, err := mal.New().GetUserList(r.Context(), name)
 	if err != nil {
 		switch {
 		case errors.Is(err, mal.ErrNotFound):
 			http.Error(w, "MyAnimeList user not found", http.StatusNotFound)
 		case errors.Is(err, mal.ErrEmpty):
 			http.Error(w, "that MyAnimeList list is empty or private", http.StatusNotFound)
-		case errors.Is(err, mal.ErrUnauthorized):
-			http.Error(w, "MyAnimeList rejected the client ID", http.StatusBadGateway)
-		case errors.Is(err, mal.ErrNotConfigured):
-			http.Error(w, "MyAnimeList client ID is not configured", http.StatusBadRequest)
 		default:
 			s.logger().For(logging.Frontend).Error("mal preview for "+user+" failed",
 				logging.Fields{"malUser": name, "error": err.Error()})

@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 )
 
-// newTestServer serves the two captured fixtures, paging from page 1 to page 2 via the
-// offset query param, with page 1's paging.next rewritten to point back at this server.
+// newTestServer serves the two captured fixtures, paging from page 1 to page 2 by the offset
+// query param. Page 1 is a full page (equal to the client's page size), so the client requests
+// the next; page 2 is short, so it stops.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	page1, err := os.ReadFile("testdata/page1.json")
@@ -22,19 +22,13 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-MAL-CLIENT-ID") == "" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("offset") == "1000" {
+		if r.URL.Query().Get("offset") == "3" {
 			w.Write(page2)
 			return
 		}
-		next := srv.URL + "/v2/users/x/animelist?offset=1000"
-		w.Write([]byte(strings.Replace(string(page1), "{{NEXT}}", next, 1)))
+		w.Write(page1)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -42,50 +36,85 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 func TestGetUserList(t *testing.T) {
 	srv := newTestServer(t)
-	c := New("client-id")
+	c := New()
 	c.baseURL = srv.URL
+	c.pageSize = 3 // page 1 holds exactly 3 rows, so the client pages on to page 2
 
 	entries, err := c.GetUserList(context.Background(), "someone")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("want 3 entries across both pages, got %d: %+v", len(entries), entries)
+	if len(entries) != 4 {
+		t.Fatalf("want 4 entries across both pages, got %d: %+v", len(entries), entries)
 	}
 
 	aot := entries[0]
 	if aot.Title != "Shingeki no Kyojin" || aot.Year != 2013 || aot.Rating != 10 || !aot.Watched {
 		t.Errorf("entry 0 = %+v", aot)
 	}
-	if len(aot.Aliases) != 2 || aot.Aliases[0] != "Attack on Titan" || aot.Aliases[1] != "AoT" {
-		t.Errorf("entry 0 should alias the English title and its synonyms: %+v", aot.Aliases)
+	if len(aot.Aliases) != 1 || aot.Aliases[0] != "Attack on Titan" {
+		t.Errorf("entry 0 should alias the distinct English title: %+v", aot.Aliases)
 	}
 
-	kimi := entries[1]
-	if kimi.Year != 2016 { // no start_season -> year parsed from start_date
-		t.Errorf("entry 1 year should come from start_date: %+v", kimi)
-	}
-	if kimi.Rating != 0 || kimi.Watched || len(kimi.Aliases) != 0 {
-		t.Errorf("entry 1 should be unrated, unwatched, alias-free: %+v", kimi)
+	// One Piece: watching (not watched), unrated, English title equals romaji so no alias,
+	// and a "99" year resolves to 1999.
+	op := entries[1]
+	if op.Watched || op.Rating != 0 || len(op.Aliases) != 0 || op.Year != 1999 {
+		t.Errorf("entry 1 = %+v", op)
 	}
 
-	if entries[2].Title != "Kingdom" || entries[2].Year != 2012 {
-		t.Errorf("entry 2 (page 2) = %+v", entries[2])
+	// Aa! Megami-sama!: dropped (status 4) is not watched but keeps its rating, and its
+	// distinct English title becomes an alias; "93" resolves to 1993.
+	goddess := entries[2]
+	if goddess.Watched || goddess.Rating != 5 || goddess.Year != 1993 {
+		t.Errorf("entry 2 = %+v", goddess)
+	}
+	if len(goddess.Aliases) != 1 || goddess.Aliases[0] != "Oh! My Goddess" {
+		t.Errorf("entry 2 aliases = %+v", goddess.Aliases)
+	}
+
+	if entries[3].Title != "Kingdom" || entries[3].Year != 2012 || !entries[3].Watched {
+		t.Errorf("entry 3 (page 2) = %+v", entries[3])
 	}
 }
 
 func TestGetUserListErrors(t *testing.T) {
-	if _, err := New("").GetUserList(context.Background(), "x"); !errors.Is(err, ErrNotConfigured) {
-		t.Errorf("empty client id should be ErrNotConfigured, got %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// A 404 (no such user) surfaces as ErrNotFound.
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer srv.Close()
-	c := New("id")
-	c.baseURL = srv.URL
+	defer notFound.Close()
+	c := New()
+	c.baseURL = notFound.URL
 	if _, err := c.GetUserList(context.Background(), "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("404 should be ErrNotFound, got %v", err)
+	}
+
+	// An empty list (private or genuinely empty) surfaces as ErrEmpty.
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[]"))
+	}))
+	defer empty.Close()
+	c.baseURL = empty.URL
+	if _, err := c.GetUserList(context.Background(), "nobody"); !errors.Is(err, ErrEmpty) {
+		t.Errorf("empty list should be ErrEmpty, got %v", err)
+	}
+}
+
+func TestYearOf(t *testing.T) {
+	cases := map[string]int{
+		"04-07-13": 2013,
+		"10-20-99": 1999,
+		"02-25-98": 1998,
+		"01-01-30": 2030,
+		"01-01-31": 1931,
+		"":         0,
+		"2013":     0,
+		"bad":      0,
+	}
+	for in, want := range cases {
+		if got := yearOf(in); got != want {
+			t.Errorf("yearOf(%q) = %d, want %d", in, got, want)
+		}
 	}
 }

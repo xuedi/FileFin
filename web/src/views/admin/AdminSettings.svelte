@@ -97,13 +97,6 @@
       </div>
       <p class="help">Key for metadata lookups. Leave empty to disable OMDb enrichment.</p>
     </div>
-    <div class="field">
-      <label class="label" for="ff-mal-client">MyAnimeList client ID</label>
-      <div class="control">
-        <input id="ff-mal-client" class="input" bind:value={app.malClientID} placeholder="(not set - MyAnimeList import disabled)" />
-      </div>
-      <p class="help">Client ID for the MyAnimeList watch-history importer. Leave empty to disable it.</p>
-    </div>
     <div class="ff-settings-actions">
       <button class="button is-ghost" disabled={!app.libraryDirty} onclick={() => app.resetTab('library')}>Reset</button>
       <button class="button is-primary" disabled={!app.libraryDirty} onclick={() => app.saveLibrary()}>Save</button>

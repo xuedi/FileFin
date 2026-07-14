@@ -153,7 +153,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RLock()
 	u, username, ok := findUser(s.cfg.Users, normName)
-	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
 	// Always run exactly one bcrypt compare. For an unknown or blocked account, compare
 	// against a fixed dummy hash so the rejection takes the same time as a wrong password
@@ -184,7 +183,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, authResultOf(username, u, malConfigured))
+	writeJSON(w, authResultOf(username, u))
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -202,11 +201,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value(userKey{}).(string)
 	s.mu.RLock()
 	u, ok := s.cfg.Users[user]
-	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, authResultOf(user, u, malConfigured))
+	writeJSON(w, authResultOf(user, u))
 }

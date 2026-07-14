@@ -68,7 +68,6 @@ type Config struct {
 	MediaFormat  string          `json:"mediaFormat"`  // "" until permanently chosen in Settings
 	ImportFolder string          `json:"importFolder"` // server path media is imported from
 	OMDBKey      string          `json:"omdbKey"`      // OMDb API key; "" skips metadata enrichment
-	MALClientID  string          `json:"malClientId"`  // MyAnimeList API client id; "" disables the MAL importer
 	LogLevel     string          `json:"logLevel"`     // error|info|debug; "" => info
 	LogOutput    string          `json:"logOutput"`    // STDOUT|STDERR|file path; "" => STDOUT
 

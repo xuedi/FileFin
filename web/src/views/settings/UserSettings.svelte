@@ -159,11 +159,9 @@
     <button
       class="button is-link"
       class:is-loading={app.mal.loading}
-      disabled={!app.me.malUsername || !app.me.malConfigured}
+      disabled={!app.me.malUsername}
       onclick={() => app.malPreview()}>Import from MyAnimeList</button>
-    {#if !app.me.malConfigured}
-      <p class="help">MyAnimeList import is not configured on this server yet.</p>
-    {:else if !app.me.malUsername}
+    {#if !app.me.malUsername}
       <p class="help">Save a username first.</p>
     {/if}
   </div>

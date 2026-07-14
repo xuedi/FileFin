@@ -1,24 +1,23 @@
-{
-  "data": [
-    {
-      "node": {
-        "id": 16498,
-        "title": "Shingeki no Kyojin",
-        "alternative_titles": { "synonyms": ["AoT"], "en": "Attack on Titan", "ja": "進撃の巨人" },
-        "start_season": { "year": 2013, "season": "spring" },
-        "start_date": "2013-04-07"
-      },
-      "list_status": { "status": "completed", "score": 10, "updated_at": "2021-01-01T00:00:00+00:00" }
-    },
-    {
-      "node": {
-        "id": 32281,
-        "title": "Kimi no Na wa.",
-        "alternative_titles": { "synonyms": [], "en": "", "ja": "君の名は。" },
-        "start_date": "2016-08-26"
-      },
-      "list_status": { "status": "watching", "score": 0 }
-    }
-  ],
-  "paging": { "next": "{{NEXT}}" }
-}
+[
+  {
+    "status": 2,
+    "score": 10,
+    "anime_title": "Shingeki no Kyojin",
+    "anime_title_eng": "Attack on Titan",
+    "anime_start_date_string": "04-07-13"
+  },
+  {
+    "status": 1,
+    "score": 0,
+    "anime_title": "One Piece",
+    "anime_title_eng": "One Piece",
+    "anime_start_date_string": "10-20-99"
+  },
+  {
+    "status": 4,
+    "score": 5,
+    "anime_title": "Aa! Megami-sama!",
+    "anime_title_eng": "Oh! My Goddess",
+    "anime_start_date_string": "02-21-93"
+  }
+]

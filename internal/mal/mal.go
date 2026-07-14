@@ -1,7 +1,8 @@
-// Package mal reads a user's public MyAnimeList anime list through the official API v2.
-// Another member's public list is readable with only an X-MAL-CLIENT-ID header (no OAuth),
-// so a one-time admin-set client id is all this needs. Unlike the MyDramaList scraper this
-// parses JSON, not HTML, so it is not tied to any page markup.
+// Package mal reads a user's public MyAnimeList anime list. MyAnimeList's API v2 needs an
+// application client id we do not have, but the public list page is backed by a JSON endpoint
+// (myanimelist.net/animelist/{user}/load.json) that needs no auth, so this reads that - the
+// same public-profile posture as the MyDramaList scraper. Unlike that HTML scraper the surface
+// is JSON, so it is not tied to page markup. Only public lists are readable.
 package mal
 
 import (
@@ -21,75 +22,59 @@ import (
 )
 
 var (
-	// ErrNotFound means MyAnimeList has no such user.
+	// ErrNotFound means MyAnimeList has no such user (the list page 404s).
 	ErrNotFound = errors.New("mal: user not found")
 	// ErrEmpty means the list loaded but held no entries: a private or genuinely empty list.
 	ErrEmpty = errors.New("mal: list is empty or private")
-	// ErrNotConfigured means no client id was provided.
-	ErrNotConfigured = errors.New("mal: client id not configured")
-	// ErrUnauthorized means MyAnimeList rejected the client id (401/403).
-	ErrUnauthorized = errors.New("mal: client id rejected")
 )
 
-// fields is the field selector that brings back exactly what the matcher needs: the
-// member's status and score plus each title, its alternatives, and its release year.
-const fields = "list_status{status,score,updated_at},node{title,alternative_titles,start_season,start_date}"
+const (
+	// statusCompleted is MyAnimeList's list-status code for a finished anime.
+	statusCompleted = 2
+	// pageSize is how many rows load.json returns per request; a short page is the last one.
+	pageSize  = 300
+	userAgent = "Mozilla/5.0 (compatible; FileFin)"
+)
 
 // Client reads public MyAnimeList lists.
 type Client struct {
 	http     *http.Client
 	baseURL  string
-	clientID string
+	pageSize int
 }
 
 // New returns a Client with a sane timeout.
-func New(clientID string) *Client {
+func New() *Client {
 	return &Client{
 		http:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: httpsafe.NoInternalRedirect},
-		baseURL:  "https://api.myanimelist.net",
-		clientID: clientID,
+		baseURL:  "https://myanimelist.net",
+		pageSize: pageSize,
 	}
 }
 
-// listResponse is one page of the animelist endpoint.
-type listResponse struct {
-	Data []struct {
-		Node struct {
-			Title             string `json:"title"`
-			AlternativeTitles struct {
-				En       string   `json:"en"`
-				Synonyms []string `json:"synonyms"`
-			} `json:"alternative_titles"`
-			StartSeason struct {
-				Year int `json:"year"`
-			} `json:"start_season"`
-			StartDate string `json:"start_date"`
-		} `json:"node"`
-		ListStatus struct {
-			Status string `json:"status"`
-			Score  int    `json:"score"`
-		} `json:"list_status"`
-	} `json:"data"`
-	Paging struct {
-		Next string `json:"next"`
-	} `json:"paging"`
+// listRow is one entry in a load.json page - only the fields the matcher needs. The public
+// endpoint carries the romaji title, its English title, the member's status/score, and the
+// anime's air date as "MM-DD-YY".
+type listRow struct {
+	Status        int    `json:"status"`
+	Score         int    `json:"score"`
+	AnimeTitle    string `json:"anime_title"`
+	AnimeTitleEng string `json:"anime_title_eng"`
+	StartDate     string `json:"anime_start_date_string"`
 }
 
-// GetUserList fetches and maps every page of a public anime list to source-neutral entries.
+// GetUserList fetches every page of a public anime list and maps it to source-neutral entries.
 func (c *Client) GetUserList(ctx context.Context, username string) ([]watchlist.Entry, error) {
-	if c.clientID == "" {
-		return nil, ErrNotConfigured
-	}
-	next := fmt.Sprintf("%s/v2/users/%s/animelist?fields=%s&nsfw=true&limit=1000",
-		c.baseURL, url.PathEscape(username), url.QueryEscape(fields))
 	var entries []watchlist.Entry
-	for next != "" {
-		page, err := c.fetch(ctx, next)
+	for offset := 0; ; offset += c.pageSize {
+		rows, err := c.fetch(ctx, username, offset)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, mapEntries(page)...)
-		next = page.Paging.Next
+		entries = append(entries, mapEntries(rows)...)
+		if len(rows) < c.pageSize {
+			break // a page shorter than the page size is the last one
+		}
 	}
 	if len(entries) == 0 {
 		return nil, ErrEmpty
@@ -97,82 +82,86 @@ func (c *Client) GetUserList(ctx context.Context, username string) ([]watchlist.
 	return entries, nil
 }
 
-// fetch GETs one page URL with the client-id header and decodes it.
-func (c *Client) fetch(ctx context.Context, u string) (listResponse, error) {
+// fetch GETs one page of the public list (status=7 is "all statuses") and decodes it.
+func (c *Client) fetch(ctx context.Context, username string, offset int) ([]listRow, error) {
+	u := fmt.Sprintf("%s/animelist/%s/load.json?status=7&offset=%d", c.baseURL, url.PathEscape(username), offset)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return listResponse{}, fmt.Errorf("mal: %w", err)
+		return nil, fmt.Errorf("mal: %w", err)
 	}
-	req.Header.Set("X-MAL-CLIENT-ID", c.clientID)
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return listResponse{}, fmt.Errorf("mal fetch: %w", err)
+		return nil, fmt.Errorf("mal fetch %q: %w", username, err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return listResponse{}, ErrNotFound
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return listResponse{}, ErrUnauthorized
+		return nil, ErrNotFound
 	default:
-		return listResponse{}, fmt.Errorf("mal: http %d", resp.StatusCode)
+		return nil, fmt.Errorf("mal: http %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(httpsafe.LimitBody(resp.Body))
 	if err != nil {
-		return listResponse{}, fmt.Errorf("mal read: %w", err)
+		return nil, fmt.Errorf("mal read: %w", err)
 	}
-	var page listResponse
-	if err := json.Unmarshal(body, &page); err != nil {
-		return listResponse{}, fmt.Errorf("mal parse: %w", err)
+	var rows []listRow
+	if err := json.Unmarshal(body, &rows); err != nil {
+		return nil, fmt.Errorf("mal parse: %w", err)
 	}
-	return page, nil
+	return rows, nil
 }
 
-// mapEntries turns one decoded page into matcher entries. The romaji node title is the
-// primary; the English alternative and any synonyms become aliases so either side can match
-// the library. A synonym that carries no latin letters folds to an empty key and is dropped.
-func mapEntries(page listResponse) []watchlist.Entry {
-	out := make([]watchlist.Entry, 0, len(page.Data))
-	for _, d := range page.Data {
-		e := watchlist.Entry{
-			Title:   d.Node.Title,
-			Year:    d.Node.StartSeason.Year,
-			Rating:  d.ListStatus.Score,
-			Watched: d.ListStatus.Status == "completed",
-		}
-		if e.Year == 0 {
-			e.Year = yearOf(d.Node.StartDate)
-		}
-		e.Aliases = aliasesFor(d.Node.Title, d.Node.AlternativeTitles.En, d.Node.AlternativeTitles.Synonyms)
-		out = append(out, e)
+// mapEntries turns one decoded page into matcher entries. The romaji title is the primary; the
+// English title becomes an alias so either romanization can match the library.
+func mapEntries(rows []listRow) []watchlist.Entry {
+	out := make([]watchlist.Entry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, watchlist.Entry{
+			Title:   r.AnimeTitle,
+			Aliases: aliasesFor(r.AnimeTitle, r.AnimeTitleEng),
+			Year:    yearOf(r.StartDate),
+			Rating:  r.Score,
+			Watched: r.Status == statusCompleted,
+		})
 	}
 	return out
 }
 
-// aliasesFor keeps the English title and synonyms that carry a title distinct (after the
-// shared normalization) from the primary title and from one another.
-func aliasesFor(title, en string, synonyms []string) []string {
-	seen := map[string]bool{watchlist.Normalize(title): true}
-	var out []string
-	for _, alt := range append([]string{en}, synonyms...) {
-		alt = strings.TrimSpace(alt)
-		key := watchlist.Normalize(alt)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, alt)
+// aliasesFor keeps the English title when it is distinct (after the shared normalization) from
+// the primary title, so a library item filed under its English name can still match.
+func aliasesFor(title, eng string) []string {
+	eng = strings.TrimSpace(eng)
+	key := watchlist.Normalize(eng)
+	if key == "" || key == watchlist.Normalize(title) {
+		return nil
 	}
-	return out
+	return []string{eng}
 }
 
-// yearOf reads the leading four-digit year from a MyAnimeList start_date ("2013-04-07",
-// "2013-04", or "2013"); anything shorter yields 0.
+// yearOf parses MyAnimeList's public "MM-DD-YY" start-date string to a four-digit year. The
+// two-digit year is resolved on a fixed pivot (<=30 -> 20xx, else 19xx), which covers every
+// year anime actually air in; an absent or unparseable date yields 0 (the matcher tolerates
+// a missing year, so a library-unique title still matches without it).
 func yearOf(date string) int {
-	if len(date) < 4 {
+	parts := strings.Split(date, "-")
+	if len(parts) != 3 {
 		return 0
 	}
-	y, _ := strconv.Atoi(date[:4])
-	return y
+	yy, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return 0
+	}
+	switch len(parts[2]) {
+	case 2:
+		if yy <= 30 {
+			return 2000 + yy
+		}
+		return 1900 + yy
+	case 4:
+		return yy
+	default:
+		return 0
+	}
 }
