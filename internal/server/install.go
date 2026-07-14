@@ -75,7 +75,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Username = strings.TrimSpace(req.Username)
+	req.Username = config.NormalizeUsername(req.Username)
 	if req.Username == "" || req.Password == "" {
 		http.Error(w, "username and password are required", http.StatusBadRequest)
 		return

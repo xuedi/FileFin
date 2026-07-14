@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"filefin/internal/fsutil"
 )
@@ -33,6 +34,14 @@ type User struct {
 	LastLoginAt int64  `json:"lastLoginAt,omitempty"`
 	MDLUsername string `json:"mdlUsername,omitempty"` // MyDramaList account to import watched + ratings from
 	MALUsername string `json:"malUsername,omitempty"` // MyAnimeList account to import watched + ratings from
+}
+
+// NormalizeUsername canonicalizes a username (an email) for use as a Users map key and
+// for every login lookup: surrounding space trimmed and lower-cased, so "  John@Ex.com "
+// and "john@ex.com" name the same account. Every write and read of Users must go through
+// this, or an account created under one form cannot be found by the form the user types.
+func NormalizeUsername(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // ActiveAdmins counts accounts that are admin and not blocked, i.e. those that can

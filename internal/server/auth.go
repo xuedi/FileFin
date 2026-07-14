@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"filefin/internal/config"
 	"filefin/internal/logging"
 )
 
@@ -111,6 +112,23 @@ func (s *Server) admin(next http.HandlerFunc) http.Handler {
 	})
 }
 
+// findUser resolves a login name to an account case-insensitively, returning the account
+// and the exact map key it is stored under - which becomes the session identity so later
+// lookups by that key hit. The normalized direct hit is the common path; the linear scan
+// only covers legacy keys stored before usernames were normalized.
+func findUser(users map[string]config.User, name string) (config.User, string, bool) {
+	norm := config.NormalizeUsername(name)
+	if u, ok := users[norm]; ok {
+		return u, norm, true
+	}
+	for k, u := range users {
+		if config.NormalizeUsername(k) == norm {
+			return u, k, true
+		}
+	}
+	return config.User{}, "", false
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[struct {
 		Username string `json:"username"`
@@ -120,16 +138,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	// Resolve the account case-insensitively (creation lower-cases the key, but a legacy
+	// admin may be stored with its original casing) and adopt its exact stored key as the
+	// session identity, so later per-request lookups by that key still hit. Rate-limit
+	// buckets key off the normalized name so casing variants share one bucket.
+	normName := config.NormalizeUsername(req.Username)
 	ip := clientIP(r)
 	now := time.Now()
-	if ok, retry := s.logins.allowed(req.Username, ip, now); !ok {
+	if ok, retry := s.logins.allowed(normName, ip, now); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		return
 	}
 
 	s.mu.RLock()
-	u, ok := s.cfg.Users[req.Username]
+	u, username, ok := findUser(s.cfg.Users, normName)
 	malConfigured := s.cfg.MALClientID != ""
 	s.mu.RUnlock()
 	// Always run exactly one bcrypt compare. For an unknown or blocked account, compare
@@ -141,17 +164,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	valid := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil && ok && !u.Blocked
 	if !valid {
-		s.logins.fail(req.Username, ip, now)
+		s.logins.fail(normName, ip, now)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.logins.success(req.Username)
-	id, err := s.sessions.create(req.Username)
+	s.logins.success(normName)
+	id, err := s.sessions.create(username)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.stampLogin(req.Username)
+	s.stampLogin(username)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    id,
@@ -161,7 +184,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
-	writeJSON(w, authResultOf(req.Username, u, malConfigured))
+	writeJSON(w, authResultOf(username, u, malConfigured))
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

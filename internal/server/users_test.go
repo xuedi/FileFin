@@ -93,6 +93,29 @@ func TestUserManagement(t *testing.T) {
 		t.Fatalf("carol me: %d", rr.Code)
 	}
 
+	// The email is matched case-insensitively (and space-trimmed): Carol logs in with the
+	// casing she typed at creation, not only the lower-cased stored key, and the resulting
+	// session still resolves on /api/me.
+	for _, name := range []string{"Carol@Example.com", "  carol@example.com  ", "CAROL@EXAMPLE.COM"} {
+		body := `{"username":` + strconv.Quote(name) + `,"password":"hunter22"}`
+		lr := do(t, h, "POST", "/api/login", body, nil)
+		if lr.Code != 200 {
+			t.Fatalf("login as %q: %d %s", name, lr.Code, lr.Body.String())
+		}
+		var ck *http.Cookie
+		for _, c := range lr.Result().Cookies() {
+			if c.Name == sessionCookie && c.Value != "" {
+				ck = c
+			}
+		}
+		if ck == nil {
+			t.Fatalf("login as %q: no session cookie", name)
+		}
+		if mr := do(t, h, "GET", "/api/me", "", ck); mr.Code != 200 {
+			t.Fatalf("me after login as %q: %d", name, mr.Code)
+		}
+	}
+
 	// Block Carol: her session is dropped immediately and she can no longer log in.
 	cid := strconv.FormatInt(carol.ID, 10)
 	if rr := do(t, h, "PUT", "/api/admin/users/"+cid, `{"blocked":true}`, admin); rr.Code != 200 {

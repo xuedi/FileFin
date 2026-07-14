@@ -68,7 +68,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := config.NormalizeUsername(req.Email)
 	if !validEmail(email) {
 		http.Error(w, "a valid email is required", http.StatusBadRequest)
 		return
@@ -82,7 +82,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
-	_, exists := s.cfg.Users[email]
+	_, _, exists := findUser(s.cfg.Users, email)
 	s.mu.RUnlock()
 	if exists {
 		http.Error(w, "a user with that email already exists", http.StatusConflict)

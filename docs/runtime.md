@@ -43,10 +43,12 @@ the SPA rather than an installer.
 
 ## Auth
 
-Accounts live in the config as bcrypt hashes; the username is an email. Login verifies the
-hash, rejects a **blocked** account (with the same 401 as a bad password, so a block leaks
-nothing), records the last-login time, and creates an in-memory session handed back as an
-`HttpOnly` cookie; sessions are cleared on restart (there is no persistent session store).
+Accounts live in the config as bcrypt hashes; the username is an email, matched
+**case-insensitively** (trimmed and lower-cased) so an account is found by whatever casing the
+user types, not only the form it was created under. Login verifies the hash, rejects a
+**blocked** account (with the same 401 as a bad password, so a block leaks nothing), records
+the last-login time, and creates an in-memory session handed back as an `HttpOnly` cookie;
+sessions are cleared on restart (there is no persistent session store).
 
 Login is hardened against guessing and enumeration. Every attempt spends the same time in
 one bcrypt compare - an unknown or blocked account is checked against a fixed dummy hash - so
