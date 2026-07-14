@@ -19,18 +19,18 @@ built from those files; this file covers that cache, its rebuild, and browsing.
 The database is local, per-user SQLite (pure-Go driver, WAL, single write connection). It is
 built entirely from a filesystem scan and exists only to make listing and lookups fast.
 
-| table | holds | written by |
-|-------|-------|------------|
-| `categories` | id / name (relpath) / parent_id / alias / effective other_media / position | rebuild, category admin |
-| `media` | one row per media folder (title, year, description, poster, enriched, + denormalized facets: language/country/director/writer) | importer, rebuild, enricher, thumbnail agent |
-| `media_files` | one row per video file (index, season/episode, ext, path) | importer, rebuild |
-| `media_facets` | the multivalued search facets (one row per actor/genre, tagged by kind) | importer, rebuild, reconcile, enricher |
-| `user_state` | per-user playback-state mirror (watched/favorite/rating/has_progress/updated) for cache-served home + watched overlays | playback-state writers, rebuild, reconcile |
-| `imports` | the transient import interface | producers + importer (see `import.md`) |
-| `optimize_tasks` | transient pre-transcode queue (see `agents/optimizer.md`) | optimizer |
-| `enrich_tasks` | transient enrichment queue (see `agents/enricher.md`) | enricher |
-| `thumbnail_tasks` | transient sized-poster queue (see `agents/thumbnailer.md`) | thumbnail agent |
-| `media_health` | per-item integrity check + fingerprint (see `agents/discovery.md`) | discovery agent |
+| table             | holds                                                                                                                          | written by                                   |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+| `categories`      | id / name (relpath) / parent_id / alias / effective other_media / position                                                     | rebuild, category admin                      |
+| `media`           | one row per media folder (title, year, description, poster, enriched, + denormalized facets: language/country/director/writer) | importer, rebuild, enricher, thumbnail agent |
+| `media_files`     | one row per video file (index, season/episode, ext, path)                                                                      | importer, rebuild                            |
+| `media_facets`    | the multivalued search facets (one row per actor/genre, tagged by kind)                                                        | importer, rebuild, reconcile, enricher       |
+| `user_state`      | per-user playback-state mirror (watched/favorite/rating/has_progress/updated) for cache-served home + watched overlays         | playback-state writers, rebuild, reconcile   |
+| `imports`         | the transient import interface                                                                                                 | producers + importer (see `import.md`)       |
+| `optimize_tasks`  | transient pre-transcode queue (see `agents/optimizer.md`)                                                                      | optimizer                                    |
+| `enrich_tasks`    | transient enrichment queue (see `agents/enricher.md`)                                                                          | enricher                                     |
+| `thumbnail_tasks` | transient sized-poster queue (see `agents/thumbnailer.md`)                                                                     | thumbnail agent                              |
+| `media_health`    | per-item integrity check + fingerprint (see `agents/discovery.md`)                                                             | discovery agent                              |
 
 The `media_facets` and `user_state` rows are **denormalized mirrors** of what each folder's
 `meta.json` already holds (the searchable facets and the per-user state). They exist only to
@@ -69,6 +69,11 @@ collecting the video files and `poster.*` (the exact `poster.<ext>` basename, ne
 (`.optimized.mp4`/`.tmp`) so a derived copy is never mistaken for media. The transient queues
 and `media_health` are simply dropped: imports cannot be reconstructed, and
 optimize/enrich/thumbnail work and health are re-derivable by a scan.
+
+A folder's files are indexed by **(season, episode)**, an embedded-number-aware order breaking
+ties (so E4 precedes E37, not a lexical sort placing E37 before E4). This is the same order the
+detail view shows, and it is the progression the resume engine walks - marking every file
+before the pointer watched - so the two must agree (see `playback-state.md`).
 
 The **discovery agent** (see `agents/discovery.md`) reaches the same end state *incrementally*: it
 diffs the on-disk media-folder set against the cache and re-reads only changed folders,
@@ -154,14 +159,14 @@ format only dictates how the importer names media folders and their files.
 
 ## Endpoints
 
-| method + path                          | purpose                                       |
-|----------------------------------------|-----------------------------------------------|
-| `GET /api/categories`                  | list categories (id, name, leaf, alias, parentId) |
-| `GET /api/category/{id}/media`         | list a category's media (+ user watched flag) |
-| `GET /api/media/{id}`                  | full media detail                             |
-| `GET /api/media/{id}/poster`           | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
-| `GET /api/home`                        | continue / favorites / completed buckets      |
-| `GET /api/search`                      | library-wide facet search (`q`, `field`; live `meta.json` scan) |
-| `POST/PUT/DELETE /api/admin/categories`| create / re-alias / delete (empty only)       |
-| `POST /api/admin/categories/reorder`   | renumber one parent's children (siblings only) |
-| `POST /api/admin/rebuild`              | flush and rebuild the cache from disk          |
+| method + path                           | purpose                                                                              |
+|-----------------------------------------|--------------------------------------------------------------------------------------|
+| `GET /api/categories`                   | list categories (id, name, leaf, alias, parentId)                                    |
+| `GET /api/category/{id}/media`          | list a category's media (+ user watched flag)                                        |
+| `GET /api/media/{id}`                   | full media detail                                                                    |
+| `GET /api/media/{id}/poster`            | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
+| `GET /api/home`                         | continue / favorites / completed buckets                                             |
+| `GET /api/search`                       | library-wide facet search (`q`, `field`; live `meta.json` scan)                      |
+| `POST/PUT/DELETE /api/admin/categories` | create / re-alias / delete (empty only)                                              |
+| `POST /api/admin/categories/reorder`    | renumber one parent's children (siblings only)                                       |
+| `POST /api/admin/rebuild`               | flush and rebuild the cache from disk                                                |

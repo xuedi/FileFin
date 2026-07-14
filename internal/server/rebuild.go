@@ -250,13 +250,30 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		tags:      tags,
 		userState: userState,
 	}
-	for i, vf := range videos {
+	for _, vf := range videos {
 		base := filepath.Base(vf)
 		p := recognize.ParseName(base, false)
 		sm.files = append(sm.files, db.MediaFile{
-			MediaID: id, Idx: i, Path: vf, Name: base,
+			MediaID: id, Path: vf, Name: base,
 			Season: p.Season, Episode: p.Episode, Ext: strings.ToLower(filepath.Ext(base)),
 		})
+	}
+	// Idx is the episode progression the resume engine walks (marking every file before
+	// the pointer watched), so order it by (season, episode) - the same order the detail
+	// view shows - with a natural-name tiebreak for unnumbered files. A lexical sort would
+	// place E10 before E2 and E37 before E4, so watching E37 would skip E4-E9.
+	sort.Slice(sm.files, func(i, j int) bool {
+		a, b := sm.files[i], sm.files[j]
+		if a.Season != b.Season {
+			return a.Season < b.Season
+		}
+		if a.Episode != b.Episode {
+			return a.Episode < b.Episode
+		}
+		return naturalLess(a.Name, b.Name)
+	})
+	for i := range sm.files {
+		sm.files[i].Idx = i
 	}
 	return sm, true
 }
@@ -286,4 +303,42 @@ func scanFolderFiles(dir string) ([]string, string) {
 	}
 	sort.Strings(videos)
 	return videos, poster
+}
+
+// naturalLess orders two names so embedded numbers compare by value, not lexically
+// ("E4" before "E37", "Part 2" before "Part 10"). Digit runs compare numerically
+// (leading zeros ignored); every other byte compares as before, so non-numeric names
+// keep their plain-sort order.
+func naturalLess(a, b string) bool {
+	for len(a) > 0 && len(b) > 0 {
+		if isDigit(a[0]) && isDigit(b[0]) {
+			ai, bi := digitRun(a), digitRun(b)
+			na := strings.TrimLeft(a[:ai], "0")
+			nb := strings.TrimLeft(b[:bi], "0")
+			if len(na) != len(nb) {
+				return len(na) < len(nb)
+			}
+			if na != nb {
+				return na < nb
+			}
+			a, b = a[ai:], b[bi:]
+			continue
+		}
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		a, b = a[1:], b[1:]
+	}
+	return len(a) < len(b)
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// digitRun returns the length of the leading run of ASCII digits in s.
+func digitRun(s string) int {
+	i := 0
+	for i < len(s) && isDigit(s[i]) {
+		i++
+	}
+	return i
 }
