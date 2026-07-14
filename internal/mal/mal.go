@@ -56,11 +56,33 @@ func New() *Client {
 // endpoint carries the romaji title, its English title, the member's status/score, and the
 // anime's air date as "MM-DD-YY".
 type listRow struct {
-	Status        int    `json:"status"`
-	Score         int    `json:"score"`
-	AnimeTitle    string `json:"anime_title"`
-	AnimeTitleEng string `json:"anime_title_eng"`
-	StartDate     string `json:"anime_start_date_string"`
+	Status        int        `json:"status"`
+	Score         int        `json:"score"`
+	AnimeTitle    flexString `json:"anime_title"`
+	AnimeTitleEng flexString `json:"anime_title_eng"`
+	StartDate     string     `json:"anime_start_date_string"`
+}
+
+// flexString decodes a JSON string or a bare number into a string: MyAnimeList serializes a
+// purely numeric title (an anime literally titled "5" or "20") as a JSON number rather than a
+// string, which a plain string field cannot accept.
+type flexString string
+
+func (s *flexString) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		*s = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var str string
+		if err := json.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		*s = flexString(str)
+		return nil
+	}
+	*s = flexString(b) // a bare number: keep its literal text as the title
+	return nil
 }
 
 // GetUserList fetches every page of a public anime list and maps it to source-neutral entries.
@@ -118,9 +140,10 @@ func (c *Client) fetch(ctx context.Context, username string, offset int) ([]list
 func mapEntries(rows []listRow) []watchlist.Entry {
 	out := make([]watchlist.Entry, 0, len(rows))
 	for _, r := range rows {
+		title := string(r.AnimeTitle)
 		out = append(out, watchlist.Entry{
-			Title:   r.AnimeTitle,
-			Aliases: aliasesFor(r.AnimeTitle, r.AnimeTitleEng),
+			Title:   title,
+			Aliases: aliasesFor(title, string(r.AnimeTitleEng)),
 			Year:    yearOf(r.StartDate),
 			Rating:  r.Score,
 			Watched: r.Status == statusCompleted,

@@ -44,8 +44,8 @@ func TestGetUserList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 4 {
-		t.Fatalf("want 4 entries across both pages, got %d: %+v", len(entries), entries)
+	if len(entries) != 5 {
+		t.Fatalf("want 5 entries across both pages, got %d: %+v", len(entries), entries)
 	}
 
 	aot := entries[0]
@@ -75,6 +75,15 @@ func TestGetUserList(t *testing.T) {
 
 	if entries[3].Title != "Kingdom" || entries[3].Year != 2012 || !entries[3].Watched {
 		t.Errorf("entry 3 (page 2) = %+v", entries[3])
+	}
+
+	// A purely numeric title arrives as a JSON number; it must decode to its text form.
+	numeric := entries[4]
+	if numeric.Title != "5" || numeric.Year != 2011 || numeric.Rating != 6 {
+		t.Errorf("entry 4 (numeric title) = %+v", numeric)
+	}
+	if len(numeric.Aliases) != 1 || numeric.Aliases[0] != "Five" {
+		t.Errorf("entry 4 aliases = %+v", numeric.Aliases)
 	}
 }
 
