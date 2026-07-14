@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -127,12 +128,21 @@ func renameUser(oldArg, newArg string, dryRun bool) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	// Drop the disposable cache so its username-keyed mirrors (users, user_state) rebuild
-	// from the corrected config + meta.json on the next cache open.
-	if err := db.RemoveCache(); err != nil {
-		fmt.Printf("warning: could not remove cache (rebuild it from the admin page): %v\n", err)
+	// Repoint the disposable cache's username-keyed mirrors (users, user_state) in place so
+	// the renamed account's home view works immediately, without dropping the media tables.
+	// Best-effort: the cache is fully rebuildable from meta.json if this cannot run.
+	ctx := context.Background()
+	if pool, err := db.Open(); err != nil {
+		fmt.Printf("warning: could not open cache to update mirror: %v\n", err)
+	} else {
+		if err := db.Build(ctx, pool); err != nil {
+			fmt.Printf("warning: could not prepare cache: %v\n", err)
+		} else if err := db.RenameUser(ctx, pool, oldKey, newKey); err != nil {
+			fmt.Printf("warning: could not update cache mirror: %v\n", err)
+		}
+		_ = pool.Close()
 	}
-	fmt.Println("config updated and cache dropped; start the service, then rebuild the library cache")
+	fmt.Println("done; start the service (the renamed account keeps its watch history)")
 	return nil
 }
 

@@ -101,6 +101,9 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 	defer ticker.Stop()
 	s.setDiscNextRun(time.Now().Add(interval).Unix())
 	s.dlog().Info("discovery agent started", logging.Fields{"interval_s": int(interval.Seconds())})
+	// One reconcile right away so a freshly opened or externally emptied cache is brought
+	// current at startup, rather than showing an empty library until the first full interval.
+	s.discoveryTick(ctx)
 	for {
 		select {
 		case <-ctx.Done():

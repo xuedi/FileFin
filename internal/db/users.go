@@ -56,6 +56,19 @@ func TouchUserLogin(ctx context.Context, pool *sql.DB, username string, ts int64
 	return nil
 }
 
+// RenameUser repoints every username-keyed mirror row from oldName to newName in place - the
+// users row and every user_state row - so a rename does not require dropping the cache and
+// losing the media tables. Best-effort on a cache that predates the rename (no matching rows).
+func RenameUser(ctx context.Context, pool *sql.DB, oldName, newName string) error {
+	if _, err := pool.ExecContext(ctx, `UPDATE users SET username = ? WHERE username = ?`, newName, oldName); err != nil {
+		return fmt.Errorf("rename user %q->%q: %w", oldName, newName, err)
+	}
+	if _, err := pool.ExecContext(ctx, `UPDATE user_state SET user = ? WHERE user = ?`, newName, oldName); err != nil {
+		return fmt.Errorf("rename user_state %q->%q: %w", oldName, newName, err)
+	}
+	return nil
+}
+
 // DeleteUserByID removes a mirror row by id, used to prune accounts the config no longer
 // has (e.g. a stale row left in the disposable cache after a reinstall).
 func DeleteUserByID(ctx context.Context, pool *sql.DB, id int64) error {
