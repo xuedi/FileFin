@@ -15,6 +15,7 @@ import (
 
 	"filefin/internal/db"
 	"filefin/internal/importer"
+	"filefin/internal/library"
 	"filefin/internal/logging"
 	"filefin/internal/recognize"
 )
@@ -37,8 +38,12 @@ type importItem struct {
 	SubCount   int      `json:"subCount"`
 	HasPoster  bool     `json:"hasPoster"`
 	Duplicate  string   `json:"duplicate"` // the library item this would import a second time
-	paths      []string
-	probes     []db.Import
+	// CategoryID is the category this row's markers point at, 0 when nothing earned the
+	// guess; CategoryReason says why, in the same spirit as the confidence tooltip.
+	CategoryID     int64  `json:"categoryId"`
+	CategoryReason string `json:"categoryReason"`
+	paths          []string
+	probes         []db.Import
 }
 
 // handleImportFolder previews the import folder: the configured path plus one item per
@@ -62,6 +67,7 @@ func (s *Server) handleImportFolder(w http.ResponseWriter, r *http.Request) {
 	if pool, err := s.ensureDB(r.Context()); err == nil {
 		s.markDuplicateItems(r.Context(), pool, items)
 	}
+	s.predictCategories(items)
 	out.Items = items
 	writeJSON(w, out)
 }
@@ -122,7 +128,14 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 		if title == "" {
 			title = it.Title
 		}
-		staged += s.stageItem(ctx, pool, it, cat.ID, title, want.Year, req.DeleteAfter)
+		n := s.stageItem(ctx, pool, it, cat.ID, title, want.Year, req.DeleteAfter)
+		staged += n
+		// The source name is about to be replaced by the canonical one, so this is the last
+		// moment its markers exist. Learn once per media, not per file, or a long show would
+		// drown every other signal; a row that staged nothing teaches nothing.
+		if n > 0 {
+			s.bestEffort(library.Learn(s.dataDir(), cat.Name, itemMarkers(it)), "learn category markers")
+		}
 	}
 	if skipped > 0 {
 		s.logger().For(logging.Import).Error("some media could not be staged for import",
@@ -156,6 +169,7 @@ func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, cat
 		if _, err := db.InsertImport(ctx, pool, db.Import{
 			CategoryID: categoryID, SourcePath: path, Filename: filepath.Base(path),
 			Title: title, Year: year, Season: it.probes[i].Season, Episode: it.probes[i].Episode,
+			Part:      it.probes[i].Part,
 			Subtitles: subsJSON, Poster: importer.FindSidecarPoster(path),
 			Status: db.StatusImport, DeleteAfter: deleteAfter, Origin: db.OriginFolder,
 			Confidence: it.Confidence,
@@ -165,6 +179,27 @@ func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, cat
 		n++
 	}
 	return n
+}
+
+// itemMarkers reads one media's learnable signals from the names it arrived under: the entry
+// folder the admin dropped there and the first file inside it. Both are used because a
+// release signs itself in either place - the folder wears the group, or only the files do.
+func itemMarkers(it importItem) []string {
+	names := []string{it.Entry}
+	if len(it.paths) > 0 {
+		names = append(names, filepath.Base(it.paths[0]))
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		for _, m := range recognize.Markers(n) {
+			if !seen[m] {
+				seen[m] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out
 }
 
 // scanImportFolder turns the import folder into the media it would create. It groups by
@@ -416,7 +451,7 @@ func buildItem(entry string, isShow bool, res recognize.Result, files []videoFil
 		}
 		it.paths = append(it.paths, f.path)
 		it.probes = append(it.probes, db.Import{Title: it.Title, Year: it.Year,
-			Season: parsed[i].Season, Episode: parsed[i].Episode})
+			Season: parsed[i].Season, Episode: parsed[i].Episode, Part: parsed[i].Part})
 	}
 	it.ID = groupID(entry + "\x00" + it.Title + "\x00" + strconv.Itoa(it.Year))
 	return it

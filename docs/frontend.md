@@ -41,6 +41,7 @@ flowchart TD
   App --> Lib["library/LibraryView"]
   App --> Tok["library/TokPlayer"]
   App --> AdminLib["admin/AdminLibrary"]
+  App --> AdminCat["admin/AdminCategory"]
   App --> AdminImp["admin/AdminImport"]
   App --> ImportWork["admin/import/ImportWork"]
   App --> Settings["admin/AdminSettings + FormatGate"]
@@ -82,6 +83,12 @@ progress flush in `onMount`. The view router in `App.svelte` is a single `{#if}`
 `view` / `adminView` / `importPage` that mounts the matching view component. The top-level `view`
 is `library`, `admin`, or `settings`; `/settings` is available to every authenticated user, while
 `/admin/*` falls back to the library for non-admins.
+
+An admin sub-view may carry a third path segment, which `applyAdmin()` passes along: it is the
+settings tab, the media id on the Unhealthy page, and on the Library page the **category** whose
+own page is open (`/admin/library/<name>`). A category name is a relpath, so it is
+percent-encoded into that single segment and decoded again on the way in; an empty segment is
+the read-only list (see [`library.md`](library.md)).
 
 The `category` grid offers the fullscreen **TokTok** swipe player, but only for an other-media
 category (its own flag or an inherited one from a top-level parent - see

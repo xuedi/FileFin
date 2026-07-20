@@ -30,6 +30,15 @@ agent records in `media_health` (see [`agents/discovery.md`](agents/discovery.md
 media page shows that health list too, read-only, below the matching list, so the admin has one
 "needs attention" surface; the dashboard keeps its own copy.
 
+A third read-only list sits between them: **possibly in the wrong category**. Once an item has
+been matched, its language and country are compared with the ones its category declares (see
+[`mediaformat.md`](mediaformat.md)); a contradiction is listed with the category the facets
+would suggest instead. It is the same question this page already answers, asked of the filing
+rather than the metadata, so it belongs here rather than on a page of its own. A category that
+declares no languages or countries has said nothing to be wrong about, an item the lookup
+recorded no origin for cannot contradict anything (that is a metadata gap, which the lists
+above are for), and nothing is ever moved automatically.
+
 ## The flow
 
 ```mermaid
@@ -85,6 +94,7 @@ concurrent playback event is never dropped.
 | method + path                                | purpose                                                     |
 |----------------------------------------------|-------------------------------------------------------------|
 | `GET  /api/admin/unmatched`                  | list every unmatched item (errored or queued), with reason  |
+| `GET  /api/admin/misfiled`                   | list matched items whose language/country contradicts their category, with the category that fits |
 | `GET  /api/admin/media/{id}/match`           | one item's match context for the detail view                |
 | `POST /api/admin/media/{id}/omdb-search`     | OMDb candidates by title+year, or a single record by IMDb id |
 | `POST /api/admin/media/{id}/match`           | apply the chosen record (replace-mode write)                |

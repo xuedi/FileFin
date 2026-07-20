@@ -149,6 +149,34 @@
     <p class="help">Every title in the library has a metadata match.</p>
   {/if}
 
+  {#if u.misfiled.length}
+    <h2 class="title is-5 ff-health-head">Possibly in the wrong category</h2>
+    <p class="ff-settings-intro has-text-grey">
+      The looked-up language and country of these titles contradict the markers of the category
+      they sit in. Nothing is moved automatically - open a title to check it, or adjust the
+      category's markers if the rule is what is wrong.
+    </p>
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr><th>Title</th><th>In</th><th>Language</th><th>Country</th><th>Would suggest</th></tr>
+      </thead>
+      <tbody>
+        {#each u.misfiled as it}
+          <tr>
+            <td>
+              <a href={null} class="ff-edit-link" title="Edit metadata" onclick={() => app.goEditMeta(it.id)}>{it.title}</a>
+              {#if it.year}<span class="has-text-grey"> ({it.year})</span>{/if}
+            </td>
+            <td class="has-text-grey">{it.category}</td>
+            <td>{it.language || '-'}</td>
+            <td>{it.country || '-'}</td>
+            <td>{it.suggest || '-'}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+
   {#if app.health && app.health.items.length}
     <h2 class="title is-5 ff-health-head">Disk health issues</h2>
     <table class="table is-fullwidth">

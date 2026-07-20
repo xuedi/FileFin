@@ -151,6 +151,31 @@ into a scoped search. Matching is plain substring (`LIKE`); ranked/tokenized sea
 considered and deliberately not adopted, to keep the exact substring semantics with no
 driver-feature dependency.
 
+## The admin Library page and the category page
+
+Editing a category is split in two, because a table row and a form are good at different
+things:
+
+- **`/admin/library`** is a **fixed list**. It shows every category with its folder, alias,
+  media and file tally, other-media state, and a markers summary (the kind it takes and how
+  many learned markers it carries). Nothing in it is editable except the **order**: a row is
+  dragged to reorder it **within its sibling group**, exactly as before. Each row has one
+  **Edit** button opening the category's own page, and the **add** row at the bottom creates a
+  new category.
+- **`/admin/library/<name>`** is the **category page**, the single place a category is
+  written. It is sectioned, and every field says what it *does* rather than what it is called:
+  **Identity** (folder read-only, alias, other-media - a sub-category shows what it inherits),
+  **What belongs here** (kind, languages, countries, keywords - see `mediaformat.md`),
+  **Learned from imports** (each marker with its count, the other categories that have seen
+  it, and a Remove button), **What this category holds** (media and file counts), and
+  **Delete**, which stays disabled with the reason spelled out while the category still holds
+  media or sub-categories.
+
+Both halves of the markers go out in **one `PUT`**: alias, other-media flag, and the markers
+section together. A request that carries no markers section leaves the stored markers alone,
+so a rename can never wipe what past imports taught; a request that carries a `learned` map
+replaces it, which is how a single wrong marker is pruned.
+
 ## Naming formats
 
 The media-folder naming style is chosen once in Settings (the `mediafmt` set of valid formats)
@@ -167,6 +192,8 @@ format only dictates how the importer names media folders and their files.
 | `GET /api/media/{id}/poster`            | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
 | `GET /api/home`                         | continue / favorites / completed buckets                                             |
 | `GET /api/search`                       | library-wide facet search (`q`, `field`; live `meta.json` scan)                      |
-| `POST/PUT/DELETE /api/admin/categories` | create / re-alias / delete (empty only)                                              |
+| `POST/DELETE /api/admin/categories`     | create / delete (empty only)                                                         |
+| `GET /api/admin/categories/{name}`      | one category's page: identity, markers, learned markers with their other homes       |
+| `PUT /api/admin/categories/{name}`      | the single write path: alias, other-media flag, markers                              |
 | `POST /api/admin/categories/reorder`    | renumber one parent's children (siblings only)                                       |
 | `POST /api/admin/rebuild`               | flush and rebuild the cache from disk                                                |

@@ -136,8 +136,9 @@ export class AppState {
 
   // admin: unhealthy media (metadata matching). The list of unmatched items, plus a drill-in
   // detail with an editable title/year/IMDb-id form and the OMDb candidates it searches up.
+  // misfiled holds the items whose looked-up language/country contradicts their category.
   unhealthy = $state({
-    items: [], loading: false, detailId: '', detail: null,
+    items: [], loading: false, detailId: '', detail: null, misfiled: [],
     form: { title: '', year: '', imdbId: '' }, candidates: null, searching: false, applying: false,
   })
 
@@ -208,6 +209,12 @@ export class AppState {
   catParentId = $state(0) // 0 = create a top-level category
   catError = $state('')
   dragName = $state('') // category being dragged to reorder; '' when not dragging
+  // The category page: catPage is the relpath being edited ('' = the list), catDetail what
+  // the server said about it, and catForm the working copy the form binds to.
+  catPage = $state('')
+  catDetail = $state(null)
+  catForm = $state(null)
+  catSaving = $state(false)
 
   // admin settings. The editable fields below are the working copy the per-section forms
   // bind to; settingsBaseline holds the last-saved values so each tab knows when it is dirty.
@@ -288,10 +295,6 @@ export class AppState {
   enrichScanning = $state(false)
   thumbnailScanning = $state(false)
   probeScanning = $state(false)
-
-  // inline alias editing in the admin table
-  editName = $state('') // category being edited, '' = none
-  editAlias = $state('')
 
   // admin import
   importCategory = $state('')
@@ -1031,8 +1034,12 @@ export class AppState {
     if (page !== 'settings') this.stopSettingsClock() // leaving Settings stops its countdown
     this.adminView = page
     if (page === 'library') {
-      this.editName = ''
+      // A third segment names the category whose own page is open; without one this is the
+      // read-only list.
+      this.catPage = sub ? decodeURIComponent(sub) : ''
       this.loadCategories()
+      if (this.catPage) this.loadCategory(this.catPage)
+      else this.catDetail = this.catForm = null
     } else if (page === 'import') {
       clearInterval(this.plexTimer) // stop any orphaned Plex staging poll
       this.plexTimer = 0
@@ -1286,6 +1293,18 @@ export class AppState {
     } else {
       this.unhealthy.detail = null
       await this.loadUnmatched()
+      this.loadMisfiled()
+    }
+  }
+
+  // loadMisfiled reads the items whose metadata disagrees with the category they sit in. It
+  // is a report only: nothing is moved, here or anywhere.
+  async loadMisfiled() {
+    try {
+      const r = await api('/api/admin/misfiled')
+      this.unhealthy.misfiled = r.items || []
+    } catch {
+      this.unhealthy.misfiled = []
     }
   }
 
@@ -1571,42 +1590,76 @@ export class AppState {
     }
   }
 
-  startEditAlias(c) {
-    this.editName = c.name
-    this.editAlias = c.alias
+  // openCategory leaves the list for one category's own page, where everything about it is
+  // edited. The name is a relpath, so it is encoded into the single URL segment.
+  openCategory(c) {
+    this.go('/admin/library/' + encodeURIComponent(c.name))
+  }
+
+  // loadCategory reads one category's page payload and derives the working copy the form
+  // binds to. The keyword-style lists edit as comma-separated text, which is how an admin
+  // thinks of them, and are split again on save.
+  async loadCategory(name) {
     this.catError = ''
-  }
-
-  async saveAlias() {
+    this.catDetail = null
+    this.catForm = null
     try {
-      // Preserve the category's current other-media flag: the PUT carries both fields, so
-      // omitting it would clear the flag whenever an alias is edited.
-      const other = this.categories.find((c) => c.name === this.editName)?.otherMedia ?? false
-      await api('/api/admin/categories/' + encodeURIComponent(this.editName), {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ alias: this.editAlias.trim(), otherMedia: other }),
-      })
-      this.editName = ''
-      await this.loadCategories()
+      const d = await api('/api/admin/categories/' + encodeURIComponent(name))
+      this.catDetail = d
+      this.catForm = {
+        alias: d.alias,
+        otherMedia: d.otherMedia,
+        kind: d.markers.kind || 'both',
+        languages: (d.markers.languages || []).join(', '),
+        countries: (d.markers.countries || []).join(', '),
+        keywords: (d.markers.keywords || []).join(', '),
+      }
     } catch (e) {
-      this.catError = (await errText(e)) || 'Could not update alias'
+      this.catError = (await errText(e)) || 'Could not load the category'
     }
   }
 
-  // toggleOtherMedia flips a category's other-media flag immediately (no Edit/Save), via
-  // the same extended alias endpoint so alias and flag stay in one PUT.
-  async toggleOtherMedia(c, value) {
+  // saveCategory writes the whole category in one PUT: identity and markers together. The
+  // learned markers ride along unchanged unless a row was removed, which is what makes the
+  // page the single write path.
+  async saveCategory(learned) {
+    if (!this.catDetail || !this.catForm) return
+    const f = this.catForm
+    const list = (s) => s.split(',').map((x) => x.trim()).filter(Boolean)
+    const markers = {
+      kind: f.kind,
+      languages: list(f.languages),
+      countries: list(f.countries),
+      keywords: list(f.keywords),
+    }
+    if (learned) markers.learned = learned
+    this.catSaving = true
+    this.catError = ''
     try {
-      await api('/api/admin/categories/' + encodeURIComponent(c.name), {
+      await api('/api/admin/categories/' + encodeURIComponent(this.catDetail.name), {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ alias: c.alias, otherMedia: value }),
+        body: JSON.stringify({ alias: f.alias.trim(), otherMedia: f.otherMedia, markers }),
       })
+      await this.loadCategory(this.catDetail.name)
       await this.loadCategories()
+      this.toast('success', 'Category saved.')
     } catch (e) {
-      this.catError = (await errText(e)) || 'Could not update category'
+      this.catError = (await errText(e)) || 'Could not save the category'
+    } finally {
+      this.catSaving = false
     }
+  }
+
+  // removeLearnedMarker prunes one marker the imports got wrong: the surviving counts are
+  // sent back as the new learned set.
+  async removeLearnedMarker(marker) {
+    if (!this.catDetail) return
+    const learned = {}
+    for (const row of this.catDetail.learned) {
+      if (row.marker !== marker) learned[row.marker] = row.count
+    }
+    await this.saveCategory(learned)
   }
 
   categoryAlias(name) {
@@ -1645,6 +1698,7 @@ export class AppState {
     try {
       await api('/api/admin/categories/' + encodeURIComponent(name), { method: 'DELETE' })
       await this.loadCategories()
+      if (this.catPage === name) this.go('/admin/library') // its own page is gone with it
     } catch (e) {
       this.catError = (await errText(e)) || 'Could not delete category'
     }
@@ -1669,7 +1723,9 @@ export class AppState {
           ...it,
           order, // scan order, so a row taken back lands where it was
           year: it.year || '',
-          categoryId: this.categoryForKind(it.isShow) ?? fallback,
+          // The markers' guess wins when it earned one; below the evidence threshold the row
+          // falls back to the plain default and says nothing about why.
+          categoryId: it.categoryId || this.categoryForKind(it.isShow) || fallback,
         }))
         .sort((a, b) => (rank[a.confidence] ?? 3) - (rank[b.confidence] ?? 3) || a.order - b.order)
       this.importSkipped = []

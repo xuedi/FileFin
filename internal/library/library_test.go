@@ -3,6 +3,7 @@ package library
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -193,5 +194,103 @@ func TestDeleteMissing(t *testing.T) {
 	dir := t.TempDir()
 	if err := Delete(dir, "Nope"); err == nil {
 		t.Fatal("expected error deleting missing category")
+	}
+}
+
+func TestMarkersRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Shows", "Shows - Korea", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	want := Markers{
+		Kind:      KindShows,
+		Languages: []string{"Korean"},
+		Countries: []string{"South Korea"},
+		Keywords:  []string{"kdrama"},
+	}
+	if err := SetMarkers(dir, "Shows", want); err != nil {
+		t.Fatalf("set markers: %v", err)
+	}
+	cats, _ := List(dir)
+	got := cats[0].Markers
+	if got.Kind != KindShows || len(got.Languages) != 1 || got.Languages[0] != "Korean" ||
+		len(got.Countries) != 1 || len(got.Keywords) != 1 {
+		t.Fatalf("markers = %+v, want %+v", got, want)
+	}
+	if !got.Accepts(true) || got.Accepts(false) {
+		t.Errorf("a shows category must accept shows and refuse films: %+v", got)
+	}
+	// SetMarkers keeps the identity fields intact.
+	if cats[0].ID != 1 || cats[0].Alias != "Shows - Korea" {
+		t.Errorf("identity lost: %+v", cats[0])
+	}
+}
+
+// A category with no markers must write exactly the file it wrote before markers existed,
+// so upgrading the app leaves every existing config.json byte-identical.
+func TestMarkerlessConfigIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "Films", 7, 3); err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"id\": 7,\n  \"alias\": \"Films\",\n  \"otherMedia\": false,\n  \"position\": 3\n}"
+	read := func() string {
+		b, err := os.ReadFile(filepath.Join(dir, "Movies", "config.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if got := read(); got != want {
+		t.Fatalf("fresh config.json =\n%s\nwant\n%s", got, want)
+	}
+	// Every rewrite path leaves it alone, including an empty markers payload.
+	if err := SetMarkers(dir, "Movies", Markers{Kind: "nonsense"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetAlias(dir, "Movies", "Films", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPosition(dir, "Movies", 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != want {
+		t.Fatalf("after rewrites config.json =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestLearnCountsAndCap(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Shows", "Shows - China", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := Learn(dir, "Shows", []string{"grp:JKCT"}); err != nil {
+			t.Fatalf("learn: %v", err)
+		}
+	}
+	if err := Learn(dir, "Shows", []string{"tag:LostYears", "script:han"}); err != nil {
+		t.Fatal(err)
+	}
+	cats, _ := List(dir)
+	learned := cats[0].Markers.Learned
+	if learned["grp:JKCT"] != 3 || learned["tag:LostYears"] != 1 || learned["script:han"] != 1 {
+		t.Fatalf("learned = %+v", learned)
+	}
+
+	// Overflow the cap with weak markers; the strong one must survive and the pruning must
+	// go by count, not by insertion order.
+	for i := 0; i < MaxLearned+10; i++ {
+		if err := Learn(dir, "Shows", []string{"grp:weak" + strconv.Itoa(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cats, _ = List(dir)
+	learned = cats[0].Markers.Learned
+	if len(learned) != MaxLearned {
+		t.Fatalf("learned holds %d markers, want the cap of %d", len(learned), MaxLearned)
+	}
+	if learned["grp:JKCT"] != 3 {
+		t.Errorf("the most-seen marker was pruned: %+v", learned)
 	}
 }

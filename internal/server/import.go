@@ -354,7 +354,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		fail("could not create media folder: " + err.Error())
 		return
 	}
-	fileName := mediafmt.FileName(format, row.Year, row.Title, row.Season, row.Episode, 0, ext)
+	fileName := mediafmt.FileName(format, row.Year, row.Title, row.Season, row.Episode, row.Part, ext)
 	target := filepath.Join(dir, fileName)
 
 	// The live Progress page reads the in-memory map (updated every chunk), so the DB

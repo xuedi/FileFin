@@ -18,9 +18,15 @@
     overName = ''
     app.reorderCategory(c)
   }
+
+  const kindLabel = { films: 'films only', shows: 'shows only', both: 'films and shows' }
 </script>
 
 <h1 class="title is-4">Library</h1>
+<p class="ff-settings-intro has-text-grey">
+  Every category, in the order they are shown. Drag a row to reorder it within its level; open one
+  to change its alias and what belongs in it.
+</p>
 {#if app.catError}<p class="has-text-danger">{app.catError}</p>{/if}
 <table class="table is-fullwidth">
   <thead>
@@ -29,6 +35,7 @@
       <th>Alias</th>
       <th title="Media items in this category (each a movie or one TV show), with total media files in parentheses.">Media</th>
       <th title="Other media (home videos / recordings): skips OMDb lookups and derives posters from a video frame instead.">Other media</th>
+      <th title="What belongs here: the kind of media the category takes, and how much past imports have taught it.">Markers</th>
       <th></th>
       <th></th>
     </tr>
@@ -41,44 +48,31 @@
         ondragleave={() => overName === c.name && (overName = '')}
         ondrop={(e) => onDrop(e, c)}>
         <td><span class="ff-cat-tree">{treeMarker(c._depth)}</span>{c.leaf ?? c.name}</td>
-        <td>
-          {#if app.editName === c.name}
-            <input class="input is-small ff-inline-input" bind:value={app.editAlias} onkeydown={(e) => e.key === 'Enter' && app.saveAlias()} />
-          {:else}
-            {c.alias}
-          {/if}
-        </td>
+        <td>{c.alias}</td>
         <td>{c.media ?? 0} ({c.files ?? 0})</td>
         <td class="has-text-centered">
-          {#if c._depth === 0}
-            <input type="checkbox" checked={c.otherMedia} onchange={(e) => app.toggleOtherMedia(c, e.currentTarget.checked)} />
-          {:else}
+          {#if c.otherMedia}
+            <span class="tag is-light">other media</span>
+          {:else if c._depth > 0}
             <span class="has-text-grey is-size-7 is-italic" title="Inherited from the top-level category">inherited</span>
           {/if}
         </td>
+        <td class="is-size-7 has-text-grey">
+          {kindLabel[c.kind] ?? kindLabel.both}{#if c.learned > 0} &middot; {c.learned} learned{/if}
+        </td>
         <td class="ff-row-actions">
-          {#if app.editName === c.name}
-            <button class="button is-small is-primary" onclick={() => app.saveAlias()}>Save</button>
-            <button class="button is-small is-ghost" onclick={() => (app.editName = '')}>Cancel</button>
-          {:else}
-            <button class="button is-small" onclick={() => app.startEditAlias(c)}>Edit</button>
-            <button
-              class="button is-small is-danger"
-              disabled={!c.empty}
-              title={c.empty ? 'Delete this empty category' : 'Folder is not empty'}
-              onclick={() => app.deleteCategory(c.name)}>Delete</button>
-          {/if}
+          <button class="button is-small" onclick={() => app.openCategory(c)}>Edit</button>
         </td>
         <td
           class="ff-drag-handle"
-          draggable={app.editName !== c.name}
+          draggable="true"
           ondragstart={() => (app.dragName = c.name)}
           ondragend={() => ((app.dragName = ''), (overName = ''))}
           title="Drag to reorder within this level">⠿</td>
       </tr>
     {/each}
     {#if app.categories.length === 0}
-      <tr><td colspan="6" class="has-text-grey">No categories yet.</td></tr>
+      <tr><td colspan="7" class="has-text-grey">No categories yet.</td></tr>
     {/if}
   </tbody>
 </table>

@@ -849,3 +849,50 @@ func TestUploadImport(t *testing.T) {
 		t.Fatal("upload row must have delete_after set")
 	}
 }
+
+// A film split over two discs must land as two files. The parser reads the "CD1"/"CD2"
+// marker and the sanity check accepts the shape as healthy, so the part has to reach the
+// target name - otherwise the second disc silently overwrites the first.
+func TestTwoDiscFilmKeepsBothDiscs(t *testing.T) {
+	imp := t.TempDir()
+	entry := filepath.Join(imp, "The Mad Monk (1993)")
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"The Mad Monk (1993) CD1.mkv", "The Mad Monk (1993) CD2.mkv"} {
+		if err := os.WriteFile(filepath.Join(entry, n), []byte(n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, h, admin, catID := importServer(t, imp)
+	items := scanImport(t, h, admin)
+	if len(items) != 1 || items[0].Files != 2 {
+		t.Fatalf("want one media of two files, got %+v", items)
+	}
+	if rr := startImportOf(t, h, admin, catID, false, items); rr.Code != 200 {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
+
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 2 {
+		t.Fatalf("import rows = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		if row.Part == 0 {
+			t.Fatalf("row %q lost its disc number", row.Filename)
+		}
+		s.importOne(ctx, pool, row)
+	}
+	dir := filepath.Join(s.cfg.DataDir, "Movies", "(1993) The Mad Monk")
+	for i, want := range []string{"(1993) The Mad Monk - part1.mkv", "(1993) The Mad Monk - part2.mkv"} {
+		b, err := os.ReadFile(filepath.Join(dir, want))
+		if err != nil {
+			t.Fatalf("disc %d missing: %v", i+1, err)
+		}
+		if !strings.Contains(string(b), "CD"+strconv.Itoa(i+1)) {
+			t.Fatalf("%s holds the wrong disc: %q", want, b)
+		}
+	}
+}

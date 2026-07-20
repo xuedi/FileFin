@@ -74,12 +74,17 @@
               {/if}
             </td>
             <td>
-              <div class="select is-small">
-                <select bind:value={item.categoryId}>
-                  {#each app.categoryTree as c}
-                    <option value={c.id}>{treeMarker(c._depth)}{c.alias}</option>
-                  {/each}
-                </select>
+              <div class="ff-import-category">
+                <div class="select is-small">
+                  <select bind:value={item.categoryId}>
+                    {#each app.categoryTree as c}
+                      <option value={c.id}>{treeMarker(c._depth)}{c.alias}</option>
+                    {/each}
+                  </select>
+                </div>
+                {#if item.categoryReason}
+                  <span class="tag is-small ff-guess" title={'Preselected because ' + item.categoryReason}>why</span>
+                {/if}
               </div>
             </td>
             <td class="ff-row-actions">

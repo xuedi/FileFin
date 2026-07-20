@@ -104,6 +104,8 @@ body { min-height: 100vh; }
 .ff-import-head { margin-top: 2.5rem; }
 .ff-head-actions { display: flex; gap: 0.5rem; }
 .ff-settings-intro { max-width: 640px; }
+/* the category page: each marker section explains itself above its fields */
+.ff-marker-intro { margin-bottom: 1rem; max-width: 640px; }
 
 /* settings: tabbed sections, each a card with its own dirty-aware save footer */
 .ff-settings-tabs { margin-bottom: 1.25rem; }
@@ -179,6 +181,9 @@ body { min-height: 100vh; }
 .ff-confidence-high { background: var(--bulma-success); color: #fff; cursor: help; }
 .ff-confidence-medium { background: var(--bulma-warning); color: #000; cursor: help; }
 .ff-confidence-low { background: var(--bulma-danger); color: #fff; cursor: help; }
+/* the category an import row was preselected into, and the evidence behind it */
+.ff-import-category { display: flex; align-items: center; gap: 0.4rem; }
+.ff-guess { cursor: help; }
 .ff-prog-section { margin-top: 1.4rem; }
 .ff-prog-waiting { margin-top: 0.5rem; }
 

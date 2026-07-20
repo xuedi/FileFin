@@ -255,3 +255,40 @@ func FileAt(ctx context.Context, pool *sql.DB, id string, n int) (MediaFile, boo
 	}
 	return f, true, nil
 }
+
+// EnrichedMedia is one media item that has a metadata match, carrying the facets a
+// category's declared markers are judged against.
+type EnrichedMedia struct {
+	ID         string
+	Title      string
+	Year       int
+	CategoryID int64
+	Language   string
+	Country    string
+}
+
+// ListEnrichedMedia returns every matched media item with its category and the language and
+// country the lookup wrote, excluding other-media categories (which never look anything up).
+// It backs the misfiled-media check: the question can only be asked once the metadata has
+// actually answered.
+func ListEnrichedMedia(ctx context.Context, pool *sql.DB) ([]EnrichedMedia, error) {
+	rows, err := pool.QueryContext(ctx,
+		`SELECT m.id, m.title, m.year, m.category_id, m.language, m.country
+		 FROM media m
+		 JOIN categories c ON c.id = m.category_id
+		 WHERE m.enriched = 1 AND c.other_media = 0
+		 ORDER BY m.title`)
+	if err != nil {
+		return nil, fmt.Errorf("query enriched media: %w", err)
+	}
+	defer rows.Close()
+	out := []EnrichedMedia{}
+	for rows.Next() {
+		var m EnrichedMedia
+		if err := rows.Scan(&m.ID, &m.Title, &m.Year, &m.CategoryID, &m.Language, &m.Country); err != nil {
+			return nil, fmt.Errorf("scan enriched media: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

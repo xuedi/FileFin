@@ -53,6 +53,9 @@ folders and sub-category folders, never loose video files.
   position order, falling back to leaf name when positions tie (so legacy configs with no
   position keep alphabetical order). Position is meaningful only within a sibling group; it is
   never compared across parents. See `library.md` for the reorder flow.
+- `config.json` also holds the category's **markers** - what belongs in it. The whole section
+  is omitted while a category has none, so a library that never touches them keeps its files
+  byte-identical to before markers existed. See **Category markers** below.
 - **Global leaf-name uniqueness:** creating any category requires its leaf to differ from
   every existing category's leaf anywhere in the tree, so indented labels and dropdowns are
   never ambiguous (media folder names are unaffected).
@@ -62,6 +65,33 @@ folders and sub-category folders, never loose video files.
   before its children), alias edit (other-media accepted only on a top-level category), and
   **reorder** (renumber one parent's children to a new order; siblings only). The `config.json`
   files are the source of truth; the cache is re-mirrored after every change.
+
+## Category markers
+
+Markers describe what belongs in a category. They come from two origins and are the same
+mechanism either way, which is why they live together in one section of `config.json`:
+
+| field       | origin           | meaning                                                              |
+|-------------|------------------|----------------------------------------------------------------------|
+| `kind`      | declared         | `films`, `shows`, or absent for both. A category is ruled out entirely for the other kind |
+| `languages` | declared         | the languages this category holds, matched against what the enricher later writes |
+| `countries` | declared         | the same, for the country                                            |
+| `keywords`  | declared         | words that, appearing in a raw source name, are a vote for this category |
+| `learned`   | written by imports | a namespaced marker to how often media carrying it was imported here |
+
+Learned markers are namespaced by the kind of signal they are - `grp:` (release group),
+`tag:` (bracketed fansub tag), `plat:` (streaming platform), `script:` (writing system) - so
+one map covers every signal and a new kind of signal needs no schema change. The map is
+**capped at 50 entries per category**, pruned by count (lowest first, ties by name), which
+keeps the file small and hand-editable.
+
+Markers are **authoritative on disk, never in the cache**: a rebuild wipes the cache, and
+evidence gathered over many imports must not be rebuildable-away. Everything the categories
+have learned therefore survives a rebuild exactly as ids and aliases do.
+
+The declared half is edited on the **category page** (see `library.md`); the learned half is
+written by the import folder at staging time and pruned from the same page. How both are used
+to preselect a category is in `import.md`.
 
 ## Effective other-media flag (root-down propagation)
 
@@ -94,7 +124,7 @@ required no data migration.
 
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
-| `config.json` (id, alias, top-level other-media, position) | `categories` rows (parent_id, effective other_media, position) |
+| `config.json` (id, alias, top-level other-media, position, markers) | `categories` rows (parent_id, effective other_media, position) |
 | `meta.json` (title, year, rich fields, technical, per-user state) | `media` / `media_files` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
 

@@ -179,6 +179,75 @@ expected one, makes it **medium**; everything else is **high**. The import page 
 low-confidence rows to the top and names the failed check in the marker's tooltip, so the
 admin reads the few rows worth reading instead of all of them.
 
+## Which category a row is preselected into
+
+Each scanned row also carries a **guessed category and the reason for it**, shown beside the
+row's dropdown the way the confidence marker is. The guess is scored against the categories'
+**markers** (`mediaformat.md`), and it is only offered when the evidence is real: one Import
+button queues every row, so a confident wrong category misfiles silently, while a missing
+guess costs one dropdown.
+
+```mermaid
+flowchart TD
+    ROW[recognised row: show/film verdict + raw source name] --> KIND{category kind}
+    KIND -->|excludes this kind| OUT[category is out entirely]
+    KIND -->|accepts| LEARNED{a learned marker of this name}
+    LEARNED -->|seen 2+ times AND 80%+ in one category| VOTE[vote, weighted by how often it landed there]
+    LEARNED -->|seen once, or spread across categories| NEXT[no vote]
+    NEXT --> DECL{a declared keyword or language appears in the name}
+    DECL -->|yes| VOTE2[vote at the same weight the threshold demands]
+    DECL -->|no| SEED{a shipped seed marker}
+    SEED -->|yes, and the category is about it| VOTE3[vote, weaker than anything learned]
+    SEED -->|no| NONE
+    VOTE --> PICK[highest total wins]
+    VOTE2 --> PICK
+    VOTE3 --> PICK
+    PICK --> OUTP[preselect + the reason in words]
+    NONE{nothing voted} -->|one category left for this kind| OUTP
+    NONE -->|otherwise| PLAIN[no guess: the plain default, no reason]
+```
+
+Two rules are what make this safe rather than clever:
+
+- **A marker votes only when it has been seen at least twice and at least 80% of its sightings
+  sit in one category.** That is what makes a region-pure fansub group usable and keeps a
+  pan-Asian tracker uploader - which really does split across regions - silent.
+- **Nothing is inherited between rows.** Following the previous row's category was built,
+  measured against a labelled set of real release names, and dropped: it preselected three more
+  rows and got all three wrong, because a dump is not reliably one region at a time.
+
+A short **seeded vocabulary** ships with the app - region-locked platforms (IQIYI, Youku,
+MGTV, Tencent, TVING, Viu, wavve, KOCOWA, ...) and anime-only fansub groups - weighted below
+anything learned, so the first real evidence overrides it. A seed is only offered to a
+category whose declared markers, or failing those its own name, are about the same thing, so a
+library with no Chinese category is never told about IQIYI. It is deliberately small: it
+bridges the first few imports, it is not a database to maintain.
+
+## Learning at import time
+
+`mediafmt` renames every source to the canonical layout, so the release group, the fansub tag,
+the platform and the script of a name **exist only until the import runs**. Learning therefore
+happens at staging time, while the raw name is still in hand, which is also why the feature
+cannot be backfilled from an existing library and starts cold.
+
+- The markers are read from the **entry name and its first file**, since a release signs
+  itself in either place.
+- They are learned **once per media, not per file** - a 167-episode show would otherwise drown
+  every other signal.
+- Only a **successful** staging teaches: a row that staged nothing changes no counts.
+
+The counts are written into the target category's `config.json` (see `mediaformat.md` for the
+namespaces and the cap) and can be pruned one at a time from the category page.
+
+## Media that ended up in the wrong category
+
+Markers also answer the question after the fact. Once the enricher has written a media's
+**language and country**, they are compared with the declared languages and countries of the
+category it sits in; a contradiction is listed on the **Unhealthy media** page
+(`rematch.md`) - the same page that already answers "something about this item is wrong".
+A category that declares neither can never be contradicted, and nothing is ever moved
+automatically: the report names the category the facets point at and leaves the decision alone.
+
 ## Status lifecycle
 
 A row moves through five statuses. The import folder writes `import` rows directly (its review
@@ -212,6 +281,7 @@ stateDiagram-v2
 | `status`      | `preCheck` / `import` / `importing` / `done` / `error`            |
 | `season`      | recognized season number, 0 for a movie / single file             |
 | `episode`     | recognized episode number, 0 for a movie / single file            |
+| `part`        | which disc of a film split over several files (`CD1`, `part2`), 0 otherwise. It reaches the target file name, so two discs of one film cannot render to the same name and overwrite each other |
 | `subtitles`   | JSON list of detected sidecar subtitle files, or empty            |
 | `poster`      | path of a `poster.*` found beside the source, placed at import; empty if none |
 | `copied`      | bytes copied so far (mirrored from the live progress map)         |
@@ -413,7 +483,7 @@ client-side and finishes before staging; it is unrelated to the server-side copy
 
 | method + path                          | purpose                                        |
 |----------------------------------------|------------------------------------------------|
-| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, isShow, confidence, doubts, files, bytes, subs, poster, duplicate); writes nothing |
+| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, isShow, confidence, doubts, files, bytes, subs, poster, duplicate, the guessed categoryId + the reason for it); writes nothing |
 | `POST /api/admin/import/folder/start`  | import page: queue the listed media (per row: id, title, year, categoryId) as `import` rows |
 | `POST /api/admin/import/upload/begin`  | upload source: open a `/tmp` session, return token|
 | `POST /api/admin/import/upload/file`   | upload source: store one file (multipart) in the session|

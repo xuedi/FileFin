@@ -24,24 +24,132 @@ const configName = "config.json"
 // in config.json. OtherMedia is the flag stored in this folder's config.json; it is
 // authoritative only on a top-level category (sub-categories inherit the root's flag).
 type Category struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Parent     string `json:"parent"`
-	Leaf       string `json:"leaf"`
-	Alias      string `json:"alias"`
-	OtherMedia bool   `json:"otherMedia"`
-	Position   int    `json:"position"`
-	Empty      bool   `json:"empty"`
+	ID         int64   `json:"id"`
+	Name       string  `json:"name"`
+	Parent     string  `json:"parent"`
+	Leaf       string  `json:"leaf"`
+	Alias      string  `json:"alias"`
+	OtherMedia bool    `json:"otherMedia"`
+	Position   int     `json:"position"`
+	Empty      bool    `json:"empty"`
+	Markers    Markers `json:"markers"`
+}
+
+// The kinds of media a category takes. A category that states neither reads as both, so a
+// library that never touches markers behaves exactly as before.
+const (
+	KindBoth  = "both"
+	KindFilms = "films"
+	KindShows = "shows"
+)
+
+// MaxLearned caps how many learned markers one category keeps. config.json stays small
+// and hand-editable; the weakest evidence is dropped first, so what survives is what the
+// category has actually been fed repeatedly.
+const MaxLearned = 50
+
+// Markers describe what belongs in a category. Kind, Languages, Countries and Keywords are
+// declared by the admin; Learned is written by imports, mapping a namespaced marker
+// ("grp:JKCT", "tag:LostYears", "plat:IQIYI", "script:han") to how often media carrying it
+// landed here.
+type Markers struct {
+	Kind      string         `json:"kind,omitempty"`
+	Languages []string       `json:"languages,omitempty"`
+	Countries []string       `json:"countries,omitempty"`
+	Keywords  []string       `json:"keywords,omitempty"`
+	Learned   map[string]int `json:"learned,omitempty"`
+}
+
+// Accepts reports whether a category takes media of the given verdict. An unstated (or
+// unknown) kind takes everything.
+func (m Markers) Accepts(isShow bool) bool {
+	switch m.Kind {
+	case KindFilms:
+		return !isShow
+	case KindShows:
+		return isShow
+	default:
+		return true
+	}
+}
+
+// Empty reports whether a category declares and has learned nothing, in which case its
+// config.json carries no markers section at all.
+func (m Markers) Empty() bool {
+	return m.Kind == "" && len(m.Languages) == 0 && len(m.Countries) == 0 &&
+		len(m.Keywords) == 0 && len(m.Learned) == 0
+}
+
+// clean normalises admin input: blank entries dropped, an unknown kind reset to unstated,
+// zero or negative learned counts dropped, and the learned map capped.
+func (m Markers) clean() Markers {
+	if m.Kind != KindFilms && m.Kind != KindShows {
+		m.Kind = ""
+	}
+	m.Languages = cleanList(m.Languages)
+	m.Countries = cleanList(m.Countries)
+	m.Keywords = cleanList(m.Keywords)
+	learned := map[string]int{}
+	for k, n := range m.Learned {
+		if k = strings.TrimSpace(k); k != "" && n > 0 {
+			learned[k] = n
+		}
+	}
+	m.Learned = capLearned(learned)
+	if len(m.Learned) == 0 {
+		m.Learned = nil
+	}
+	return m
+}
+
+func cleanList(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		key := strings.ToLower(s)
+		if s == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// capLearned keeps the MaxLearned strongest markers, dropping the lowest counts first (a
+// tie broken by name so the outcome never depends on map order).
+func capLearned(learned map[string]int) map[string]int {
+	if len(learned) <= MaxLearned {
+		return learned
+	}
+	keys := make([]string, 0, len(learned))
+	for k := range learned {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if learned[keys[i]] != learned[keys[j]] {
+			return learned[keys[i]] > learned[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	out := make(map[string]int, MaxLearned)
+	for _, k := range keys[:MaxLearned] {
+		out[k] = learned[k]
+	}
+	return out
 }
 
 // categoryConfig is the on-disk config.json inside a category folder - the authoritative
-// record of a category's id, alias, (top-level only) other-media flag, and sort position
-// among its siblings.
+// record of a category's id, alias, (top-level only) other-media flag, sort position among
+// its siblings, and the markers describing what belongs in it. Markers is a pointer so a
+// category with none writes no key at all.
 type categoryConfig struct {
-	ID         int64  `json:"id"`
-	Alias      string `json:"alias"`
-	OtherMedia bool   `json:"otherMedia"`
-	Position   int    `json:"position"`
+	ID         int64    `json:"id"`
+	Alias      string   `json:"alias"`
+	OtherMedia bool     `json:"otherMedia"`
+	Position   int      `json:"position"`
+	Markers    *Markers `json:"markers,omitempty"`
 }
 
 // ValidName checks that name is usable as a single Linux directory name (one leaf, not a
@@ -132,10 +240,11 @@ func walkCategories(dataDir, parentRel string, cats *[]Category) error {
 		if err != nil {
 			return err
 		}
-		id, alias, other, position := readConfig(childDir, e.Name())
+		c := readConfig(childDir, e.Name())
 		*cats = append(*cats, Category{
-			ID: id, Name: rel, Parent: parentRel, Leaf: e.Name(),
-			Alias: alias, OtherMedia: other, Position: position, Empty: empty,
+			ID: c.ID, Name: rel, Parent: parentRel, Leaf: e.Name(),
+			Alias: c.Alias, OtherMedia: c.OtherMedia, Position: c.Position, Empty: empty,
+			Markers: markersOf(c),
 		})
 		if err := walkCategories(dataDir, rel, cats); err != nil {
 			return err
@@ -183,7 +292,7 @@ func Create(dataDir, parentRel, leaf, alias string, id int64, position int) (Cat
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return Category{}, err
 	}
-	if err := writeConfig(dir, id, alias, false, position); err != nil {
+	if err := writeConfig(dir, categoryConfig{ID: id, Alias: alias, Position: position}); err != nil {
 		return Category{}, err
 	}
 	return Category{ID: id, Name: name, Parent: parentRel, Leaf: leaf, Alias: alias, Position: position, Empty: true}, nil
@@ -202,8 +311,60 @@ func SetAlias(dataDir, relpath, alias string, otherMedia bool) error {
 		alias = filepath.Base(relpath)
 	}
 	dir := filepath.Join(dataDir, relpath)
-	id, _, _, position := readConfig(dir, filepath.Base(relpath))
-	return writeConfig(dir, id, alias, otherMedia, position)
+	c := readConfig(dir, filepath.Base(relpath))
+	c.Alias, c.OtherMedia = alias, otherMedia
+	return writeConfig(dir, c)
+}
+
+// SetMarkers rewrites a category's markers, preserving everything else in its config.json.
+// The markers are normalised on the way in (blank entries dropped, an unknown kind reset,
+// the learned map capped), so a hand-edited or hostile payload cannot corrupt the file.
+func SetMarkers(dataDir, relpath string, m Markers) error {
+	if !Exists(dataDir, relpath) {
+		return fmt.Errorf("no category named %q", relpath)
+	}
+	dir := filepath.Join(dataDir, relpath)
+	c := readConfig(dir, filepath.Base(relpath))
+	m = m.clean()
+	c.Markers = nil
+	if !m.Empty() {
+		c.Markers = &m
+	}
+	return writeConfig(dir, c)
+}
+
+// Learn records that media carrying these markers was imported into a category: each
+// marker's count rises by one and the map is capped again. It is the learning half of the
+// same mechanism SetMarkers writes the declared half of.
+func Learn(dataDir, relpath string, markers []string) error {
+	if len(markers) == 0 {
+		return nil
+	}
+	if !Exists(dataDir, relpath) {
+		return fmt.Errorf("no category named %q", relpath)
+	}
+	dir := filepath.Join(dataDir, relpath)
+	c := readConfig(dir, filepath.Base(relpath))
+	m := markersOf(c)
+	if m.Learned == nil {
+		m.Learned = map[string]int{}
+	}
+	for _, k := range markers {
+		if k = strings.TrimSpace(k); k != "" {
+			m.Learned[k]++
+		}
+	}
+	m.Learned = capLearned(m.Learned)
+	c.Markers = &m
+	return writeConfig(dir, c)
+}
+
+// markersOf reads a config's markers, yielding the zero value when it carries none.
+func markersOf(c categoryConfig) Markers {
+	if c.Markers == nil {
+		return Markers{}
+	}
+	return *c.Markers
 }
 
 // SetPosition rewrites a category's config.json with a new sibling position, preserving its
@@ -214,8 +375,9 @@ func SetPosition(dataDir, relpath string, position int) error {
 		return fmt.Errorf("no category named %q", relpath)
 	}
 	dir := filepath.Join(dataDir, relpath)
-	id, alias, other, _ := readConfig(dir, filepath.Base(relpath))
-	return writeConfig(dir, id, alias, other, position)
+	c := readConfig(dir, filepath.Base(relpath))
+	c.Position = position
+	return writeConfig(dir, c)
 }
 
 // Delete removes a category folder, but only when it is empty (no media folders and no
@@ -257,27 +419,26 @@ func isEmpty(dir string) (bool, error) {
 	return true, nil
 }
 
-// readConfig returns the id, alias, other-media flag, and sort position from the folder's
-// config.json. The alias falls back to leaf when the file is missing, unreadable, or has a
-// blank alias; a missing id reads as 0, a missing flag as false, and a missing position as 0.
-func readConfig(dir, leaf string) (int64, string, bool, int) {
+// readConfig returns the folder's config.json. The alias falls back to leaf when the file is
+// missing, unreadable, or has a blank alias; a missing id reads as 0, a missing flag as
+// false, a missing position as 0, and missing markers as none.
+func readConfig(dir, leaf string) categoryConfig {
 	data, err := os.ReadFile(filepath.Join(dir, configName))
 	if err != nil {
-		return 0, leaf, false, 0
+		return categoryConfig{Alias: leaf}
 	}
 	var c categoryConfig
 	if json.Unmarshal(data, &c) != nil {
-		return 0, leaf, false, 0
+		return categoryConfig{Alias: leaf}
 	}
-	alias := c.Alias
-	if strings.TrimSpace(alias) == "" {
-		alias = leaf
+	if strings.TrimSpace(c.Alias) == "" {
+		c.Alias = leaf
 	}
-	return c.ID, alias, c.OtherMedia, c.Position
+	return c
 }
 
-func writeConfig(dir string, id int64, alias string, otherMedia bool, position int) error {
-	data, err := json.MarshalIndent(categoryConfig{ID: id, Alias: alias, OtherMedia: otherMedia, Position: position}, "", "  ")
+func writeConfig(dir string, c categoryConfig) error {
+	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}

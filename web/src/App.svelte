@@ -7,6 +7,7 @@
   import LibraryView from './views/library/LibraryView.svelte'
   import TokPlayer from './views/library/TokPlayer.svelte'
   import AdminLibrary from './views/admin/AdminLibrary.svelte'
+  import AdminCategory from './views/admin/AdminCategory.svelte'
   import AdminImport from './views/admin/AdminImport.svelte'
   import ImportWork from './views/admin/import/ImportWork.svelte'
   import FormatGate from './views/admin/FormatGate.svelte'
@@ -121,6 +122,8 @@
         <LibraryView />
       {:else if app.view === 'settings'}
         <UserSettings />
+      {:else if app.adminView === 'library' && app.catPage}
+        <AdminCategory />
       {:else if app.adminView === 'library'}
         <AdminLibrary />
       {:else if app.adminView === 'import' && app.importPage === ''}

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS imports (
     delete_after INTEGER NOT NULL DEFAULT 0,
     season       INTEGER NOT NULL DEFAULT 0,
     episode      INTEGER NOT NULL DEFAULT 0,
+    part         INTEGER NOT NULL DEFAULT 0,
     subtitles    TEXT,
     origin       TEXT,
     confidence   TEXT NOT NULL DEFAULT ''
@@ -169,6 +170,9 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"imports", "delete_after", `ALTER TABLE imports ADD COLUMN delete_after INTEGER NOT NULL DEFAULT 0`},
 		{"imports", "season", `ALTER TABLE imports ADD COLUMN season INTEGER NOT NULL DEFAULT 0`},
 		{"imports", "episode", `ALTER TABLE imports ADD COLUMN episode INTEGER NOT NULL DEFAULT 0`},
+		// Which disc of a film split over several files this row is ("CD1", "part2"). Without
+		// it both discs render to the same target name and the second overwrites the first.
+		{"imports", "part", `ALTER TABLE imports ADD COLUMN part INTEGER NOT NULL DEFAULT 0`},
 		{"imports", "subtitles", `ALTER TABLE imports ADD COLUMN subtitles TEXT`},
 		{"imports", "origin", `ALTER TABLE imports ADD COLUMN origin TEXT`},
 		// How much recognition trusts the row's title/year: "high", "medium" or "low".

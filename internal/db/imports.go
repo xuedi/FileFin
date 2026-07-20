@@ -51,6 +51,9 @@ type Import struct {
 	// show into a single folder.
 	Season  int `json:"season"`
 	Episode int `json:"episode"`
+	// Part is non-zero when the source is one disc of a film split over several files
+	// ("CD1", "part2"); it reaches the target file name so the discs cannot collide.
+	Part int `json:"part"`
 	// Subtitles is the JSON-encoded list of sidecar subtitles discovered beside the
 	// source file (importer.Subtitle), staged to ride along like the poster. The
 	// importer unmarshals and places them. SubCount/HasSubtitles are derived for the UI.
@@ -80,11 +83,11 @@ type Import struct {
 func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) {
 	res, err := pool.ExecContext(ctx,
 		`INSERT INTO imports
-            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, subtitles, origin, confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, part, subtitles, origin, confidence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		imp.CategoryID, imp.SourcePath, imp.Filename, imp.Title, imp.Year,
 		imp.Status, imp.APIJSON, imp.Poster, imp.Copied, imp.Total, imp.Error, imp.DeleteAfter,
-		imp.Season, imp.Episode, imp.Subtitles, imp.Origin, imp.Confidence)
+		imp.Season, imp.Episode, imp.Part, imp.Subtitles, imp.Origin, imp.Confidence)
 	if err != nil {
 		return 0, fmt.Errorf("insert import %q: %w", imp.SourcePath, err)
 	}
@@ -94,14 +97,14 @@ func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) 
 // importSelect reads every import row joined to its category so Category carries the
 // live category name (relpath); category is no longer stored on the row. A LEFT JOIN
 // keeps rows whose category_id is unset, yielding an empty Category.
-const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.subtitles, i.origin, i.confidence FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
+const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.part, i.subtitles, i.origin, i.confidence FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
 
 func scanImport(rows interface{ Scan(...any) error }) (Import, error) {
 	var imp Import
 	var category, subtitles, origin, confidence sql.NullString
 	err := rows.Scan(&imp.ID, &imp.CategoryID, &category, &imp.SourcePath, &imp.Filename,
 		&imp.Title, &imp.Year, &imp.Status, &imp.APIJSON, &imp.Poster, &imp.Copied, &imp.Total, &imp.Error,
-		&imp.DeleteAfter, &imp.Season, &imp.Episode, &subtitles, &origin, &confidence)
+		&imp.DeleteAfter, &imp.Season, &imp.Episode, &imp.Part, &subtitles, &origin, &confidence)
 	imp.HasPoster = imp.Poster != ""
 	imp.Category = category.String
 	imp.Subtitles = subtitles.String
