@@ -64,6 +64,14 @@ arrived over TLS or through a loopback proxy that set `X-Forwarded-Proto: https`
 production instance behind Caddy gets `Secure` while a plain-HTTP LAN box is not silently
 logged out. HSTS belongs at the TLS edge (Caddy), not the app.
 
+Two properties of that model are deliberate and worth stating outright rather than leaving to
+be inferred. **TLS is never terminated by FileFin**: it serves plain HTTP and expects a reverse
+proxy in front of it in any deployment reachable from outside a trusted network. And **CSRF
+protection rests entirely on `SameSite=Lax`** - there is no per-request token. Lax withholds the
+cookie from cross-site POSTs, which covers the state-changing API, and every mutating route is
+POST/PUT/DELETE with a JSON body, so no cross-site form can reach one. A token scheme would be
+the stronger answer and is not ruled out; today the cookie attribute is the whole of it.
+
 ```mermaid
 flowchart TD
     L[POST /api/login] --> T{throttled? account/IP over limit}
