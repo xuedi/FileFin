@@ -102,3 +102,47 @@ func TestSearchWatchedOverlay(t *testing.T) {
 		t.Fatalf("post-watch search overlay missing watched: %s", rr.Body.String())
 	}
 }
+
+// TestToggleWatchedFromTile covers the grid tile's watched toggle: it flips the flag both ways
+// and, unlike the "remove from completed" delete, keeps the resume pointer so un-watching an
+// item returns it to the continue bucket where it was left.
+func TestToggleWatchedFromTile(t *testing.T) {
+	s, h, admin, dataDir, catID := mediaTestServer(t)
+	id, dir := seedMedia(t, s, dataDir, "Movies", catID, "(1994) Leon", "(1994) Leon.mp4",
+		importer.Meta{Title: "Leon", Year: 1994})
+
+	// Leave a resume pointer partway through, so the item sits in "continue".
+	if rr := do(t, h, "POST", "/api/media/"+id+"/progress", `{"file":0,"position":300,"duration":1000}`, admin); rr.Code != 204 {
+		t.Fatalf("progress: %d", rr.Code)
+	}
+	if rr := do(t, h, "GET", "/api/home", "", admin); !strings.Contains(rr.Body.String(), `"continue":[{"id":"`+id) {
+		t.Fatalf("expected the item in continue: %s", rr.Body.String())
+	}
+
+	// Toggle on: it leaves continue for completed, but the pointer stays on disk.
+	if rr := do(t, h, "POST", "/api/media/"+id+"/watched", `{"watched":true}`, admin); rr.Code != 204 {
+		t.Fatalf("set watched: %d %s", rr.Code, rr.Body.String())
+	}
+	rr := do(t, h, "GET", "/api/home", "", admin)
+	if strings.Contains(rr.Body.String(), `"continue":[{`) || !strings.Contains(rr.Body.String(), `"completed":[{"id":"`+id) {
+		t.Fatalf("after watching: %s", rr.Body.String())
+	}
+	m, err := importer.ReadMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.State["admin"].Watched || m.State["admin"].Progress == nil {
+		t.Fatalf("watched must not drop the resume pointer: %+v", m.State["admin"])
+	}
+
+	// Toggle off: back to continue at the same position.
+	if rr := do(t, h, "POST", "/api/media/"+id+"/watched", `{"watched":false}`, admin); rr.Code != 204 {
+		t.Fatalf("clear watched: %d", rr.Code)
+	}
+	if rr := do(t, h, "GET", "/api/home", "", admin); !strings.Contains(rr.Body.String(), `"continue":[{"id":"`+id) {
+		t.Fatalf("expected the item back in continue: %s", rr.Body.String())
+	}
+	if m, _ := importer.ReadMeta(dir); m.State["admin"].Progress == nil || m.State["admin"].Progress.Seconds != 300 {
+		t.Fatalf("resume pointer lost on un-watch: %+v", m.State["admin"])
+	}
+}

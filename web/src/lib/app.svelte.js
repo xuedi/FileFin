@@ -727,6 +727,18 @@ export class AppState {
     this.go('/')
   }
 
+  // toggleWatched flips a grid tile's watched flag. The row object is a deep $state proxy, so
+  // writing back to it is what re-renders that one tile; the resume pointer is left alone.
+  async toggleWatched(m) {
+    const next = !m.watched
+    try {
+      await api('/api/media/' + m.id + '/watched', { method: 'POST', body: JSON.stringify({ watched: next }) })
+      m.watched = next
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not update the watched state')
+    }
+  }
+
   async loadCategoryMedia(id) {
     try {
       this.categoryMedia = await api('/api/category/' + id + '/media')

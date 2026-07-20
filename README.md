@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.19.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.19.1-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -121,8 +121,10 @@ categories, users, and settings - is managed from the web UI.
   favorites, and 1-10 ratings, each stored per user in the item's `meta.json`.
 - **Bring your ratings with you** - import a public MyDramaList or MyAnimeList list and apply its
   watched flags and scores to the titles you own.
-- **Search the whole library** - by title, cast, genre, director, language, or year, with every facet on
-  a detail page doubling as a link into a scoped search.
+- **Search the whole library** - by title, cast, genre, tag, director, language, or year, with every
+  facet on a detail page doubling as a link into a scoped search.
+- **Your own tags** - classify media beyond the folder tree with free-form tags, browse them from the
+  sidebar, and rename or merge the whole vocabulary from one admin page.
 - **Home videos too** - a category marked *other media* skips metadata lookups, derives its posters from
   a video frame, and offers a fullscreen swipe player.
 - **Self-healing** - background agents reconcile the cache against disk, refresh probed formats, build

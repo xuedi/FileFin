@@ -276,6 +276,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/media/{id}/rating", s.auth(s.handleRating))
 		mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
 		mux.Handle("DELETE /api/media/{id}/progress", s.auth(s.handleClearProgress))
+		mux.Handle("POST /api/media/{id}/watched", s.auth(s.handleSetWatched))
 		mux.Handle("DELETE /api/media/{id}/watched", s.auth(s.handleClearWatched))
 		mux.Handle("GET /api/media/{id}/file/{n}", s.auth(s.handleStream))
 		mux.Handle("GET /api/media/{id}/file/{n}/hls/index.m3u8", s.auth(s.handleHLSPlaylist))

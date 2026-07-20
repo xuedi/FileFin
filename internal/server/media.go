@@ -449,6 +449,33 @@ func (s *Server) handleClearProgress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetWatched sets or clears the folder's watched flag from the grid's tile toggle. It
+// deliberately leaves the resume pointer alone: the home "continue" bucket already excludes a
+// watched item, so un-watching one returns it to continue exactly where it was left. (The
+// separate DELETE below is the home page's "remove from completed", which drops the pointer
+// too so the item leaves every list.)
+func (s *Server) handleSetWatched(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Watched bool `json:"watched"`
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	folder, ok := s.folderFor(w, r)
+	if !ok {
+		return
+	}
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
+		us.Watched = req.Watched
+		return us
+	}); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleClearWatched(w http.ResponseWriter, r *http.Request) {
 	folder, ok := s.folderFor(w, r)
 	if !ok {
