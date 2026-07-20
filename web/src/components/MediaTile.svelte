@@ -38,16 +38,16 @@
       {:else}
         <div class="noposter">{m.title}</div>
       {/if}
-      {#if showWatched}
-        <button
-          class="poster-watched"
-          class:is-watched={m.watched}
-          title={m.watched ? 'Mark as unwatched' : 'Mark as watched'}
-          onclick={(e) => { e.stopPropagation(); app.toggleWatched(m) }}>&#10003;</button>
-      {/if}
     </div>
     <span class="poster-name" bind:this={nameEl}>{m.title}</span>
     <span class="poster-year">{m.year}</span>
+    {#if showWatched}
+      <button
+        class="poster-watched"
+        class:is-watched={m.watched}
+        title={m.watched ? 'Mark as unwatched' : 'Mark as watched'}
+        onclick={(e) => { e.stopPropagation(); app.toggleWatched(m) }}>&#10003;</button>
+    {/if}
   </div>
   {#if clipped}
     <div class="poster-name-full">
