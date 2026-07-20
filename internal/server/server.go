@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"filefin/internal/config"
@@ -53,6 +54,11 @@ type Server struct {
 	progMu      sync.Mutex
 	progress    map[int64]progressEntry
 	pollerStart sync.Once
+	// purgeImportFolder is armed when a batch was started with "clean up everything left
+	// behind"; the poller empties the import folder once that batch has drained. It is
+	// deliberately in-memory: a restart mid-batch drops the wish rather than deleting
+	// files nobody is waiting on any more.
+	purgeArmed atomic.Bool
 
 	// optimizer orchestration. reconfigOpt nudges the supervisor to re-read the mode and
 	// relaunch its agents; optPercent holds live encode percents (fresher than the DB
@@ -313,7 +319,8 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/probe/scan", s.admin(s.handleProbeScan))
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
 		mux.Handle("GET /api/admin/rebuild/progress", s.admin(s.handleRebuildProgress))
-		mux.Handle("POST /api/admin/import/assess", s.admin(s.handleAssess))
+		mux.Handle("GET /api/admin/import/folder", s.admin(s.handleImportFolder))
+		mux.Handle("POST /api/admin/import/folder/start", s.admin(s.handleImportFolderStart))
 		mux.Handle("GET /api/admin/import/plex/default", s.admin(s.handlePlexDefault))
 		mux.Handle("POST /api/admin/import/plex/check", s.admin(s.handlePlexCheck))
 		mux.Handle("POST /api/admin/import/plex/resolve", s.admin(s.handlePlexResolve))

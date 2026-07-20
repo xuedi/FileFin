@@ -2,8 +2,23 @@
 
 How media gets from an external source into the data directory as a media folder. The
 **folder**, **upload**, **Plex**, and **Jellyfin** sources are all built today.
-Whatever the source, **every flow converges on the same mandatory preCheck page**
-(`/admin/library/import`) before a single file is copied.
+
+Import is its own admin section (`/admin/import`), separate from the Library page that owns
+the category tree. The **import folder is the whole page**: it lists one row per recognised
+media with the title, year, file count, size, poster/subtitle markers, and duplicate check the
+import would use, plus an editable title/year and its own **category dropdown** per row. One
+**Import** button at the bottom queues every listed row - each into the category its row names.
+There is no second step and no global category picker; a row that should stay behind is dropped
+from the table with its **X** and lands in a plain **Not importing** list under the button, where
+a **+** puts it back where it was, edits and all.
+
+The other three sources need their own flow (an upload has to transfer files first, Plex and
+Jellyfin have to locate and map a foreign library), so they keep the **preCheck page**
+(`/admin/import/work`). **Upload files**, **Plex import**, and **Jellyfin import** are buttons in
+the page header; the upload flow picks its target category on its own page.
+Starting any of them **drops whatever batch was staged before**: only one batch is ever under
+review, and the import folder page keeps no staged state of its own to lose - its table is
+re-derived from disk every time it is opened.
 
 Import never touches OMDb. The folder/upload sources produce a media folder with a **stub
 `meta.json`** (title, year) plus ffprobe technical details; the **Plex** source instead
@@ -14,33 +29,37 @@ metadata is kept and only the holes are filled (`agents/enricher.md`). OMDb is l
 one place, that agent, and nowhere here. Any sidecar subtitles and a `poster.*` ride along
 into the media folder regardless of source.
 
-## Every source converges on the preCheck page
+## Every source meets at the `imports` table
 
 The import pipeline is split in two halves that only meet at the `imports` table:
 
 - A **source front stage** does whatever is specific to that source and ends by writing
-  one `preCheck` row per candidate file. There is one front stage per source; they share
-  nothing but the rows they produce. The folder, upload, and Plex stages are built so far.
-- The **preCheck page** is the single mandatory checkpoint every flow lands on. It shows
-  the staged `preCheck` rows so the admin can review, edit titles and years, drop rows,
-  and finally press **Start import**, which flips those rows to `import`. No source
-  bypasses it; nothing is copied before it. Rows the library already holds are marked
-  here (see **Duplicate detection** below).
+  rows into the table. There is one front stage per source; they share nothing but the rows
+  they produce.
 - The **importer** (consumer) is a single shared background process. It drains rows
   whose status is `import`, copies the file into the canonical layout, places any sidecar
   subtitles, extracts embedded subtitle tracks (below), places the poster, probes it with
   ffprobe, writes a stub `meta.json`, and inserts `media`/`media_files` rows.
 
-The importer (and the preCheck page) depend only on the columns of an `imports` row, never
-on which front stage wrote it. Every source (folder, upload, Plex, Jellyfin) drives the page
-and the importer **exactly the same** - they never know or care how a row was produced. The
-only per-source hint they carry is the `origin` column, used purely to drive UI affordances
-(Plex and Jellyfin lock the delete-after checkbox off), never to change importer behaviour.
+The two halves differ only in **where the review happens**:
+
+- The **import folder** is reviewed *before* anything is written: the page is a pure scan of
+  the filesystem, and pressing Import writes its rows already in the `import` status. The table
+  the admin just corrected is the check, so a second confirmation would only repeat it.
+- The **upload, Plex, and Jellyfin** stages write `preCheck` rows and land on the **preCheck
+  page**, where the admin reviews, edits titles and years, drops rows, and presses **Start
+  import** to flip them to `import`. Their staging is a background walk (or an upload) whose
+  result nobody has seen yet, so it is shown before a byte is copied.
+
+The importer depends only on the columns of an `imports` row, never on which front stage wrote
+it. Every source drives it **exactly the same**; the only per-source hint rows carry is the
+`origin` column, used purely to drive UI affordances (Plex and Jellyfin lock the delete-after
+checkbox off), never to change importer behaviour.
 
 ```mermaid
 flowchart TD
-    subgraph Folder["Folder front stage (built)"]
-        FS[load media from import folder] --> FR[recognize title/year + stage subtitles]
+    subgraph Folder["Import folder (built)"]
+        FS[scan: recognize title/year per file] --> FG[fold into one row per media] --> FE[admin edits title/year/category, drops rows]
     end
     subgraph Upload["Upload front stage (built)"]
         UB[browser uploads files to /tmp/session] --> UR[recognize title/year + stage subtitles]
@@ -51,11 +70,11 @@ flowchart TD
     subgraph Jellyfin["Jellyfin front stage (built)"]
         JT[scan NFO library: movies/shows] --> JA[assign/create category] --> JP[Prepare: background staging walk]
     end
-    FR -->|InsertImport preCheck| T[(imports table)]
+    FE -->|Import: InsertImport with status=import| T[(imports table)]
     UR -->|InsertImport preCheck, delete_after=true| T
     PP -->|InsertImport preCheck, origin=plex, api_json meta, delete_after=false| T
     JP -->|InsertImport preCheck, origin=jellyfin, api_json meta, delete_after=false| T
-    T --> PC[preCheck page - mandatory review]
+    T --> PC[preCheck page - review of the other sources]
     PC -->|Start import: preCheck to import| T
     T -->|poller every 5s, status=import| W[Importer worker]
     W --> C[CopyFile to dataDir/category/folder]
@@ -67,21 +86,23 @@ flowchart TD
 
 ## Source front stages
 
-| source | front stage (everything before the preCheck page) |
+| source | front stage (everything before the importer) |
 |--------|----------------------------------------------------|
-| **Folder** *(built)* | scan the configured import folder, recognize each video file's title/year/episode, detect sidecar subtitles and a `poster.*`, write a `preCheck` row per file (no OMDb) |
+| **Folder** *(built)* | walk the configured import folder, recognize each video file's title/year/episode (paths read **relative to the import folder**, so folder names inform title and season), and fold the files into **one row per recognised media** - everything that recognises to the same title and year, because that is exactly what the importer places in one media folder. Sidecar subtitles and a `poster.*` are counted per row and the duplicate check is applied. The scan writes nothing; pressing **Import** re-runs it, matches the rows the page sent back by id, and inserts one `import` row per file with that row's title, year, and category (no OMDb) |
 | **Upload** *(built)* | the browser uploads one or more files (a per-file progress bar each) into a unique `/tmp/{session}` dir, then the same staging runs against that dir - identical to folder import but with `delete_after` forced on, so the `/tmp` working files are always cleaned up |
 | **Plex** *(built)* | pick the Plex DB (read-only), **check** lists its libraries, **resolve** auto-detects how the DB's paths map onto the real filesystem, the admin selects libraries and assigns each a FileFin category (or creates one from the Plex name), then **Load media files** runs a background staging walk that writes one `preCheck` row per locatable file - carrying Plex's metadata blob, poster, and subtitles, `origin=plex`, `delete_after=false`. See the Plex section below |
 | **Jellyfin** *(built)* | pick a Jellyfin/Kodi **NFO library** directory on the server and a target category (existing or created from a typed name), then **Prepare** runs a background staging walk: it scans the tree (`internal/jellyfin`), auto-detecting each entry as a movie (`movie.nfo` / `<video>.nfo` / loose file) or show (`tvshow.nfo` / `Season NN/` / episode `.nfo`s), builds the `meta.json` blob from the NFO fields (`importer.MetaFromJellyfin`, no OMDb), attaches sidecar subtitles and the chosen poster/fanart image, and writes one `preCheck` row per video file - `origin=jellyfin`, `delete_after=false` (it reads a library the user keeps). No DB and no path remap: it reads real on-disk paths. Multi-disc grouping of **loose** files (the old `DetectPart`) is not ported yet - each loose video is its own item; foldered multi-part movies are still grouped |
 
 ## Status lifecycle
 
-A row moves through five statuses. Producers create `preCheck`; the admin pressing
-**Start import** bulk-flips `preCheck` to `import`; the poller drives the rest.
+A row moves through five statuses. The import folder writes `import` rows directly (its review
+happened on the page, before anything was written); the other sources create `preCheck` and the
+admin pressing **Start import** bulk-flips them. The poller drives the rest.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> preCheck: assessment writes a row
+    [*] --> import: Import pressed on the import folder page
+    [*] --> preCheck: upload / Plex / Jellyfin staging writes a row
     preCheck --> preCheck: edit title/year/category
     preCheck --> [*]: X (delete row)
     preCheck --> import: Start import pressed
@@ -115,7 +136,8 @@ stateDiagram-v2
 | `origin`      | which front stage produced the row (`folder` / `upload` / `plex`); a UI hint only, the importer ignores it |
 
 The `duplicate` field on the wire has no column behind it: it is derived per response from
-the live library (see **Duplicate detection**).
+the live library (see **Duplicate detection**), for the import-folder scan and for the
+preCheck page alike.
 
 `delete_after` makes the source a **vacuum**: when set, the importer deletes the source
 file once the copy and `media` row are committed (best-effort - a failed delete is logged,
@@ -125,10 +147,18 @@ copied into the media folder) go too, and then every parent folder the removal l
 **empty** is pruned upwards, stopping at the first folder that still holds something and
 never removing the import folder itself. A folder that still holds a not-yet-imported
 episode or an unstaged file is therefore always kept, while a fully imported import folder
-is left empty rather than littered with husk directories and orphaned subtitles. It defaults to false so future producers
-that import from a library someone keeps (Plex/Jellyfin) leave originals intact. The folder
-assessment page exposes it as a per-batch checkbox (defaulting on) whose value is written
-onto the staged rows when **Start import** is pressed. For the **Plex** source it is forced
+is left empty rather than littered with husk directories and orphaned subtitles. It defaults to false so producers
+that import from a library someone keeps (Plex/Jellyfin) leave originals intact. The import
+folder page exposes it as a per-batch checkbox (defaulting on) whose value is written onto
+the rows when **Import** is pressed.
+
+A second checkbox under it, **clean up also non imported media**, widens that from "the files
+I imported" to "the folder": once the batch has finished copying, everything still sitting in
+the import folder is removed - the rows the admin dropped, sample clips, release notes,
+artwork - leaving the folder itself empty. It rides on delete-after (keeping the originals and
+wiping the folder would contradict each other) and is armed **in memory** for one batch only:
+the poller runs it on the first tick where no import row is unfinished any more, and a restart
+mid-batch drops the wish rather than deleting files nobody is waiting on. For the **Plex** source it is forced
 **off** at staging time and the checkbox is locked off, because Plex imports read from a
 library the user keeps - the originals are never touched.
 
@@ -142,23 +172,24 @@ unfinished row pointing into a session dir completes, the importer removes the w
 
 ## Duplicate detection
 
-Every staged row is checked against the existing library before it can be started, so
-importing something that is already there is caught on the preCheck page instead of after
-the copy. The check is **derived, never stored**: it runs each time rows are handed to the
-page (assessment, listing, and again after a title/year edit), because both the library and
-the row's own title/year keep moving.
+Everything on offer is checked against the existing library before it can be imported, so
+importing something that is already there is caught on the page instead of after the copy.
+The check is **derived, never stored**: it runs on every scan of the import folder and every
+time staged rows are handed to the preCheck page (including after a title/year edit), because
+both the library and the titles being matched keep moving.
 
 Pairing reuses the **watchlist matcher** (`mdl.md`, `mal.md`) - the same normalized-title,
 year-strict logic the watch-history imports use - so a row matches a library item on an
 exact or confident grade only; the matcher's approximate grade is ignored, since a guessed
 duplicate would train the admin to click past the warning. An **episode** row is judged
-differently: a show folder matching by title is expected, so it counts as a duplicate only
-when the matched item already holds that exact season/episode, and the next episode of a
-running series stages clean.
+differently: a show folder matching by title is expected, so a file counts as a duplicate only
+when the matched item already holds that exact season/episode. A whole row is a duplicate only
+when **every** file behind it is, so a season pack with one episode already imported still
+reads as new work rather than a re-import.
 
-The result is advisory. The page marks each matched row and warns above **Start import**,
-but nothing is blocked or dropped automatically - a deliberate re-import (a better rip of a
-film already in the library) stays the admin's call.
+The result is advisory. Both tables carry a read-only **Dup** box per row - ticked, with the
+matched library item in its tooltip - but nothing is blocked or dropped automatically: a
+deliberate re-import (a better rip of a film already in the library) stays the admin's call.
 
 ## Subtitles
 
@@ -183,7 +214,7 @@ visible (see `playback.md`).
 ## Posters
 
 A `poster.*` next to the source rides along: the front stage records it on the row (so the
-assessment table can flag which items have artwork), and the importer copies it into the
+import table can flag which items have artwork), and the importer copies it into the
 media folder as `poster.<ext>`. The match is a per-video `<video-base>.<imgext>` first, then
 a folder-level `poster.<imgext>`. An existing poster in the target folder is kept, so a
 multi-episode show places one once and a re-import never clobbers it. A source poster with no
@@ -295,7 +326,8 @@ client-side and finishes before staging; it is unrelated to the server-side copy
 
 | method + path                          | purpose                                        |
 |----------------------------------------|------------------------------------------------|
-| `POST /api/admin/import/assess`        | folder source: scan + stage one category       |
+| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, files, bytes, subs, poster, duplicate); writes nothing |
+| `POST /api/admin/import/folder/start`  | import page: queue the listed media (per row: id, title, year, categoryId) as `import` rows |
 | `POST /api/admin/import/upload/begin`  | upload source: open a `/tmp` session, return token|
 | `POST /api/admin/import/upload/file`   | upload source: store one file (multipart) in the session|
 | `POST /api/admin/import/upload/assess` | upload source: stage the session dir (delete_after on)|

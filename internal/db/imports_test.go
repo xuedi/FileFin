@@ -75,9 +75,10 @@ func TestSetImportStatusAndClear(t *testing.T) {
 		t.Fatalf("import rows: %d", len(rows))
 	}
 
-	// ClearImports only removes the matching (category, status) pair.
+	// ClearStagedImports drops every preCheck row and leaves the rest alone.
 	_, _ = InsertImport(ctx, pool, Import{CategoryID: 7, Status: StatusPreCheck})
-	if err := ClearImports(ctx, pool, 7, StatusPreCheck); err != nil {
+	_, _ = InsertImport(ctx, pool, Import{CategoryID: 9, Status: StatusPreCheck})
+	if err := ClearStagedImports(ctx, pool); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	if rows, _ := ListImports(ctx, pool, StatusPreCheck); len(rows) != 0 {

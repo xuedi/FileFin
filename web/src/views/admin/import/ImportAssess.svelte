@@ -20,7 +20,7 @@
 {:else}
   <table class="table is-fullwidth">
     <thead>
-      <tr><th>Category</th><th>Media files</th><th>Title</th><th>Year</th><th>Poster</th><th>Subs</th><th></th></tr>
+      <tr><th>Category</th><th>Media files</th><th>Title</th><th>Year</th><th>Poster</th><th>Subs</th><th title="Ticked when this media is already in the library">Dup</th><th></th></tr>
     </thead>
     <tbody>
       {#each app.assessGroups as group}
@@ -44,9 +44,6 @@
               <input class="input is-small ff-inline-input" bind:value={app.editTitle} onkeydown={(e) => e.key === 'Enter' && app.saveImportEdit()} />
             {:else}
               {group.title || '(unknown)'}
-              {#if group.duplicate}
-                <span class="tag is-warning is-light" title="Already in the library: {group.duplicate}">in library</span>
-              {/if}
             {/if}
           </td>
           <td>
@@ -58,6 +55,11 @@
           </td>
           <td>{#if group.hasPoster}<span class="has-text-success has-text-weight-bold" title="Poster found">&#10003;</span>{/if}</td>
           <td>{#if group.subCount > 0}<span class="has-text-success has-text-weight-bold" title="Subtitle files found">{group.subCount}</span>{/if}</td>
+          <td class="has-text-centered">
+            {#if group.duplicate}
+              <span class="ff-dup-icon" title="Already in the library: {group.duplicate}">&#9888;</span>
+            {/if}
+          </td>
           <td class="ff-row-actions">
             {#if app.editKey === group.key}
               <button class="button is-small is-primary" onclick={() => app.saveImportEdit()}>Save</button>
@@ -70,7 +72,7 @@
         </tr>
       {/each}
       {#if app.assessGroups.length === 0}
-        <tr><td colspan="7" class="has-text-grey">No media files found.</td></tr>
+        <tr><td colspan="8" class="has-text-grey">No media files found.</td></tr>
       {/if}
     </tbody>
   </table>

@@ -7,7 +7,7 @@
   const app = getContext('app')
 </script>
 
-<button class="button is-ghost is-small ff-back" onclick={() => app.go('/admin/library')}>&larr; Back</button>
+<button class="button is-ghost is-small ff-back" onclick={() => app.go('/admin/import')}>&larr; Back</button>
 {#if app.importOrigin === 'plex'}
   <h1 class="title is-4">Import from Plex</h1>
 {:else if app.importOrigin === 'jellyfin'}

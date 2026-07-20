@@ -110,6 +110,9 @@ type stagedItem struct {
 // and counted as not staged rather than reported as a phantom success.
 func (s *Server) stageImport(ctx context.Context, pool *sql.DB, tracker *stagingTracker, items []stagedItem, origin, label string) {
 	tracker.setTotal(len(items))
+	// One batch is under review at a time, so a batch abandoned earlier is replaced rather
+	// than mixed into this one - the preCheck page shows what this staging just produced.
+	s.bestEffort(db.ClearStagedImports(ctx, pool), "clear staged imports")
 	staged, missing := 0, 0
 	for _, it := range items {
 		if ctx.Err() != nil {

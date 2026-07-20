@@ -256,12 +256,14 @@ func DeleteImport(ctx context.Context, pool *sql.DB, id int64) error {
 	return nil
 }
 
-// ClearImports removes import rows for a category and status (used to wipe stale
-// preCheck rows before a fresh assessment).
-func ClearImports(ctx context.Context, pool *sql.DB, categoryID int64, status string) error {
-	_, err := pool.ExecContext(ctx, `DELETE FROM imports WHERE category_id = ? AND status = ?`, categoryID, status)
+// ClearStagedImports removes every staged (preCheck) row, whatever category or source
+// produced it. Starting a new upload/Plex/Jellyfin flow calls it first: only one batch is
+// ever under review, so a batch left behind by an abandoned flow is replaced rather than
+// silently mixed into the new one.
+func ClearStagedImports(ctx context.Context, pool *sql.DB) error {
+	_, err := pool.ExecContext(ctx, `DELETE FROM imports WHERE status = ?`, StatusPreCheck)
 	if err != nil {
-		return fmt.Errorf("clear imports category %d status %s: %w", categoryID, status, err)
+		return fmt.Errorf("clear staged imports: %w", err)
 	}
 	return nil
 }

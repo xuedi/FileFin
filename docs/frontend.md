@@ -41,6 +41,7 @@ flowchart TD
   App --> Lib["library/LibraryView"]
   App --> Tok["library/TokPlayer"]
   App --> AdminLib["admin/AdminLibrary"]
+  App --> AdminImp["admin/AdminImport"]
   App --> ImportWork["admin/import/ImportWork"]
   App --> Settings["admin/AdminSettings + FormatGate"]
   App --> Users["admin/AdminUsers"]
@@ -121,6 +122,15 @@ metadata editor.
 - `components/Toast.svelte` - the global success/error notice stack (bottom-right), rendered once
   at the app root and fed from `AppState.toasts` (each setting save, scan, and rebuild pushes one);
   auto-dismisses, or closes on the `x`.
+
+The admin **Import** page (`admin/AdminImport.svelte`, sidebar entry under Library) is the whole
+import folder in one table: one row per recognised media, each with an editable title and year, its
+own category dropdown, poster/subtitle/duplicate markers, and an **X** that leaves it behind. A
+single **Import** button queues every remaining row, and dropped rows wait in a **Not importing**
+list under it with a **+** to take them back. The upload, Plex, and Jellyfin sources keep their own
+working view (`/admin/import/work`, `admin/import/ImportWork.svelte`), opened from the three header
+buttons. The admin Library page is therefore only the category tree. See
+[`import.md`](import.md) for what happens behind both.
 
 The admin **Settings** page is a tabbed view (System / Library / Playback / Automation / Logging /
 Maintenance). The active tab is part of the URL (`/admin/settings/<tab>`), so it is deep-linkable and

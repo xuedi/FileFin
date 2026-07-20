@@ -72,6 +72,20 @@ function humanDuration(secs) {
   return `${s}s`
 }
 
+// humanSize renders a byte count as a short "8.2 GB" / "740 MB" label (decimal units, the
+// ones disk sizes are sold in).
+export function humanSize(bytes) {
+  if (!bytes || bytes < 0) return '-'
+  const units = ['B', 'kB', 'MB', 'GB', 'TB']
+  let n = bytes
+  let u = 0
+  while (n >= 1000 && u < units.length - 1) {
+    n /= 1000
+    u++
+  }
+  return `${u === 0 || n >= 100 ? Math.round(n) : n.toFixed(1)} ${units[u]}`
+}
+
 export function fmtTime(ts) {
   if (!ts) return 'never'
   const d = new Date(ts * 1000)
@@ -112,7 +126,7 @@ export class AppState {
   version = $state('') // running binary's release version, from /api/state
   me = $state(null) // { user, admin }
   view = $state('library') // 'library' | 'admin' | 'settings'
-  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'users' | 'settings' | 'progress' | 'unhealthy'
+  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'import' | 'users' | 'settings' | 'progress' | 'unhealthy'
   userMenuOpen = $state(false) // navbar username dropdown
 
   // user settings: MyDramaList / MyAnimeList import (username, optional category scope,
@@ -281,8 +295,16 @@ export class AppState {
 
   // admin import
   importCategory = $state('')
-  importSource = $state('folder') // 'folder' | 'upload' | 'plex' | 'jellyfin'
-  importPage = $state('') // '' = config, else 'assess' | 'upload' | 'plex' | 'jellyfin'
+  importPage = $state('') // '' = the import page, else 'assess' | 'upload' | 'plex' | 'jellyfin'
+  // The import page's table: one row per recognised media in the import folder, each with its
+  // own edited title/year and target category, plus the folder they were read from. That path
+  // is kept separate from the Settings field of the same name so an unsaved edit there never
+  // decides what this page reads.
+  importFolderPath = $state('')
+  importItems = $state([])
+  importSkipped = $state([]) // rows taken off the table with X, offered back under the button
+  importScanning = $state(false)
+  importScanError = $state('')
 
   uploadFiles = $state([])
   uploadProgress = $state([]) // { name, pct, status: 'pending'|'up'|'done'|'error' }
@@ -299,6 +321,9 @@ export class AppState {
   editYear = $state('')
   editCategory = $state('')
   deleteAfter = $state(true)
+  // "clean up also non imported media": empty the whole import folder once the batch has
+  // copied. It rides on deleteAfter, so it is forced off whenever the originals are kept.
+  purgeFolder = $state(false)
 
   // admin import: Plex source
   plexDB = $state('')
@@ -951,7 +976,7 @@ export class AppState {
     const segs = location.pathname.split('/').filter(Boolean)
     if (segs[0] === 'admin' && this.me?.admin) {
       this.view = 'admin'
-      const page = ['dashboard', 'stats', 'library', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
+      const page = ['dashboard', 'stats', 'library', 'import', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
       this.applyAdmin(page, segs[2])
       return
     }
@@ -1006,15 +1031,18 @@ export class AppState {
     if (page !== 'settings') this.stopSettingsClock() // leaving Settings stops its countdown
     this.adminView = page
     if (page === 'library') {
+      this.editName = ''
+      this.loadCategories()
+    } else if (page === 'import') {
       clearInterval(this.plexTimer) // stop any orphaned Plex staging poll
       this.plexTimer = 0
       clearInterval(this.jellyfinTimer) // stop any orphaned Jellyfin staging poll
       this.jellyfinTimer = 0
       this.importPage = ''
-      this.editName = ''
       this.loadCategories()
+      this.loadImportItems()
       this.loadPendingImports().then(() => {
-        if (sub === 'import' && this.pendingImports.length > 0) this.continueImport()
+        if (sub === 'work' && this.pendingImports.length > 0) this.continueImport()
       })
     } else if (page === 'settings') {
       const tabs = ['system', 'library', 'playback', 'automation', 'logging', 'maintenance']
@@ -1080,6 +1108,10 @@ export class AppState {
 
   openAdminLibrary() {
     this.go('/admin/library')
+  }
+
+  openAdminImport() {
+    this.go('/admin/import')
   }
 
   // --- admin settings ---
@@ -1620,34 +1652,90 @@ export class AppState {
 
   // --- admin import ---
 
-  async startImport() {
+  // loadImportItems reads the import folder: one row per recognised media, with the title,
+  // year, and duplicate check the import would use. Each row keeps its own editable copy of
+  // the title/year and its own target category, so the page needs no global picker.
+  async loadImportItems() {
+    this.importScanError = ''
+    this.importScanning = true
+    try {
+      const r = await api('/api/admin/import/folder')
+      this.importFolderPath = r.folder || ''
+      const fallback = this.categories[0]?.id ?? 0
+      this.importItems = (r.items || []).map((it, order) => ({
+        ...it,
+        order, // scan order, so a row taken back lands where it was
+        year: it.year || '',
+        categoryId: this.categories.find((c) => c.name === this.importCategory)?.id ?? fallback,
+      }))
+      this.importSkipped = []
+    } catch (e) {
+      this.importItems = []
+      this.importScanError = (await errText(e)) || 'Could not read the import folder'
+    } finally {
+      this.importScanning = false
+    }
+  }
+
+  // dropImportItem takes a row off the table and parks it in the skipped list under the
+  // button. Nothing was staged, so this only means "not this time" - the media stays in the
+  // import folder either way, and takeBackImportItem puts the row back with its edits intact.
+  dropImportItem(item) {
+    this.importItems = this.importItems.filter((i) => i.id !== item.id)
+    if (!this.importSkipped.some((i) => i.id === item.id)) this.importSkipped.push(item)
+  }
+
+  takeBackImportItem(item) {
+    this.importSkipped = this.importSkipped.filter((i) => i.id !== item.id)
+    this.importItems = [...this.importItems, item].sort((a, b) => a.order - b.order)
+  }
+
+  importReady = $derived(this.importItems.length > 0 && this.importItems.every((i) => i.categoryId > 0))
+
+  // startFolderImport queues every listed media with its own title, year, and category. The
+  // page the admin just reviewed is the check, so the rows go straight to the copy queue.
+  async startFolderImport() {
+    if (!this.importReady) return
+    this.importScanError = ''
+    const items = this.importItems.map((i) => ({
+      id: i.id,
+      title: i.title,
+      year: Number(i.year) || 0,
+      categoryId: i.categoryId,
+    }))
+    try {
+      const r = await api('/api/admin/import/folder/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          deleteAfter: this.deleteAfter,
+          purgeFolder: this.deleteAfter && this.purgeFolder,
+          items,
+        }),
+      })
+      this.toast('success', `Queued ${r.started} media file(s) for import.`)
+      this.importItems = []
+      this.importSkipped = []
+      this.go('/admin/progress')
+    } catch (e) {
+      this.importScanError = (await errText(e)) || 'Could not start the import'
+    }
+  }
+
+  // openWorkPage moves to the working view of one of the sources that bring their own flow.
+  // The view is its own URL so a reload/back lands back on it; the URL is pushed directly
+  // rather than through go() so route() does not immediately reset the page it just set.
+  openWorkPage(origin) {
+    history.pushState({}, '', '/admin/import/work')
+    this.importOrigin = origin
+    this.importPage = origin
+  }
+
+  openUploadImport() {
     this.uploadFiles = []
     this.uploadProgress = []
     this.uploadError = ''
-    // The import working view is its own URL so a reload/back lands back here; push it
-    // directly rather than via go() so route() does not reset to the resume path and
-    // skip the fresh scan below.
-    history.pushState({}, '', '/admin/library/import')
-    if (this.importSource === 'upload') {
-      this.importOrigin = 'upload'
-      this.importPage = 'upload'
-      return
-    }
-    if (this.importSource === 'plex') {
-      this.importOrigin = 'plex'
-      this.importPage = 'plex'
-      await this.openPlexImport()
-      return
-    }
-    if (this.importSource === 'jellyfin') {
-      this.importOrigin = 'jellyfin'
-      this.importPage = 'jellyfin'
-      this.openJellyfinImport()
-      return
-    }
-    this.importOrigin = 'folder'
-    this.importPage = 'assess'
-    await this.runAssess()
+    this.openWorkPage('upload')
   }
 
   // loadPendingImports refreshes the set of staged-but-not-started (preCheck) rows.
@@ -1674,24 +1762,6 @@ export class AppState {
     this.assessError = ''
     this.assessLoading = false
     this.importPage = 'assess'
-  }
-
-  async runAssess() {
-    this.assessError = ''
-    this.assessLoading = true
-    this.assessRows = []
-    const cat = this.categories.find((c) => c.name === this.importCategory)
-    try {
-      this.assessRows = await api('/api/admin/import/assess', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ categoryId: cat?.id ?? 0 }),
-      })
-    } catch (e) {
-      this.assessError = (await errText(e)) || 'Could not assess the import folder'
-    } finally {
-      this.assessLoading = false
-    }
   }
 
   startEditImport(group) {
@@ -1809,6 +1879,7 @@ export class AppState {
   // --- admin import: Plex source ---
 
   async openPlexImport() {
+    this.openWorkPage('plex')
     this.plexError = ''
     this.plexChecked = false
     this.plexRows = []
@@ -1957,7 +2028,7 @@ export class AppState {
             this.plexError = p.error
           } else {
             await this.loadPendingImports()
-            this.go('/admin/library/import')
+            this.go('/admin/import/work')
           }
         }
       } catch {
@@ -1971,6 +2042,7 @@ export class AppState {
   // --- admin import: Jellyfin (NFO) source ---
 
   openJellyfinImport() {
+    this.openWorkPage('jellyfin')
     this.jellyfinDir = ''
     this.jellyfinError = ''
     this.jellyfinCategoryId = this.categories[0]?.id ?? 0
@@ -2036,7 +2108,7 @@ export class AppState {
             this.jellyfinError = p.error
           } else {
             await this.loadPendingImports()
-            this.go('/admin/library/import')
+            this.go('/admin/import/work')
           }
         }
       } catch {

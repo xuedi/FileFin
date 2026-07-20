@@ -52,76 +52,146 @@ func do(t *testing.T, h http.Handler, method, path, body string, cookie *http.Co
 	return rr
 }
 
-func TestAssessEditDelete(t *testing.T) {
+// scanItem is one row of the import page: a recognised media in the import folder.
+type scanItem struct {
+	ID        string `json:"id"`
+	Entry     string `json:"entry"`
+	Dir       bool   `json:"dir"`
+	Title     string `json:"title"`
+	Year      int    `json:"year"`
+	Files     int    `json:"files"`
+	Bytes     int64  `json:"bytes"`
+	SubCount  int    `json:"subCount"`
+	HasPoster bool   `json:"hasPoster"`
+	Duplicate string `json:"duplicate"`
+}
+
+// scanImport reads the import page's table.
+func scanImport(t *testing.T, h http.Handler, admin *http.Cookie) []scanItem {
+	t.Helper()
+	rr := do(t, h, "GET", "/api/admin/import/folder", "", admin)
+	if rr.Code != 200 {
+		t.Fatalf("import folder: %d %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Folder string     `json:"folder"`
+		Items  []scanItem `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Items
+}
+
+// startImportOf presses the page's Import button for the given rows: each is sent with the
+// title/year the table showed and the chosen category.
+func startImportOf(t *testing.T, h http.Handler, admin *http.Cookie, catID int64, deleteAfter bool, items []scanItem) *httptest.ResponseRecorder {
+	t.Helper()
+	body := struct {
+		DeleteAfter bool `json:"deleteAfter"`
+		Items       []struct {
+			ID         string `json:"id"`
+			Title      string `json:"title"`
+			Year       int    `json:"year"`
+			CategoryID int64  `json:"categoryId"`
+		} `json:"items"`
+	}{DeleteAfter: deleteAfter}
+	for _, it := range items {
+		body.Items = append(body.Items, struct {
+			ID         string `json:"id"`
+			Title      string `json:"title"`
+			Year       int    `json:"year"`
+			CategoryID int64  `json:"categoryId"`
+		}{it.ID, it.Title, it.Year, catID})
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return do(t, h, "POST", "/api/admin/import/folder/start", string(b), admin)
+}
+
+// importFolder scans and imports everything the folder holds, the way the page's single
+// button does, and returns the queued rows.
+func importFolder(t *testing.T, h http.Handler, admin *http.Cookie, catID int64, deleteAfter bool) []scanItem {
+	t.Helper()
+	items := scanImport(t, h, admin)
+	if len(items) > 0 {
+		if rr := startImportOf(t, h, admin, catID, deleteAfter, items); rr.Code != 200 {
+			t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	return items
+}
+
+func TestScanRecognizesMediaInImportFolder(t *testing.T) {
 	imp := t.TempDir()
-	// Two video files (one nested) plus a non-video that must be ignored.
+	// A loose film, a show folder whose episodes fold into one media, and a non-video.
 	if err := os.WriteFile(filepath.Join(imp, "The.Matrix.1999.1080p.mkv"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(imp, "sub"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(imp, "Firefly", "Season 01"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(imp, "sub", "(1982) Blade Runner.mp4"), []byte("x"), 0o644); err != nil {
+	for _, n := range []string{"01.mkv", "02.mkv"} {
+		if err := os.WriteFile(filepath.Join(imp, "Firefly", "Season 01", n), []byte("xx"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(imp, "Firefly", "Season 01", "01.eng.srt"), []byte("s"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(imp, "notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	s, h, admin, catID := importServer(t, imp)
-	_ = s
+	_, h, admin, _ := importServer(t, imp)
+	items := scanImport(t, h, admin)
+	if len(items) != 2 {
+		t.Fatalf("want 2 recognised media, got %d: %+v", len(items), items)
+	}
+	byTitle := map[string]scanItem{}
+	for _, it := range items {
+		byTitle[it.Title] = it
+	}
+	film := byTitle["The Matrix"]
+	if film.Year != 1999 || film.Files != 1 || film.Dir || film.Entry != "The.Matrix.1999.1080p.mkv" {
+		t.Fatalf("film item = %+v", film)
+	}
+	show := byTitle["Firefly"]
+	if show.Files != 2 || !show.Dir || show.Entry != "Firefly" || show.Bytes != 4 || show.SubCount != 1 {
+		t.Fatalf("show item = %+v, want one row folding both episodes", show)
+	}
+	// Nothing is written before the Import button is pressed.
+	rr := do(t, h, "GET", "/api/admin/imports", "", admin)
+	if !strings.Contains(rr.Body.String(), "[]") {
+		t.Fatalf("scanning must not stage rows, got %s", rr.Body.String())
+	}
+}
 
-	// Assess (OMDb disabled: no key configured) yields one preCheck row per video.
-	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	if rr.Code != 200 {
-		t.Fatalf("assess: %d %s", rr.Code, rr.Body.String())
-	}
-	var rows []db.Import
-	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("assess rows = %d, want 2: %s", len(rows), rr.Body.String())
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, `"title":"The Matrix"`) || !strings.Contains(body, `"title":"Blade Runner"`) {
-		t.Fatalf("recognized titles missing: %s", body)
-	}
+// The staged-row edit and delete endpoints still back the preCheck page the upload, Plex,
+// and Jellyfin sources land on.
+func TestStagedRowEditDelete(t *testing.T) {
+	s, h, admin, catID := importServer(t, t.TempDir())
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	keep, _ := db.InsertImport(ctx, pool, db.Import{
+		CategoryID: catID, Title: "The Matrix", Year: 1999, Status: db.StatusPreCheck,
+	})
+	drop, _ := db.InsertImport(ctx, pool, db.Import{
+		CategoryID: catID, Title: "Blade Runner", Year: 1982, Status: db.StatusPreCheck,
+	})
 
-	// Edit a row's title/year.
-	var id int64
-	for _, r := range rows {
-		if r.Title == "The Matrix" {
-			id = r.ID
-		}
-	}
-	rr = do(t, h, "PUT", "/api/admin/imports/"+strconv.FormatInt(id, 10), `{"title":"Matrix","year":2000}`, admin)
+	rr := do(t, h, "PUT", "/api/admin/imports/"+strconv.FormatInt(keep, 10), `{"title":"Matrix","year":2000}`, admin)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"title":"Matrix"`) || !strings.Contains(rr.Body.String(), `"year":2000`) {
 		t.Fatalf("edit: %d %s", rr.Code, rr.Body.String())
 	}
-
-	// Delete the other row.
-	var other int64
-	for _, r := range rows {
-		if r.ID != id {
-			other = r.ID
-		}
-	}
-	if rr := do(t, h, "DELETE", "/api/admin/imports/"+strconv.FormatInt(other, 10), "", admin); rr.Code != 204 {
+	if rr := do(t, h, "DELETE", "/api/admin/imports/"+strconv.FormatInt(drop, 10), "", admin); rr.Code != 204 {
 		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
 	}
 	rr = do(t, h, "GET", "/api/admin/imports?status=preCheck", "", admin)
 	if c := strings.Count(rr.Body.String(), `"id":`); c != 1 {
 		t.Fatalf("after delete want 1 row, body: %s", rr.Body.String())
-	}
-
-	// Re-assess clears prior preCheck rows (still 2, not 3).
-	rr = do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("re-assess rows = %d, want 2", len(rows))
 	}
 }
 
@@ -137,13 +207,9 @@ func TestStartImportCopiesAndWritesMedia(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	if rr.Code != 200 {
-		t.Fatalf("assess: %d %s", rr.Code, rr.Body.String())
-	}
-
-	// Start flips preCheck -> import.
-	if rr := do(t, h, "POST", "/api/admin/import/start", "", admin); rr.Code != 200 ||
+	// One press of Import queues the media straight away.
+	items := scanImport(t, h, admin)
+	if rr := startImportOf(t, h, admin, catID, false, items); rr.Code != 200 ||
 		!strings.Contains(rr.Body.String(), `"started":1`) {
 		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
 	}
@@ -259,11 +325,8 @@ func TestDeleteAfterRemovesSource(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	// Start with deleteAfter=true: the source should be vacuumed after a good import.
-	if rr := do(t, h, "POST", "/api/admin/import/start", `{"deleteAfter":true}`, admin); rr.Code != 200 {
-		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
-	}
+	// Import with deleteAfter=true: the source should be vacuumed after a good import.
+	importFolder(t, h, admin, catID, true)
 
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
@@ -283,7 +346,80 @@ func TestDeleteAfterRemovesSource(t *testing.T) {
 	}
 }
 
-func TestAssessFlagsMediaAlreadyInLibrary(t *testing.T) {
+func TestImportOnlyThePickedMedia(t *testing.T) {
+	imp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(imp, "Firefly", "Season 01"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imp, "Firefly", "Season 01", "05.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imp, "(1982) Blade Runner.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	var pick []scanItem
+	for _, it := range scanImport(t, h, admin) {
+		if it.Title == "Firefly" {
+			pick = append(pick, it)
+		}
+	}
+	if len(pick) != 1 {
+		t.Fatalf("want one Firefly row, got %+v", pick)
+	}
+	if rr := startImportOf(t, h, admin, catID, false, pick); rr.Code != 200 {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
+
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 1 {
+		t.Fatalf("want only the picked media queued, got %d rows", len(rows))
+	}
+	// Recognition reads each path relative to the import folder, so the show folder above
+	// the season dir supplies the title a bare "05.mkv" lacks.
+	if rows[0].Title != "Firefly" || rows[0].Season != 1 || rows[0].Episode != 5 {
+		t.Fatalf("recognized %+v, want Firefly S01E05", rows[0])
+	}
+
+	// An id that no longer resolves is skipped, not fatal.
+	rr := startImportOf(t, h, admin, catID, false, []scanItem{{ID: "deadbeef0000", Title: "Ghost"}})
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"skipped":1`) {
+		t.Fatalf("stale id: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// The admin's edits in the table win over what recognition guessed.
+func TestImportUsesEditedTitleAndYear(t *testing.T) {
+	imp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imp, "matrix.dvdrip.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	items := scanImport(t, h, admin)
+	if len(items) != 1 {
+		t.Fatalf("want 1 item, got %+v", items)
+	}
+	items[0].Title, items[0].Year = "The Matrix", 1999
+	if rr := startImportOf(t, h, admin, catID, false, items); rr.Code != 200 {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 1 || rows[0].Title != "The Matrix" || rows[0].Year != 1999 {
+		t.Fatalf("queued row = %+v, want the edited title/year", rows)
+	}
+	s.importOne(ctx, pool, rows[0])
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "Movies", "(1999) The Matrix", "(1999) The Matrix.mkv")); err != nil {
+		t.Fatalf("media folder does not follow the edit: %v", err)
+	}
+}
+
+func TestScanFlagsMediaAlreadyInLibrary(t *testing.T) {
 	imp := t.TempDir()
 	for _, name := range []string{"(1999) The Matrix.mkv", "(1982) Blade Runner.mkv"} {
 		if err := os.WriteFile(filepath.Join(imp, name), []byte("x"), 0o644); err != nil {
@@ -292,39 +428,40 @@ func TestAssessFlagsMediaAlreadyInLibrary(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	// Import The Matrix, then assess the same folder again: only that row is flagged.
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	// Import The Matrix, then scan the same folder again: only that row is flagged.
+	items := scanImport(t, h, admin)
+	var matrix []scanItem
+	for _, it := range items {
+		if it.Title == "The Matrix" {
+			matrix = append(matrix, it)
+		}
+	}
+	if rr := startImportOf(t, h, admin, catID, false, matrix); rr.Code != 200 {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
 	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
 	for _, r := range rows {
-		if r.Title == "The Matrix" {
-			s.importOne(ctx, pool, r)
-		}
+		s.importOne(ctx, pool, r)
 	}
 
-	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	var staged []db.Import
-	if err := json.Unmarshal(rr.Body.Bytes(), &staged); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range staged {
-		switch r.Title {
+	for _, it := range scanImport(t, h, admin) {
+		switch it.Title {
 		case "The Matrix":
-			if !strings.Contains(r.Duplicate, "The Matrix (1999)") {
-				t.Fatalf("imported media should be flagged as a duplicate, got %q", r.Duplicate)
+			if !strings.Contains(it.Duplicate, "The Matrix (1999)") {
+				t.Fatalf("imported media should be flagged as a duplicate, got %q", it.Duplicate)
 			}
 		default:
-			if r.Duplicate != "" {
-				t.Fatalf("%s is not in the library but was flagged: %q", r.Title, r.Duplicate)
+			if it.Duplicate != "" {
+				t.Fatalf("%s is not in the library but was flagged: %q", it.Title, it.Duplicate)
 			}
 		}
 	}
 }
 
-// A show already in the library is not a duplicate per se: only an episode it already
-// holds is, so the next episode of a running series stages clean.
+// A show already in the library is only a duplicate once every episode on offer is there,
+// so a season pack whose first episode was imported still reads as new work.
 func TestDuplicateCheckIsPerEpisode(t *testing.T) {
 	imp := t.TempDir()
 	for _, name := range []string{"Firefly - S01E01.mkv", "Firefly - S01E02.mkv"} {
@@ -334,8 +471,7 @@ func TestDuplicateCheckIsPerEpisode(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	importFolder(t, h, admin, catID, false)
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
 	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
@@ -345,21 +481,24 @@ func TestDuplicateCheckIsPerEpisode(t *testing.T) {
 		}
 	}
 
-	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	var staged []db.Import
-	if err := json.Unmarshal(rr.Body.Bytes(), &staged); err != nil {
-		t.Fatal(err)
+	items := scanImport(t, h, admin)
+	if len(items) != 1 || items[0].Files != 2 {
+		t.Fatalf("want one show row over both episodes, got %+v", items)
 	}
-	if len(staged) != 2 {
-		t.Fatalf("want 2 staged rows, got %d", len(staged))
+	if items[0].Duplicate != "" {
+		t.Fatalf("a show with an episode still missing must not read as a duplicate: %q", items[0].Duplicate)
 	}
-	for _, r := range staged {
-		if r.Episode == 1 && r.Duplicate == "" {
-			t.Fatalf("the already-imported episode should be flagged: %+v", r)
+
+	// With the second episode imported too, the whole row is a duplicate.
+	rows, _ = db.ListImports(ctx, pool, db.StatusImport)
+	for _, r := range rows {
+		if r.Episode == 2 {
+			s.importOne(ctx, pool, r)
 		}
-		if r.Episode == 2 && r.Duplicate != "" {
-			t.Fatalf("a new episode must not be flagged: %q", r.Duplicate)
-		}
+	}
+	items = scanImport(t, h, admin)
+	if len(items) != 1 || items[0].Duplicate == "" {
+		t.Fatalf("every episode is in the library now: %+v", items)
 	}
 }
 
@@ -379,8 +518,7 @@ func TestDeleteAfterClearsFolderAndSidecars(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", `{"deleteAfter":true}`, admin)
+	importFolder(t, h, admin, catID, true)
 
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
@@ -404,6 +542,72 @@ func TestDeleteAfterClearsFolderAndSidecars(t *testing.T) {
 
 // A folder still holding a video that has not been imported yet is kept: os.Remove refuses
 // a non-empty directory, so the prune stops there.
+// With "clean up also non imported media" ticked, whatever the admin left behind - a dropped
+// row, a sample clip, release notes - is cleared once the batch has copied.
+func TestPurgeImportFolderAfterBatch(t *testing.T) {
+	imp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imp, "(1999) The Matrix.mkv"), []byte("movie"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imp, "(1982) Blade Runner.mkv"), []byte("movie"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(imp, "sample"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imp, "sample", "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	// Import only The Matrix, and ask for the folder to be emptied afterwards.
+	var pick []scanItem
+	for _, it := range scanImport(t, h, admin) {
+		if it.Title == "The Matrix" {
+			pick = append(pick, it)
+		}
+	}
+	body := `{"deleteAfter":true,"purgeFolder":true,"items":[{"id":"` + pick[0].ID +
+		`","title":"The Matrix","year":1999,"categoryId":` + strconv.FormatInt(catID, 10) + `}]}`
+	if rr := do(t, h, "POST", "/api/admin/import/folder/start", body, admin); rr.Code != 200 {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
+
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+
+	// While the batch is still queued the folder is left alone.
+	s.purgeImportFolder(ctx, pool)
+	if _, err := os.Stat(filepath.Join(imp, "(1982) Blade Runner.mkv")); err != nil {
+		t.Fatalf("the folder must survive until the batch has drained: %v", err)
+	}
+
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	for _, r := range rows {
+		s.importOne(ctx, pool, r)
+	}
+	s.purgeImportFolder(ctx, pool)
+
+	entries, err := os.ReadDir(imp)
+	if err != nil {
+		t.Fatalf("the import folder itself must stay: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("import folder should be empty, still holds %d entr(ies)", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, "Movies", "(1999) The Matrix", "(1999) The Matrix.mkv")); err != nil {
+		t.Fatalf("the imported media is gone: %v", err)
+	}
+	// The wish is one-shot: a later batch without the box ticked leaves the folder alone.
+	if err := os.WriteFile(filepath.Join(imp, "keep.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.purgeImportFolder(ctx, pool)
+	if _, err := os.Stat(filepath.Join(imp, "keep.mkv")); err != nil {
+		t.Fatalf("purge must not stay armed: %v", err)
+	}
+}
+
 func TestDeleteAfterKeepsFolderWithRemainingMedia(t *testing.T) {
 	imp := t.TempDir()
 	dir := filepath.Join(imp, "Show")
@@ -419,8 +623,7 @@ func TestDeleteAfterKeepsFolderWithRemainingMedia(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", `{"deleteAfter":true}`, admin)
+	importFolder(t, h, admin, catID, true)
 
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
@@ -446,9 +649,8 @@ func TestImportKeepsSourceByDefault(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
 	// No body => deleteAfter defaults to false; the original must survive.
-	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	importFolder(t, h, admin, catID, false)
 
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)
@@ -473,8 +675,7 @@ func TestRebuildFromDisk(t *testing.T) {
 	pool, _ := s.ensureDB(ctx)
 
 	// Import one item so the media + a now-stale import row exist.
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	importFolder(t, h, admin, catID, false)
 	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
 	s.importOne(ctx, pool, rows[0])
 
@@ -526,8 +727,7 @@ func TestNoLockUnderConcurrency(t *testing.T) {
 	}
 	s, h, admin, catID := importServer(t, imp)
 
-	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
-	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	importFolder(t, h, admin, catID, false)
 
 	ctx := context.Background()
 	pool, _ := s.ensureDB(ctx)

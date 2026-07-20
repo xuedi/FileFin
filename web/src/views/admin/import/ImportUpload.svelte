@@ -1,8 +1,19 @@
 <script>
   import { getContext } from 'svelte'
+  import { treeMarker } from '../../../lib/app.svelte.js'
   const app = getContext('app')
 </script>
 
+<div class="ff-import-row">
+  <p class="label is-small has-text-grey">Import the uploaded files into</p>
+  <div class="select">
+    <select bind:value={app.importCategory}>
+      {#each app.categoryTree as c}
+        <option value={c.name}>{treeMarker(c._depth)}{c.alias}</option>
+      {/each}
+    </select>
+  </div>
+</div>
 <p class="label is-small has-text-grey">Select one or more files from your computer.</p>
 <input class="ff-file" type="file" multiple onchange={(e) => app.onUploadPick(e)} disabled={app.uploading} />
 {#if app.uploadError}<p class="has-text-danger">{app.uploadError}</p>{/if}

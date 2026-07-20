@@ -7,6 +7,7 @@
   import LibraryView from './views/library/LibraryView.svelte'
   import TokPlayer from './views/library/TokPlayer.svelte'
   import AdminLibrary from './views/admin/AdminLibrary.svelte'
+  import AdminImport from './views/admin/AdminImport.svelte'
   import ImportWork from './views/admin/import/ImportWork.svelte'
   import FormatGate from './views/admin/FormatGate.svelte'
   import AdminSettings from './views/admin/AdminSettings.svelte'
@@ -104,6 +105,7 @@
           <li><a href={null} class:is-active={app.adminView === 'dashboard'} onclick={() => app.go('/admin/dashboard')}>Dashboard</a></li>
           <li><a href={null} class:is-active={app.adminView === 'stats'} onclick={() => app.go('/admin/stats')}>Statistics</a></li>
           <li><a href={null} class:is-active={app.adminView === 'library'} onclick={() => app.openAdminLibrary()}>Library</a></li>
+          <li><a href={null} class:is-active={app.adminView === 'import'} onclick={() => app.openAdminImport()}>Import</a></li>
           <li><a href={null} class:is-active={app.adminView === 'users'} onclick={() => app.go('/admin/users')}>Users</a></li>
           <li><a href={null} class:is-active={app.adminView === 'unhealthy'} onclick={() => app.go('/admin/unhealthy')}>Unhealthy media</a></li>
           <li><a href={null} class:is-active={app.adminView === 'settings'} onclick={() => app.openSettings()}>Settings</a></li>
@@ -119,9 +121,11 @@
         <LibraryView />
       {:else if app.view === 'settings'}
         <UserSettings />
-      {:else if app.adminView === 'library' && app.importPage === ''}
-        <AdminLibrary />
       {:else if app.adminView === 'library'}
+        <AdminLibrary />
+      {:else if app.adminView === 'import' && app.importPage === ''}
+        <AdminImport />
+      {:else if app.adminView === 'import'}
         <ImportWork />
       {:else if app.adminView === 'settings' && app.mediaFormat === ''}
         <FormatGate />

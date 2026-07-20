@@ -61,50 +61,14 @@ func (s *Server) omdbClient() *omdb.Client {
 	return omdb.New(key)
 }
 
-// handleAssess scans the configured import folder for one category and stages a preCheck
-// row per video file. Rows are returned for the assessment table; OMDb enrichment happens
-// later via the dedicated agent, not here.
-func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeJSON[struct {
-		CategoryID int64 `json:"categoryId"`
-	}](w, r)
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	cat, ok := s.categoryByID(req.CategoryID)
-	if !ok {
-		http.Error(w, "unknown category", http.StatusBadRequest)
-		return
-	}
-	importFolder := s.importFolder()
-	if importFolder == "" {
-		http.Error(w, "no import folder configured", http.StatusBadRequest)
-		return
-	}
-	pool, err := s.ensureDB(r.Context())
-	if err != nil {
-		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	rows, err := s.stageFolder(r.Context(), pool, cat, importFolder, false, db.OriginFolder)
-	if err != nil {
-		http.Error(w, "could not assess the import folder", http.StatusInternalServerError)
-		return
-	}
-	s.markDuplicates(r.Context(), pool, rows)
-	writeJSON(w, rows)
-}
-
 // stageFolder clears a category's prior preCheck rows, scans root for video files, and
 // inserts one preCheck row per file (recognised title/year/episode plus any sidecar
-// subtitles). It is the shared staging core behind every import source: the folder source
-// passes the configured import folder, the upload source its /tmp working dir. deleteAfter
-// is stamped on each row so upload sources (throwaway /tmp files) always clean up after a
-// successful import; origin records which front stage produced the rows. OMDb enrichment is
-// left to the dedicated agent.
+// subtitles). It is the staging core behind the upload source, which drops its files in a
+// throwaway /tmp working dir and then walks it exactly like a folder. deleteAfter is stamped
+// on each row so those working files are always cleaned up after a successful import; origin
+// records which front stage produced the rows. OMDb enrichment is left to the dedicated agent.
 func (s *Server) stageFolder(ctx context.Context, pool *sql.DB, cat library.Category, root string, deleteAfter bool, origin string) ([]db.Import, error) {
-	if err := db.ClearImports(ctx, pool, cat.ID, db.StatusPreCheck); err != nil {
+	if err := db.ClearStagedImports(ctx, pool); err != nil {
 		return nil, err
 	}
 	files, err := scanVideos(root)
@@ -142,10 +106,27 @@ func (s *Server) stageFolder(ctx context.Context, pool *sql.DB, cat library.Cate
 	return db.ListImports(ctx, pool, db.StatusPreCheck)
 }
 
-// scanVideos walks root recursively, returning every video file (skipping hidden
-// files and directories).
+// videoFile is one scanned video with the size the import would copy.
+type videoFile struct {
+	path string
+	size int64
+}
+
+// scanVideos walks root recursively, returning the path of every video file (skipping
+// hidden files and directories).
 func scanVideos(root string) ([]string, error) {
-	var out []string
+	files, err := scanVideoFiles(root)
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.path
+	}
+	return out, err
+}
+
+// scanVideoFiles is the walk behind scanVideos, carrying each file's size for the callers
+// that report how much an entry holds.
+func scanVideoFiles(root string) ([]videoFile, error) {
+	var out []videoFile
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries, keep walking
@@ -164,7 +145,11 @@ func scanVideos(root string) ([]string, error) {
 			return nil // never stage a derived direct-play copy for import
 		}
 		if videoExts[strings.ToLower(filepath.Ext(name))] {
-			out = append(out, path)
+			f := videoFile{path: path}
+			if info, err := d.Info(); err == nil {
+				f.size = info.Size()
+			}
+			out = append(out, f)
 		}
 		return nil
 	})
