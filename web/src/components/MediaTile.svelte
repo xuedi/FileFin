@@ -14,10 +14,24 @@
       app.openMedia(m)
     }
   }
+
+  // The name is clipped to one line so a long title cannot make its tile - and with it the
+  // whole grid row - taller than the rest. Hovering reveals the full text, but only when it is
+  // actually clipped, since an overlay repeating a short title reads as a glitch. The measure
+  // happens on enter rather than up front so it stays right as the responsive grid reflows.
+  let nameEl = $state(null)
+  let clipped = $state(false)
 </script>
 
 <div class="poster-tile">
-  <div class="poster-card" role="button" tabindex="0" onclick={() => app.openMedia(m)} onkeydown={openKey}>
+  <div
+    class="poster-card"
+    role="button"
+    tabindex="0"
+    onclick={() => app.openMedia(m)}
+    onkeydown={openKey}
+    onmouseenter={() => (clipped = !!nameEl && nameEl.scrollWidth > nameEl.clientWidth)}
+    onmouseleave={() => (clipped = false)}>
     <div class="poster">
       {#if m.hasPoster}
         <img src={'/api/media/' + m.id + '/poster?size=tile'} alt={m.title} />
@@ -32,9 +46,15 @@
           onclick={(e) => { e.stopPropagation(); app.toggleWatched(m) }}>&#10003;</button>
       {/if}
     </div>
-    <span class="poster-name">{m.title}</span>
+    <span class="poster-name" bind:this={nameEl}>{m.title}</span>
     <span class="poster-year">{m.year}</span>
   </div>
+  {#if clipped}
+    <div class="poster-name-full">
+      <span>{m.title}</span>
+      <span class="poster-year">{m.year}</span>
+    </div>
+  {/if}
   {#if onRemove}
     <button class="tile-remove" title="Remove" onclick={(e) => { e.stopPropagation(); onRemove(m) }}>&#10005;</button>
   {/if}

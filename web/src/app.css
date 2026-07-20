@@ -346,8 +346,35 @@ body { min-height: 100vh; }
   padding: 0.5rem;
   color: var(--bulma-text-weak);
 }
-.poster-name { padding: 0.4rem 0.5rem 0; font-size: 0.9rem; }
+/* One line, always: a wrapped title would make its tile taller than every sibling in the row. */
+.poster-name {
+  padding: 0.4rem 0.5rem 0;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .poster-year { color: var(--bulma-text-weak); font-size: 0.8rem; padding: 0 0.5rem 0.5rem; }
+/* The hover overlay carrying the full title (rendered only when the name is really clipped).
+   It hangs off .poster-tile because the card itself clips its overflow, and it grows upward
+   from the tile's foot so it never covers the text it is replacing. */
+.poster-name-full {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem 0.5rem 0.5rem;
+  font-size: 0.9rem;
+  background: var(--bulma-scheme-main-ter);
+  border: 1px solid var(--bulma-border-weak);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.poster-name-full .poster-year { padding: 0; }
 /* The watched toggle sits on every tile in a grid, not just the watched ones - but an unwatched
    check stays hidden until the tile is hovered, so a grid at rest shows green only where it
    means something. */
