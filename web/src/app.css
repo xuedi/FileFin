@@ -175,6 +175,10 @@ body { min-height: 100vh; }
 .ff-disabled { color: var(--bulma-text-weak); }
 .ff-dup-warning { margin-bottom: 1rem; }
 .ff-dup-icon { color: var(--bulma-warning); font-size: 1.4rem; font-weight: bold; line-height: 1; cursor: help; }
+/* how much recognition trusts an import row: low rows sort to the top and read as a warning */
+.ff-confidence-high { background: var(--bulma-success); color: #fff; cursor: help; }
+.ff-confidence-medium { background: var(--bulma-warning); color: #000; cursor: help; }
+.ff-confidence-low { background: var(--bulma-danger); color: #fff; cursor: help; }
 .ff-prog-section { margin-top: 1.4rem; }
 .ff-prog-waiting { margin-top: 0.5rem; }
 

@@ -1661,13 +1661,17 @@ export class AppState {
     try {
       const r = await api('/api/admin/import/folder')
       this.importFolderPath = r.folder || ''
-      const fallback = this.categories[0]?.id ?? 0
-      this.importItems = (r.items || []).map((it, order) => ({
-        ...it,
-        order, // scan order, so a row taken back lands where it was
-        year: it.year || '',
-        categoryId: this.categories.find((c) => c.name === this.importCategory)?.id ?? fallback,
-      }))
+      const fallback = this.categories.find((c) => c.name === this.importCategory)?.id ?? this.categories[0]?.id ?? 0
+      // Least trustworthy first: those are the rows worth reading before pressing Import.
+      const rank = { low: 0, medium: 1, high: 2 }
+      this.importItems = (r.items || [])
+        .map((it, order) => ({
+          ...it,
+          order, // scan order, so a row taken back lands where it was
+          year: it.year || '',
+          categoryId: this.categoryForKind(it.isShow) ?? fallback,
+        }))
+        .sort((a, b) => (rank[a.confidence] ?? 3) - (rank[b.confidence] ?? 3) || a.order - b.order)
       this.importSkipped = []
     } catch (e) {
       this.importItems = []
@@ -1675,6 +1679,15 @@ export class AppState {
     } finally {
       this.importScanning = false
     }
+  }
+
+  // categoryForKind preselects the category a recognised media most likely belongs to, so a
+  // folder of shows and a folder of films do not both need picking by hand. It is only a
+  // default - every row keeps its own editable dropdown - and yields nothing when no
+  // category reads like the kind in question.
+  categoryForKind(isShow) {
+    const want = isShow ? /show|serie|tv|drama|anime/i : /film|movie|kino|cinema/i
+    return this.categories.find((c) => want.test(c.alias || c.name))?.id
   }
 
   // dropImportItem takes a row off the table and parks it in the skipped list under the

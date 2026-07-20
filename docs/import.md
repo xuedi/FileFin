@@ -59,7 +59,7 @@ checkbox off), never to change importer behaviour.
 ```mermaid
 flowchart TD
     subgraph Folder["Import folder (built)"]
-        FS[scan: recognize title/year per file] --> FG[fold into one row per media] --> FE[admin edits title/year/category, drops rows]
+        FS[scan: recognise each entry] --> FG[one row per media, with a confidence] --> FE[admin edits title/year/category, drops rows]
     end
     subgraph Upload["Upload front stage (built)"]
         UB[browser uploads files to /tmp/session] --> UR[recognize title/year + stage subtitles]
@@ -88,10 +88,96 @@ flowchart TD
 
 | source | front stage (everything before the importer) |
 |--------|----------------------------------------------------|
-| **Folder** *(built)* | walk the configured import folder, recognize each video file's title/year/episode (paths read **relative to the import folder**, so folder names inform title and season), and fold the files into **one row per recognised media** - everything that recognises to the same title and year, because that is exactly what the importer places in one media folder. Sidecar subtitles and a `poster.*` are counted per row and the duplicate check is applied. The scan writes nothing; pressing **Import** re-runs it, matches the rows the page sent back by id, and inserts one `import` row per file with that row's title, year, and category (no OMDb) |
+| **Folder** *(built)* | walk the configured import folder and fold it into **one row per media, grouped by top-level entry** (see **Recognition** below): a folder is one media unless its own subfolders say otherwise, and only loose files at the root are grouped by what they parse to. Each row carries its show/film verdict and a **confidence**. Sidecar subtitles and a `poster.*` are counted per row and the duplicate check is applied. The scan writes nothing; pressing **Import** re-runs it, matches the rows the page sent back by id, and inserts one `import` row per file with that row's title, year, and category (no OMDb) |
 | **Upload** *(built)* | the browser uploads one or more files (a per-file progress bar each) into a unique `/tmp/{session}` dir, then the same staging runs against that dir - identical to folder import but with `delete_after` forced on, so the `/tmp` working files are always cleaned up |
 | **Plex** *(built)* | pick the Plex DB (read-only), **check** lists its libraries, **resolve** auto-detects how the DB's paths map onto the real filesystem, the admin selects libraries and assigns each a FileFin category (or creates one from the Plex name), then **Load media files** runs a background staging walk that writes one `preCheck` row per locatable file - carrying Plex's metadata blob, poster, and subtitles, `origin=plex`, `delete_after=false`. See the Plex section below |
 | **Jellyfin** *(built)* | pick a Jellyfin/Kodi **NFO library** directory on the server and a target category (existing or created from a typed name), then **Prepare** runs a background staging walk: it scans the tree (`internal/jellyfin`), auto-detecting each entry as a movie (`movie.nfo` / `<video>.nfo` / loose file) or show (`tvshow.nfo` / `Season NN/` / episode `.nfo`s), builds the `meta.json` blob from the NFO fields (`importer.MetaFromJellyfin`, no OMDb), attaches sidecar subtitles and the chosen poster/fanart image, and writes one `preCheck` row per video file - `origin=jellyfin`, `delete_after=false` (it reads a library the user keeps). No DB and no path remap: it reads real on-disk paths. Multi-disc grouping of **loose** files (the old `DetectPart`) is not ported yet - each loose video is its own item; foldered multi-part movies are still grouped |
+
+## Recognition
+
+Recognition answers three questions about every entry in the import folder: what is this
+called, is it a show or a film, and how much should that be trusted. It is deliberately
+**offline and deterministic** - no metadata service is consulted here, because the failures it
+has to survive are naming conventions, not genuine ambiguity, and the content that parses worst
+(CJK dramas, fansub anime) is exactly the content a metadata service knows least about.
+
+### The title is what stands before the first marker
+
+A release name is a title followed by everything the releaser wanted to record. So the parser
+looks for the earliest **structural marker** - a year, a season/episode marker, a
+quality/source/codec token, a bracketed checksum, a release-group credit - and keeps only what
+precedes it. Nothing after a marker can reach the title, which is why an episode title
+(`Deaths.Game.S01E02.The.Reason.Youre.Going.to.Hell`) no longer splits a show into one media
+per episode.
+
+Markers are matched on the **raw** name, before separators are normalised, so `H.264`, `H_264`
+and `H 264` are one rule rather than three. Bracketed decorations are dropped from both ends, a
+trailing `-GROUP` or `@GROUP` credit is cut, and a CJK title in front of a romanised one is
+dropped so the enricher has a title it can match. A folder name is parsed differently from a
+file name in exactly one respect: it has no extension, so nothing may be stripped from its end.
+
+### Show or film is decided once per entry
+
+Any season or episode marker anywhere in an entry makes the **whole entry** a show, and that
+verdict is applied to every one of its files - one unmarked extra cannot turn a show back into
+a film. The verdict reaches the import table as a column and preselects the row's category.
+
+### Grouping follows the entry, not the parsed title
+
+The unit an admin dropped in the import folder is the top-level entry, so that is the unit the
+page shows. Grouping by parsed title instead shatters an entry the moment two of its files
+disagree, which is what real release names do constantly.
+
+```mermaid
+flowchart TD
+    E[top-level entry] --> D{file or folder?}
+    D -->|loose file| L[group with the other loose files<br/>by parsed title + year]
+    D -->|folder| G[bucket the videos by immediate subfolder]
+    G --> C{does the bucket carry episode markers?}
+    C -->|yes| S[fold into one show]
+    C -->|no, or named Movie/Film| F[one media per file, or one film<br/>when the files agree]
+    S --> N[number the buckets as consecutive seasons<br/>plainest folder name first]
+    N --> P[files with no episode number<br/>become specials in season 0]
+```
+
+Sample, extras, featurette, bonus and trailer folders are skipped outright, as is any file
+naming itself a teaser, trailer, sample or preview - they are never the media, so they neither
+land in the library nor count towards the checks below.
+
+Several buckets of episodes under one entry are numbered as consecutive **seasons** rather than
+merged, or two runs would both claim `S01E01` and collide on disk. The plainest folder name
+goes first, since a later season names itself with something extra appended.
+
+### Candidates are scored, not tried in order
+
+An entry offers several possible titles: its folder name, the name of a subfolder, what its
+files agree on. All of them are scored by the **same** checks and the least-doubtful one wins;
+the order the caller offered them in only breaks a tie. That is what lets a well-named folder
+rescue a cryptic file (`Baby.and.Me.2008.DVDRip.XviD-BiFOS/bifos-babyme.avi`) and, in the other
+direction, lets a file rescue a useless folder name (`LLBJ/(1990) Liu Lang Bei Jing.avi`).
+
+### Confidence is which checks passed
+
+Confidence is **not** a count of how much work recognition had to do. A title found only by
+falling back to the folder name, which then passes every check, is trustworthy. What lowers it
+is a failed check:
+
+| check | fails when |
+|-------|------------|
+| film file count | a film holds several files that are not numbered parts - so it is either misgrouped or really a show |
+| title agreement | the files of one media name different titles (a title that merely extends another is agreement, as a later season does) |
+| episode numbering | two files claim the same season and episode |
+| title junk | release junk, a checksum or an empty bracket pair survived into the title |
+| title shape | the title holds nothing that reads like a word, or is a bare `abbrev-abbrev` |
+| year range | the year is outside 1900..next year |
+| episode run *(soft)* | the episode numbers have gaps |
+| year missing *(soft)* | no year was found anywhere |
+| season guess *(soft)* | seasons were guessed from sibling folder names rather than stated |
+
+A hard failure makes the row **low**; a soft failure, or a win by a source other than the
+expected one, makes it **medium**; everything else is **high**. The import page sorts
+low-confidence rows to the top and names the failed check in the marker's tooltip, so the
+admin reads the few rows worth reading instead of all of them.
 
 ## Status lifecycle
 
@@ -132,6 +218,7 @@ stateDiagram-v2
 | `total`       | total bytes to copy                                               |
 | `error`       | failure message when `status = error`                             |
 | `delete_after`| remove the source file after a successful import (default false)  |
+| `confidence`  | how much recognition trusted the row's title/year: `high`, `medium`, `low`, empty for rows written before the column existed. Drives nothing in the importer - it records what the admin was shown |
 | `api_json`    | source-supplied `meta.json` blob; written by Plex (an `importer.Meta` from Plex's fields), empty for folder/upload. The importer writes it verbatim but leaves the folder unenriched, so the enricher later fills gaps additively. OMDb is still never called here |
 | `origin`      | which front stage produced the row (`folder` / `upload` / `plex`); a UI hint only, the importer ignores it |
 
@@ -326,7 +413,7 @@ client-side and finishes before staging; it is unrelated to the server-side copy
 
 | method + path                          | purpose                                        |
 |----------------------------------------|------------------------------------------------|
-| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, files, bytes, subs, poster, duplicate); writes nothing |
+| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, isShow, confidence, doubts, files, bytes, subs, poster, duplicate); writes nothing |
 | `POST /api/admin/import/folder/start`  | import page: queue the listed media (per row: id, title, year, categoryId) as `import` rows |
 | `POST /api/admin/import/upload/begin`  | upload source: open a `/tmp` session, return token|
 | `POST /api/admin/import/upload/file`   | upload source: store one file (multipart) in the session|

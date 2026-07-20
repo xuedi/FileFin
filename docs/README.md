@@ -18,7 +18,7 @@ subsystem you are working in.
 | [`agents/optimizer.md`](agents/optimizer.md) | Pre-transcoder | Background `.optimized.mp4` copies, GPU worker + load-driven CPU pool |
 | [`agents/probe.md`](agents/probe.md) | Format-probe agent | Backfills/refreshes the true container + codecs onto the cache and `meta.json` |
 | [`agents/discovery.md`](agents/discovery.md) | Discovery agent | Timer-driven reconcile, queue refill, and `media_health` checks as a rolling sweep |
-| [`import.md`](import.md) | Import | Source front stages, the preCheck page, the import poller, the `imports` table |
+| [`import.md`](import.md) | Import | Source front stages, recognition (marker cut, entry grouping, confidence), the preCheck page, the import poller, the `imports` table |
 | [`playback.md`](playback.md) | Video player | Direct-play (by probed format) vs HLS transcode, subtitles |
 | [`mediaformat.md`](mediaformat.md) | Media format & categories | On-disk layout, the `config.json` discriminator, the category tree, probed-format truth |
 | [`library.md`](library.md) | Library & cache | The media cache, rebuild, browsing, and naming formats |

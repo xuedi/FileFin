@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -18,23 +20,25 @@ import (
 )
 
 // importItem is one recognisable media sitting in the import folder: every video file of one
-// entry that recognises to the same title and year, folded into a single line for the import
-// page. It is derived from the filesystem on every read and never stored - the page is a
-// preview of what an import would create, and nothing is written until the admin presses
-// Import.
+// entry that belongs to the same media, folded into a single line for the import page. It is
+// derived from the filesystem on every read and never stored - the page is a preview of what
+// an import would create, and nothing is written until the admin presses Import.
 type importItem struct {
-	ID        string `json:"id"`    // stable across scans: derived from entry + recognised title/year
-	Entry     string `json:"entry"` // the top-level entry it lives in
-	Dir       bool   `json:"dir"`
-	Title     string `json:"title"`
-	Year      int    `json:"year"`
-	Files     int    `json:"files"`
-	Bytes     int64  `json:"bytes"`
-	SubCount  int    `json:"subCount"`
-	HasPoster bool   `json:"hasPoster"`
-	Duplicate string `json:"duplicate"` // the library item this would import a second time
-	paths     []string
-	probes    []db.Import
+	ID         string   `json:"id"`    // stable across scans: derived from entry + recognised title/year
+	Entry      string   `json:"entry"` // the top-level entry it lives in
+	Dir        bool     `json:"dir"`
+	Title      string   `json:"title"`
+	Year       int      `json:"year"`
+	IsShow     bool     `json:"isShow"`
+	Confidence string   `json:"confidence"` // high, medium or low: how much to trust this row
+	Doubts     []string `json:"doubts"`     // the sanity checks this media failed, in words
+	Files      int      `json:"files"`
+	Bytes      int64    `json:"bytes"`
+	SubCount   int      `json:"subCount"`
+	HasPoster  bool     `json:"hasPoster"`
+	Duplicate  string   `json:"duplicate"` // the library item this would import a second time
+	paths      []string
+	probes     []db.Import
 }
 
 // handleImportFolder previews the import folder: the configured path plus one item per
@@ -154,6 +158,7 @@ func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, cat
 			Title: title, Year: year, Season: it.probes[i].Season, Episode: it.probes[i].Episode,
 			Subtitles: subsJSON, Poster: importer.FindSidecarPoster(path),
 			Status: db.StatusImport, DeleteAfter: deleteAfter, Origin: db.OriginFolder,
+			Confidence: it.Confidence,
 		}); err != nil {
 			continue
 		}
@@ -162,71 +167,324 @@ func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, cat
 	return n
 }
 
-// scanImportFolder walks the import folder once and folds its video files into recognised
-// media: everything that recognises to the same title and year becomes one item, because
-// that is exactly what the importer would place in one media folder - a show split over two
-// season folders is one media, not two. Recognition reads each path relative to the import
-// folder, so folder names inform title and season exactly as they do at staging time.
+// scanImportFolder turns the import folder into the media it would create. It groups by
+// **top-level entry**, because that is what the admin dropped there: a folder is one media
+// unless its own subfolders say otherwise, and only loose files at the root are grouped by
+// what they parse to. Grouping by parsed title instead would shatter an entry whenever two
+// of its files disagree, which is exactly what real release names do.
 func scanImportFolder(folder string) ([]importItem, error) {
-	files, err := scanVideoFiles(folder)
+	entries, err := os.ReadDir(folder)
 	if err != nil {
 		return nil, err
 	}
 	items := []importItem{}
-	idx := map[string]int{}
-	entries := []map[string]bool{} // per item: which top-level entries it spans
+	var loose []videoFile
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		path := filepath.Join(folder, name)
+		if e.IsDir() {
+			if recognize.SkipDir(name) {
+				continue
+			}
+			items = append(items, itemsFromEntry(path, name)...)
+			continue
+		}
+		if !videoExts[strings.ToLower(filepath.Ext(name))] ||
+			isOptimizedSibling(name) || recognize.SkipFile(name) {
+			continue
+		}
+		f := videoFile{path: path}
+		if info, err := e.Info(); err == nil {
+			f.size = info.Size()
+		}
+		loose = append(loose, f)
+	}
+	return append(items, itemsFromLooseFiles(loose)...), nil
+}
+
+// fileGroup is the files of one immediate subfolder of an entry (or of the entry root),
+// already recognised, with the verdict that decides what the folder holds.
+type fileGroup struct {
+	dir     string // "" for files sitting directly in the entry
+	files   []videoFile
+	parsed  []recognize.Parsed
+	isShow  bool // any file carries a season or episode marker
+	ordinal bool // the names count films in a series ("Movie - 01"), not episodes
+}
+
+// itemsFromEntry turns one top-level directory into the media it holds. Its immediate
+// subfolders are classified on their own: those carrying episodes fold into a single show,
+// while a folder of films yields one media per file. An entry with no episodes anywhere is a
+// film - one media, unless its subfolders each name a different film.
+func itemsFromEntry(path, entry string) []importItem {
+	groups := groupEntryFiles(path)
+	if len(groups) == 0 {
+		return nil
+	}
+	var shows, films []fileGroup
+	for _, g := range groups {
+		if g.isShow {
+			shows = append(shows, g)
+		} else {
+			films = append(films, g)
+		}
+	}
+	folderCand := recognize.Candidate{
+		Source: recognize.FromFolder,
+		Parsed: entryTitle(entry, groups),
+	}
+	var items []importItem
+	if len(shows) > 0 {
+		items = append(items, showItem(entry, folderCand, shows))
+	}
+	for _, g := range films {
+		items = append(items, filmItems(entry, folderCand, g, len(shows) > 0)...)
+	}
+	return items
+}
+
+// groupEntryFiles walks an entry and buckets its videos by the immediate subfolder they sit
+// in, recognising each file on the way. Files deeper than one level are attributed to their
+// top subfolder: a release that nests further is still one run of episodes.
+func groupEntryFiles(path string) []fileGroup {
+	files, err := scanVideoFiles(path)
+	if err != nil {
+		return nil
+	}
+	byDir := map[string]*fileGroup{}
+	var order []string
 	for _, f := range files {
-		rel, err := filepath.Rel(folder, f.path)
+		rel, err := filepath.Rel(path, f.path)
 		if err != nil {
-			rel = filepath.Base(f.path)
+			continue
 		}
-		entry, dir := topEntry(rel)
-		p := recognize.FromPath(rel)
-		key := p.Title + "\x00" + strconv.Itoa(p.Year)
-		i, ok := idx[key]
+		dir := ""
+		if i := strings.IndexRune(rel, filepath.Separator); i >= 0 {
+			dir = rel[:i]
+		}
+		g, ok := byDir[dir]
 		if !ok {
-			i = len(items)
-			idx[key] = i
-			items = append(items, importItem{ID: groupID(key), Title: p.Title, Year: p.Year})
-			entries = append(entries, map[string]bool{})
+			g = &fileGroup{dir: dir}
+			byDir[dir] = g
+			order = append(order, dir)
 		}
-		it := &items[i]
+		p := recognize.FromPath(rel)
+		g.files = append(g.files, f)
+		g.parsed = append(g.parsed, p)
+		g.isShow = g.isShow || p.IsShow
+		g.ordinal = g.ordinal || recognize.IsMovieOrdinal(filepath.Base(rel)) ||
+			recognize.IsMovieOrdinal(dir)
+	}
+	sort.Strings(order)
+	out := make([]fileGroup, 0, len(order))
+	for _, dir := range order {
+		g := byDir[dir]
+		if g.ordinal { // "InuYasha Movies 1-4" counts films, so its numbers are not episodes
+			g.isShow = false
+		}
+		out = append(out, *g)
+	}
+	return out
+}
+
+// showItem folds every episode-bearing group of an entry into one media. Groups that are not
+// season folders are numbered as consecutive seasons - the plainest folder name first, since
+// a later season names itself with something extra ("InuYasha", then "InuYasha Kanketsu-hen").
+// Files with no episode number of their own become specials in season 0.
+func showItem(entry string, folder recognize.Candidate, groups []fileGroup) importItem {
+	if len(groups) > 1 {
+		sort.SliceStable(groups, func(i, j int) bool {
+			ti, tj := groupTitle(groups[i]), groupTitle(groups[j])
+			if len(ti) != len(tj) {
+				return len(ti) < len(tj)
+			}
+			return groups[i].dir < groups[j].dir
+		})
+	}
+	guessedSeasons := false
+	special := 0
+	var files []videoFile
+	var parsed []recognize.Parsed
+	for i, g := range groups {
+		for j := range g.parsed {
+			p := g.parsed[j]
+			if len(groups) > 1 && !recognize.HasExplicitSeason(nameOf(g.files[j])) &&
+				!recognize.IsSeasonDir(g.dir) {
+				p.Season = i + 1
+				guessedSeasons = true
+			}
+			if p.Episode == 0 { // an opening, an ending, an extra: a special, numbered in order
+				special++
+				p.Season, p.Episode = 0, special
+			}
+			files = append(files, g.files[j])
+			parsed = append(parsed, p)
+		}
+	}
+	cands := []recognize.Candidate{folder}
+	cands = append(cands, fileCandidates(parsed)...)
+	res := recognize.Best(cands, parsed, true)
+	if guessedSeasons && res.Confidence == recognize.High {
+		res.Confidence = recognize.Medium
+		res.Failed = append(res.Failed, recognize.CheckSeasonGuess)
+	}
+	return buildItem(entry, true, res, files, parsed)
+}
+
+// filmItems turns a group with no episodes into media. Several files with no part numbers are
+// several films when they sit in a folder of films, and one film split over discs when they
+// carry "CD1"/"CD2"; a subfolder that names its own film titles it.
+func filmItems(entry string, folder recognize.Candidate, g fileGroup, entryIsShow bool) []importItem {
+	if g.ordinal || (g.dir != "" && len(g.files) > 1 && !sameFilm(g.parsed)) {
+		out := make([]importItem, 0, len(g.files))
+		for i := range g.files {
+			res := recognize.Best([]recognize.Candidate{{Source: recognize.FromFile, Parsed: g.parsed[i]}},
+				g.parsed[i:i+1], false)
+			out = append(out, buildItem(entry, false, res, g.files[i:i+1], g.parsed[i:i+1]))
+		}
+		return out
+	}
+	cands := []recognize.Candidate{folder}
+	if g.dir != "" {
+		cands = append([]recognize.Candidate{{Source: recognize.FromSubfolder,
+			Parsed: recognize.ParseFolder(g.dir)}}, cands...)
+	}
+	cands = append(cands, fileCandidates(g.parsed)...)
+	// A film group living beside episodes cannot borrow the show's folder title.
+	if entryIsShow && g.dir != "" {
+		cands = cands[:1]
+	}
+	res := recognize.Best(cands, g.parsed, false)
+	return []importItem{buildItem(entry, false, res, g.files, g.parsed)}
+}
+
+// itemsFromLooseFiles groups the videos lying directly in the import root by what they
+// recognise to, so two files of one show merge into one media.
+func itemsFromLooseFiles(files []videoFile) []importItem {
+	idx := map[string]int{}
+	var keys []string
+	byKey := map[string][]int{}
+	parsed := make([]recognize.Parsed, len(files))
+	for i, f := range files {
+		p := recognize.FromPath(filepath.Base(f.path))
+		parsed[i] = p
+		key := strings.ToLower(p.Title) + "\x00" + strconv.Itoa(p.Year)
+		if _, ok := idx[key]; !ok {
+			idx[key] = len(keys)
+			keys = append(keys, key)
+		}
+		byKey[key] = append(byKey[key], i)
+	}
+	out := make([]importItem, 0, len(keys))
+	for _, key := range keys {
+		var group []videoFile
+		var gp []recognize.Parsed
+		isShow := false
+		for _, i := range byKey[key] {
+			group = append(group, files[i])
+			gp = append(gp, parsed[i])
+			isShow = isShow || parsed[i].IsShow
+		}
+		res := recognize.Best(fileCandidates(gp), gp, isShow)
+		it := buildItem(filepath.Base(group[0].path), false, res, group, gp)
+		it.IsShow = isShow
+		out = append(out, it)
+	}
+	return out
+}
+
+// buildItem assembles the page row: the recognised identity plus what the import would carry
+// along - the file count, the bytes, sidecar subtitles and a poster.
+func buildItem(entry string, isShow bool, res recognize.Result, files []videoFile, parsed []recognize.Parsed) importItem {
+	it := importItem{
+		Entry: entry, Dir: len(files) > 0 && filepath.Base(files[0].path) != entry,
+		Title: res.Parsed.Title, Year: res.Parsed.Year, IsShow: isShow,
+		Confidence: string(res.Confidence),
+	}
+	for _, c := range res.Failed {
+		it.Doubts = append(it.Doubts, string(c))
+	}
+	for i, f := range files {
 		it.Files++
 		it.Bytes += f.size
 		it.SubCount += len(importer.FindSidecarSubtitles(f.path))
 		if !it.HasPoster && importer.FindSidecarPoster(f.path) != "" {
 			it.HasPoster = true
 		}
-		it.Dir = it.Dir || dir
-		entries[i][entry] = true
 		it.paths = append(it.paths, f.path)
-		it.probes = append(it.probes, db.Import{Title: p.Title, Year: p.Year, Season: p.Season, Episode: p.Episode})
+		it.probes = append(it.probes, db.Import{Title: it.Title, Year: it.Year,
+			Season: parsed[i].Season, Episode: parsed[i].Episode})
 	}
-	for i := range items {
-		items[i].Entry = entryLabel(entries[i])
-	}
-	return items, nil
+	it.ID = groupID(entry + "\x00" + it.Title + "\x00" + strconv.Itoa(it.Year))
+	return it
 }
 
-// entryLabel names where a media came from: the entry itself when it lives in one, or a
-// count when its files are spread over several.
-func entryLabel(entries map[string]bool) string {
-	if len(entries) == 1 {
-		for name := range entries {
-			return name
+// entryTitle reads the entry folder name, then drops any release-group tag its own files
+// wear in brackets - "Call of the Night LostYears" beside "[LostYears] Call of the Night ..."
+// is the group's name stuck to the folder, not part of the title.
+func entryTitle(entry string, groups []fileGroup) recognize.Parsed {
+	p := recognize.ParseFolder(entry)
+	tags := map[string]bool{}
+	for _, g := range groups {
+		for _, f := range g.files {
+			for _, tag := range recognize.BracketTags(filepath.Base(f.path)) {
+				tags[strings.ToLower(tag)] = true
+			}
 		}
 	}
-	return strconv.Itoa(len(entries)) + " entries"
+	words := strings.Fields(p.Title)
+	for len(words) > 1 && tags[strings.ToLower(words[len(words)-1])] {
+		words = words[:len(words)-1]
+	}
+	p.Title = strings.Join(words, " ")
+	return p
 }
 
-// topEntry splits a path relative to the import folder into its top-level entry and whether
-// that entry is a directory (the file sits deeper) or the loose video file itself.
-func topEntry(rel string) (string, bool) {
-	if i := strings.IndexRune(rel, filepath.Separator); i >= 0 {
-		return rel[:i], true
+// fileCandidates offers the titles the files themselves suggest, most common first.
+func fileCandidates(parsed []recognize.Parsed) []recognize.Candidate {
+	count := map[string]int{}
+	first := map[string]recognize.Parsed{}
+	var order []string
+	for _, p := range parsed {
+		if strings.TrimSpace(p.Title) == "" {
+			continue
+		}
+		key := strings.ToLower(p.Title)
+		if _, ok := first[key]; !ok {
+			first[key] = p
+			order = append(order, key)
+		}
+		count[key]++
 	}
-	return rel, false
+	sort.SliceStable(order, func(i, j int) bool { return count[order[i]] > count[order[j]] })
+	out := make([]recognize.Candidate, 0, len(order))
+	for _, key := range order {
+		out = append(out, recognize.Candidate{Source: recognize.FromFile, Parsed: first[key]})
+	}
+	return out
 }
+
+// groupTitle names a group by its folder, falling back to what its files agree on.
+func groupTitle(g fileGroup) string {
+	if g.dir != "" {
+		return recognize.ParseFolder(g.dir).Title
+	}
+	if len(g.parsed) > 0 {
+		return g.parsed[0].Title
+	}
+	return ""
+}
+
+// sameFilm reports whether every file of a group tells the same film: one title, and either
+// a single file or numbered parts.
+func sameFilm(parsed []recognize.Parsed) bool {
+	return recognize.TitlesAgree(parsed)
+}
+
+func nameOf(f videoFile) string { return filepath.Base(f.path) }
 
 // groupID is a short stable hash of an item's identity, so the page can hand an item back
 // for import without ever sending a filesystem path.

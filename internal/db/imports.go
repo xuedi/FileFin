@@ -61,6 +61,10 @@ type Import struct {
 	// is a vacuum: media staged there is meant to be cleared after copy. Defaults to
 	// false so producers that import from a library someone keeps leave originals be.
 	DeleteAfter bool `json:"deleteAfter"`
+	// Confidence is how much recognition trusts this row's title and year: "high",
+	// "medium" or "low". It drives nothing in the importer - it exists so the admin
+	// knows which rows are worth a second look before pressing Import.
+	Confidence string `json:"confidence"`
 	// Origin records which front stage produced the row ("folder", "upload", "plex").
 	// The importer and preCheck page treat every row the same, but the UI uses it to
 	// drive source-specific affordances (e.g. Plex locks delete-after off).
@@ -76,11 +80,11 @@ type Import struct {
 func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) {
 	res, err := pool.ExecContext(ctx,
 		`INSERT INTO imports
-            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, subtitles, origin)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, subtitles, origin, confidence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		imp.CategoryID, imp.SourcePath, imp.Filename, imp.Title, imp.Year,
 		imp.Status, imp.APIJSON, imp.Poster, imp.Copied, imp.Total, imp.Error, imp.DeleteAfter,
-		imp.Season, imp.Episode, imp.Subtitles, imp.Origin)
+		imp.Season, imp.Episode, imp.Subtitles, imp.Origin, imp.Confidence)
 	if err != nil {
 		return 0, fmt.Errorf("insert import %q: %w", imp.SourcePath, err)
 	}
@@ -90,18 +94,19 @@ func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) 
 // importSelect reads every import row joined to its category so Category carries the
 // live category name (relpath); category is no longer stored on the row. A LEFT JOIN
 // keeps rows whose category_id is unset, yielding an empty Category.
-const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.subtitles, i.origin FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
+const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.subtitles, i.origin, i.confidence FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
 
 func scanImport(rows interface{ Scan(...any) error }) (Import, error) {
 	var imp Import
-	var category, subtitles, origin sql.NullString
+	var category, subtitles, origin, confidence sql.NullString
 	err := rows.Scan(&imp.ID, &imp.CategoryID, &category, &imp.SourcePath, &imp.Filename,
 		&imp.Title, &imp.Year, &imp.Status, &imp.APIJSON, &imp.Poster, &imp.Copied, &imp.Total, &imp.Error,
-		&imp.DeleteAfter, &imp.Season, &imp.Episode, &subtitles, &origin)
+		&imp.DeleteAfter, &imp.Season, &imp.Episode, &subtitles, &origin, &confidence)
 	imp.HasPoster = imp.Poster != ""
 	imp.Category = category.String
 	imp.Subtitles = subtitles.String
 	imp.Origin = origin.String
+	imp.Confidence = confidence.String
 	imp.SubCount = countJSONArray(imp.Subtitles)
 	imp.HasSubtitles = imp.SubCount > 0
 	return imp, err

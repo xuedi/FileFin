@@ -2,6 +2,11 @@
   import { getContext } from 'svelte'
   import { treeMarker, humanSize } from '../../lib/app.svelte.js'
   const app = getContext('app')
+
+  // confidenceHint spells out why a row is not fully trusted, so the marker explains itself
+  // instead of being a number the admin has to decode.
+  const confidenceHint = (item) =>
+    item.doubts?.length ? `Worth a look: ${item.doubts.join('; ')}` : 'Every check passed'
 </script>
 
 <div class="ff-page-head">
@@ -33,7 +38,9 @@
     <table class="table is-fullwidth">
       <thead>
         <tr>
+          <th title="How much recognition trusts this row; least trusted first">Sure</th>
           <th>Entry</th>
+          <th title="Whether this was recognised as a show or a film">Kind</th>
           <th>Title</th>
           <th>Year</th>
           <th title="Video files that make up this media">Media files</th>
@@ -48,7 +55,13 @@
       <tbody>
         {#each app.importItems as item (item.id)}
           <tr>
+            <td class="has-text-centered">
+              <span class="tag is-small ff-confidence-{item.confidence}" title={confidenceHint(item)}>
+                {item.confidence || 'n/a'}
+              </span>
+            </td>
             <td class="ff-import-entry" title={item.entry}>{item.entry}{item.dir ? '/' : ''}</td>
+            <td class="has-text-grey">{item.isShow ? 'show' : 'film'}</td>
             <td><input class="input is-small ff-inline-input" bind:value={item.title} /></td>
             <td><input class="input is-small ff-year-input" type="text" bind:value={item.year} /></td>
             <td>{item.files}</td>
@@ -75,7 +88,7 @@
           </tr>
         {/each}
         {#if app.importItems.length === 0}
-          <tr><td colspan="10" class="has-text-grey">No media found in the import folder.</td></tr>
+          <tr><td colspan="12" class="has-text-grey">No media found in the import folder.</td></tr>
         {/if}
       </tbody>
     </table>

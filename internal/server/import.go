@@ -139,10 +139,13 @@ func scanVideoFiles(root string) ([]videoFile, error) {
 			return nil
 		}
 		if d.IsDir() {
+			if path != root && recognize.SkipDir(name) {
+				return fs.SkipDir // extras, samples and cover scans are not the media
+			}
 			return nil
 		}
-		if isOptimizedSibling(name) {
-			return nil // never stage a derived direct-play copy for import
+		if isOptimizedSibling(name) || recognize.SkipFile(name) {
+			return nil // never stage a derived copy, a teaser or a trailer for import
 		}
 		if videoExts[strings.ToLower(filepath.Ext(name))] {
 			f := videoFile{path: path}
