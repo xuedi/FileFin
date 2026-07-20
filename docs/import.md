@@ -115,7 +115,13 @@ stateDiagram-v2
 
 `delete_after` makes the source a **vacuum**: when set, the importer deletes the source
 file once the copy and `media` row are committed (best-effort - a failed delete is logged,
-not fatal, because the import already succeeded). It defaults to false so future producers
+not fatal, because the import already succeeded). It removes the whole footprint, not just
+the video: the sidecar subtitles the row carried and the poster beside it (both already
+copied into the media folder) go too, and then every parent folder the removal left
+**empty** is pruned upwards, stopping at the first folder that still holds something and
+never removing the import folder itself. A folder that still holds a not-yet-imported
+episode or an unstaged file is therefore always kept, while a fully imported import folder
+is left empty rather than littered with husk directories and orphaned subtitles. It defaults to false so future producers
 that import from a library someone keeps (Plex/Jellyfin) leave originals intact. The folder
 assessment page exposes it as a per-batch checkbox (defaulting on) whose value is written
 onto the staged rows when **Start import** is pressed. For the **Plex** source it is forced

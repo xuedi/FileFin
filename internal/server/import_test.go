@@ -283,6 +283,81 @@ func TestDeleteAfterRemovesSource(t *testing.T) {
 	}
 }
 
+func TestDeleteAfterClearsFolderAndSidecars(t *testing.T) {
+	imp := t.TempDir()
+	dir := filepath.Join(imp, "The.Matrix.1999.1080p", "release")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "(1999) The Matrix.mkv")
+	sub := filepath.Join(dir, "(1999) The Matrix.eng.srt")
+	poster := filepath.Join(dir, "poster.jpg")
+	for _, p := range []string{src, sub, poster} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	do(t, h, "POST", "/api/admin/import/start", `{"deleteAfter":true}`, admin)
+
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 staged row, got %+v", rows)
+	}
+	s.importOne(ctx, pool, rows[0])
+
+	// Everything the video came with is gone, and the folders it emptied with it - but
+	// never the import folder itself.
+	for _, p := range []string{src, sub, poster, dir, filepath.Dir(dir)} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s should have been vacuumed, stat err = %v", p, err)
+		}
+	}
+	if _, err := os.Stat(imp); err != nil {
+		t.Fatalf("import folder must survive: %v", err)
+	}
+}
+
+// A folder still holding a video that has not been imported yet is kept: os.Remove refuses
+// a non-empty directory, so the prune stops there.
+func TestDeleteAfterKeepsFolderWithRemainingMedia(t *testing.T) {
+	imp := t.TempDir()
+	dir := filepath.Join(imp, "Show")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "Show - S01E01.mkv")
+	other := filepath.Join(dir, "Show - S01E02.mkv")
+	for _, p := range []string{src, other} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	do(t, h, "POST", "/api/admin/import/start", `{"deleteAfter":true}`, admin)
+
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	for _, r := range rows {
+		if r.SourcePath == src {
+			s.importOne(ctx, pool, r)
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("the not-yet-imported episode must survive: %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("a folder that still holds media must survive: %v", err)
+	}
+}
+
 func TestImportKeepsSourceByDefault(t *testing.T) {
 	imp := t.TempDir()
 	src := filepath.Join(imp, "(1982) Blade Runner.mkv")

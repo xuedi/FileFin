@@ -77,12 +77,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown category", http.StatusBadRequest)
 		return
 	}
-	s.mu.RLock()
-	importFolder := ""
-	if s.cfg != nil {
-		importFolder = s.cfg.ImportFolder
-	}
-	s.mu.RUnlock()
+	importFolder := s.importFolder()
 	if importFolder == "" {
 		http.Error(w, "no import folder configured", http.StatusBadRequest)
 		return
@@ -474,10 +469,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	// the source if the row asked for it. Best-effort - the import already succeeded, so
 	// a failed delete is logged but does not flip the row to error.
 	if row.DeleteAfter {
-		if err := os.Remove(row.SourcePath); err != nil {
-			s.logger().For(logging.Import).Error("could not remove source after import: "+row.Filename,
-				logging.Fields{"source": row.SourcePath, "error": err.Error()})
-		}
+		s.vacuumSource(row)
 	}
 
 	_ = db.UpdateImportProgress(ctx, pool, row.ID, db.StatusDone, finalTotal, finalTotal, "")
@@ -490,4 +482,78 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	s.logger().For(logging.Import).Info(fmt.Sprintf("imported %s into %s", row.Title, row.Category),
 		logging.Fields{"title": row.Title, "category": row.Category, "path": target,
 			"bytes": finalTotal, "deletedSource": row.DeleteAfter})
+}
+
+// vacuumSource removes everything this row consumed from the source tree - the video, the
+// sidecar subtitles that rode along, and a per-video poster - then prunes the folders the
+// removal emptied, so an import folder that has been fully imported is left empty rather
+// than littered with husk directories. Every step is best-effort: the import has already
+// succeeded and a leftover file is not worth failing it over.
+func (s *Server) vacuumSource(row db.Import) {
+	if err := os.Remove(row.SourcePath); err != nil {
+		s.logger().For(logging.Import).Error("could not remove source after import: "+row.Filename,
+			logging.Fields{"source": row.SourcePath, "error": err.Error()})
+	}
+	for _, p := range sourceResidue(row) {
+		_ = os.Remove(p)
+	}
+	s.pruneEmptyDirs(filepath.Dir(row.SourcePath))
+}
+
+// sourceResidue lists the files that came with the source video and now exist as copies in
+// the media folder: the sidecar subtitles recorded on the row (both halves of a VobSub pair)
+// and the poster, per-video or folder-level. Only files sitting in the video's own directory
+// count, so a poster picked up further up the tree is never touched.
+func sourceResidue(row db.Import) []string {
+	dir := filepath.Dir(row.SourcePath)
+	var out []string
+	if row.Subtitles != "" {
+		var subs []importer.Subtitle
+		if json.Unmarshal([]byte(row.Subtitles), &subs) == nil {
+			for _, sub := range subs {
+				out = append(out, sub.Path)
+				if ext := strings.ToLower(filepath.Ext(sub.Path)); ext == ".sub" || ext == ".idx" {
+					base := strings.TrimSuffix(sub.Path, filepath.Ext(sub.Path))
+					out = append(out, base+".sub", base+".idx")
+				}
+			}
+		}
+	}
+	if row.Poster != "" {
+		out = append(out, row.Poster)
+	}
+	kept := out[:0]
+	for _, p := range out {
+		if filepath.Dir(p) == dir {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
+// pruneEmptyDirs walks up from dir removing each folder that the vacuum left empty, and
+// stops at the first one that still holds something. The import folder itself is the floor
+// and is never removed; a source outside it (an upload session dir) is left to its own
+// cleanup. os.Remove refuses a non-empty directory, so nothing that still holds media -
+// a not-yet-imported episode, an unstaged file - can be taken out from under it.
+func (s *Server) pruneEmptyDirs(dir string) {
+	root := filepath.Clean(s.importFolder())
+	if root == "" || root == "." {
+		return
+	}
+	for dir = filepath.Clean(dir); dir != root && strings.HasPrefix(dir, root+string(filepath.Separator)); dir = filepath.Dir(dir) {
+		if os.Remove(dir) != nil {
+			return
+		}
+	}
+}
+
+// importFolder returns the configured server path media is imported from.
+func (s *Server) importFolder() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg == nil {
+		return ""
+	}
+	return s.cfg.ImportFolder
 }
