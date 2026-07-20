@@ -22,6 +22,7 @@ subsystem you are working in.
 | [`playback.md`](playback.md) | Video player | Direct-play (by probed format) vs HLS transcode, subtitles |
 | [`mediaformat.md`](mediaformat.md) | Media format & categories | On-disk layout, the `config.json` discriminator, the category tree and its markers, probed-format truth |
 | [`library.md`](library.md) | Library & cache | The media cache, rebuild, browsing, the admin library list and category page, naming formats |
+| [`tags.md`](tags.md) | Tags | Hand-curated tags vs. API genres, the `meta.json` version fold, the sidebar accordion, tag search, the admin tag manager |
 | [`playback-state.md`](playback-state.md) | Playback state | Per-user state in `meta.json`: resume pointer, watched flag, favorite, rating |
 | [`mdl.md`](mdl.md) | MyDramaList import | Scrape a public MDL list, match to the library, import watched + 1-10 ratings |
 | [`mal.md`](mal.md) | MyAnimeList import | Scrape a public MAL list (load.json), shared year-strict matcher, category scope |

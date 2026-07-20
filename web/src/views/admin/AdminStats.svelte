@@ -47,6 +47,7 @@
     bar('containers', s.containers)
     bar('video', s.videoCodecs)
     bar('audio', s.audioCodecs)
+    bar('tags', s.tags)
     doughnut('play', s.playability)
     return () => {
       charts.forEach((c) => c.destroy())
@@ -141,6 +142,15 @@
         {@render counts(s.audioCodecs)}
       </div>
     </div>
+    {#if s.tags?.length}
+      <div class="column is-half">
+        <div class="box">
+          <h2 class="title is-6">Tags</h2>
+          <div class="ff-chart"><canvas bind:this={canvases.tags}></canvas></div>
+          {@render counts(s.tags)}
+        </div>
+      </div>
+    {/if}
   </div>
 {:else}
   <p class="has-text-grey has-text-centered ff-loading">Loading...</p>

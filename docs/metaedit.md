@@ -20,7 +20,9 @@ an admin might want to correct:
   director, writer, content rating, awards, box office, IMDb id.
 - **Ratings** - IMDb, Rotten Tomatoes, and Metacritic.
 - **Cast** - the actor list (one per line).
-- **Genres** - the tag list (comma separated, stored lowercase).
+- **Genres and tags** - two comma-separated lists, both stored lowercase: the genres the
+  metadata source supplied (replaced on every re-match) and the hand-curated tags no agent ever
+  writes (see `tags.md`).
 - **Poster** - a preview with a replace/upload control.
 
 Two parts of `meta.json` are never touched by the editor: the ffprobe **technical** block

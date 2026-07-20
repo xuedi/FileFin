@@ -32,6 +32,6 @@ func MetaFromJellyfin(item jellyfin.Item) Meta {
 	}
 	b.rate("nfo", d.Rating)
 	b.m.Actors = append(b.m.Actors, d.Actors...)
-	b.addTags(d.Genres)
+	b.addGenres(d.Genres)
 	return b.build()
 }

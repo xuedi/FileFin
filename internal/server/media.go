@@ -61,6 +61,7 @@ type mediaDetail struct {
 	Ratings         []pair     `json:"ratings"`
 	Technical       []pair     `json:"technical"`
 	Actors          []string   `json:"actors"`
+	Genres          []string   `json:"genres"`
 	Tags            []string   `json:"tags"`
 	Watched         bool       `json:"watched"`
 	Favorite        bool       `json:"favorite"`
@@ -269,7 +270,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 		ID: m.ID, Title: m.Title, Year: m.Year,
 		Description: m.Description, Plot: m.Plot, HasPoster: m.Poster != "",
 		Files: []fileInfo{}, Metadata: []pair{}, Ratings: []pair{}, Technical: []pair{},
-		Actors: []string{}, Tags: []string{},
+		Actors: []string{}, Genres: []string{}, Tags: []string{},
 	}
 
 	// One meta.json read yields both the rich fields and the per-user state. The cache
@@ -280,6 +281,9 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	d.Technical = technicalPairs(meta.Technical)
 	if meta.Actors != nil {
 		d.Actors = meta.Actors
+	}
+	if meta.Genres != nil {
+		d.Genres = meta.Genres
 	}
 	if meta.Tags != nil {
 		d.Tags = meta.Tags

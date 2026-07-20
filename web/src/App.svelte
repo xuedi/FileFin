@@ -7,6 +7,7 @@
   import LibraryView from './views/library/LibraryView.svelte'
   import TokPlayer from './views/library/TokPlayer.svelte'
   import AdminLibrary from './views/admin/AdminLibrary.svelte'
+  import AdminTags from './views/admin/AdminTags.svelte'
   import AdminCategory from './views/admin/AdminCategory.svelte'
   import AdminImport from './views/admin/AdminImport.svelte'
   import ImportWork from './views/admin/import/ImportWork.svelte'
@@ -96,16 +97,48 @@
     <aside class="menu ff-sidebar">
       <ul class="menu-list">
         {#if app.view === 'library'}
-          <li><a href={null} class:is-active={app.homeCategory === ''} onclick={() => app.go('/')}>Home</a></li>
-          {#each app.homeTree as c}
-            <li><a href={null} class:is-active={app.homeCategory === c.name} onclick={() => app.go('/category/' + c.id)}>{treeMarker(c._depth)}{c.alias}</a></li>
-          {/each}
+          <li><a href={null} class:is-active={app.libMode === 'home'} onclick={() => app.go('/')}>Home</a></li>
+          <li>
+            <button type="button" class="ff-acc-head" class:is-open={app.sidebarOpen.categories} onclick={() => app.toggleSidebar('categories')}>
+              <span class="ff-acc-chevron">›</span>Categories
+            </button>
+            {#if app.sidebarOpen.categories}
+              <ul class="ff-acc-body">
+                {#each app.homeTree as c}
+                  <li>
+                    <a href={null} class:is-active={app.homeCategory === c.name} onclick={() => app.go('/category/' + c.id)}>
+                      {treeMarker(c._depth)}{c.alias}<span class="ff-side-count">{c.media}</span>
+                    </a>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </li>
+          <li>
+            <button type="button" class="ff-acc-head" class:is-open={app.sidebarOpen.tags} onclick={() => app.toggleSidebar('tags')}>
+              <span class="ff-acc-chevron">›</span>Tags
+            </button>
+            {#if app.sidebarOpen.tags}
+              <ul class="ff-acc-body">
+                {#each app.tags as t}
+                  <li>
+                    <a href={null} class:is-active={app.activeTag === t.tag} onclick={() => app.goTag(t.tag)}>
+                      {t.tag}<span class="ff-side-count">{t.count}</span>
+                    </a>
+                  </li>
+                {:else}
+                  <li><span class="ff-acc-empty">No tags yet</span></li>
+                {/each}
+              </ul>
+            {/if}
+          </li>
         {:else if app.view === 'settings'}
           <li><a href={null} class="is-active">Account</a></li>
         {:else}
           <li><a href={null} class:is-active={app.adminView === 'dashboard'} onclick={() => app.go('/admin/dashboard')}>Dashboard</a></li>
           <li><a href={null} class:is-active={app.adminView === 'stats'} onclick={() => app.go('/admin/stats')}>Statistics</a></li>
           <li><a href={null} class:is-active={app.adminView === 'library'} onclick={() => app.openAdminLibrary()}>Library</a></li>
+          <li><a href={null} class:is-active={app.adminView === 'tags'} onclick={() => app.go('/admin/tags')}>Tags</a></li>
           <li><a href={null} class:is-active={app.adminView === 'import'} onclick={() => app.openAdminImport()}>Import</a></li>
           <li><a href={null} class:is-active={app.adminView === 'users'} onclick={() => app.go('/admin/users')}>Users</a></li>
           <li><a href={null} class:is-active={app.adminView === 'unhealthy'} onclick={() => app.go('/admin/unhealthy')}>Unhealthy media</a></li>
@@ -126,6 +159,8 @@
         <AdminCategory />
       {:else if app.adminView === 'library'}
         <AdminLibrary />
+      {:else if app.adminView === 'tags'}
+        <AdminTags />
       {:else if app.adminView === 'import' && app.importPage === ''}
         <AdminImport />
       {:else if app.adminView === 'import'}

@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"filefin/internal/db"
+	"filefin/internal/importer"
 	"filefin/internal/library"
 	"filefin/internal/logging"
 )
@@ -15,7 +16,9 @@ import (
 //
 //	1: denormalized facets (media.{language,country,director,writer} + media_facets) and the
 //	   user_state mirror, all re-derived from meta.json
-const cacheDataVersion = 1
+//	2: the facet kinds split - genres moved from media_facets kind "tag" to "genre", leaving
+//	   "tag" to the curated tags, and every meta.json was normalised to version 2
+const cacheDataVersion = 2
 
 // ensureDB returns the cache pool, building it on the fly when needed: it opens the
 // SQLite cache once, runs the schema (idempotent), and - when the categories table is
@@ -76,6 +79,12 @@ func (s *Server) ensureDB(ctx context.Context) (*sql.DB, error) {
 // A fresh cache is already populated by import/rebuild, so the pass finds nothing and just
 // stamps the version.
 func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string) {
+	if v, err := db.SchemaVersion(ctx, pool); err != nil || v >= cacheDataVersion {
+		return
+	}
+	s.backfillMu.Lock()
+	defer s.backfillMu.Unlock()
+	// Re-check under the lock: whoever held it may have just finished the pass.
 	v, err := db.SchemaVersion(ctx, pool)
 	if err != nil || v >= cacheDataVersion {
 		return
@@ -84,13 +93,16 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 	if err != nil {
 		return
 	}
-	n := 0
+	n, upgraded := 0, 0
 	for _, c := range cats {
 		for _, sm := range scanCategoryMedia(dataDir, c) {
 			s.bestEffort(db.SetMediaFacets(ctx, pool, sm.media.ID,
 				sm.media.Language, sm.media.Country, sm.media.Director, sm.media.Writer), "backfill media facets")
-			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, sm.media.ID, sm.actors, sm.tags), "backfill media facets")
+			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, sm.media.ID, sm.actors, sm.genres, sm.tags), "backfill media facets")
 			s.bestEffort(db.ReplaceUserStateForMedia(ctx, pool, sm.media.ID, sm.userState), "backfill user state")
+			if s.upgradeMetaFile(sm.media.Path) {
+				upgraded++
+			}
 			n++
 		}
 	}
@@ -99,5 +111,20 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 		return
 	}
 	s.logger().For(logging.Backend).Info("backfilled search facets and playback state into cache",
-		logging.Fields{"media": n, "version": cacheDataVersion})
+		logging.Fields{"media": n, "metaUpgraded": upgraded, "version": cacheDataVersion})
+}
+
+// upgradeMetaFile rewrites one folder's meta.json in the current shape when it is still
+// stored in a pre-version-2 one (genres under the old "tags" key). ReadMeta folds a legacy
+// file for every reader anyway, so this only settles what is on disk; a failure is harmless
+// and simply leaves the file legacy.
+func (s *Server) upgradeMetaFile(folder string) bool {
+	if !importer.NeedsUpgrade(folder) {
+		return false
+	}
+	if _, err := s.metaMgr.Update(folder, func(m importer.Meta) importer.Meta { return m }); err != nil {
+		s.bestEffort(err, "upgrade meta.json")
+		return false
+	}
+	return true
 }

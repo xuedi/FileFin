@@ -1,8 +1,35 @@
 <script>
-  import { getContext } from 'svelte'
+  import { getContext, tick } from 'svelte'
   import { episodeLabel } from '../../lib/app.svelte.js'
   import Player from './Player.svelte'
   const app = getContext('app')
+
+  // The inline tag editor is local to this page: only the stored list lives on AppState.
+  let tagInputOpen = $state(false)
+  let newTag = $state('')
+  let tagInputEl = $state(null)
+
+  async function openTagInput() {
+    tagInputOpen = true
+    await tick()
+    tagInputEl?.focus()
+  }
+
+  function closeTagInput() {
+    tagInputOpen = false
+    newTag = ''
+  }
+
+  // Enter commits and keeps the field open for the next tag; Escape abandons it.
+  function onTagKey(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      app.addTag(newTag)
+      newTag = ''
+    } else if (e.key === 'Escape') {
+      closeTagInput()
+    }
+  }
 </script>
 
 {#if app.detail}
@@ -49,11 +76,40 @@
       {/if}
 
       {#if detail.description}<p>{detail.description}</p>{/if}
-      {#if detail.tags.length}
+      {#if detail.genres.length}
         <div class="tags ff-tags">
-          {#each detail.tags as t}
-            <a href={null} class="tag" onclick={() => app.go('/search?field=genre&q=' + encodeURIComponent(t))}>{t}</a>
+          {#each detail.genres as g}
+            <a href={null} class="tag" onclick={() => app.go('/search?field=genre&q=' + encodeURIComponent(g))}>{g}</a>
           {/each}
+        </div>
+      {/if}
+      {#if detail.tags.length || app.me?.admin}
+        <div class="tags ff-tags ff-usertags">
+          {#each detail.tags as t}
+            <span class="tag is-link is-light">
+              <a href={null} onclick={() => app.goTag(t)}>{t}</a>
+              {#if app.me?.admin}
+                <button class="delete is-small" aria-label={'Remove tag ' + t} onclick={() => app.removeTag(t)}></button>
+              {/if}
+            </span>
+          {/each}
+          {#if app.me?.admin}
+            {#if tagInputOpen}
+              <input
+                class="input is-small ff-tag-input"
+                list="ff-tag-vocab"
+                placeholder="tag, then Enter"
+                bind:value={newTag}
+                bind:this={tagInputEl}
+                onkeydown={onTagKey}
+                onblur={closeTagInput} />
+              <datalist id="ff-tag-vocab">
+                {#each app.tags as t}<option value={t.tag}></option>{/each}
+              </datalist>
+            {:else}
+              <button class="tag ff-tag-add" title="Add a tag" onclick={openTagInput}>+ tag</button>
+            {/if}
+          {/if}
         </div>
       {/if}
 

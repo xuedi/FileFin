@@ -33,8 +33,8 @@ func TestMetaFromOMDb(t *testing.T) {
 	if m.Ratings["imdb"] != "8.1 (835,123 votes)" || m.Ratings["rottenTomatoes"] != "89%" || m.Ratings["metacritic"] != "84/100" {
 		t.Fatalf("ratings: %+v", m.Ratings)
 	}
-	if len(m.Tags) != 2 || m.Tags[0] != "sci-fi" {
-		t.Fatalf("tags: %+v", m.Tags)
+	if len(m.Genres) != 2 || m.Genres[0] != "sci-fi" {
+		t.Fatalf("genres: %+v", m.Genres)
 	}
 	if len(m.Actors) != 2 {
 		t.Fatalf("actors: %+v", m.Actors)
@@ -104,7 +104,7 @@ func TestMergeMetaIsAdditive(t *testing.T) {
 		Metadata: map[string]string{"release": "2001-06-25", "language": "English"},
 		Ratings:  map[string]string{"imdb": "8.1", "plex": "9.9"},
 		Actors:   []string{"Someone Else"},
-		Tags:     []string{"drama"},
+		Genres:   []string{"drama"},
 	}
 	got := MergeMeta(base, add)
 
@@ -124,7 +124,7 @@ func TestMergeMetaIsAdditive(t *testing.T) {
 	if len(got.Actors) != 2 || got.Actors[0] != "Jane" {
 		t.Fatalf("actors should be kept, not replaced: %+v", got.Actors)
 	}
-	if len(got.Tags) != 1 || got.Tags[0] != "drama" {
-		t.Fatalf("missing tags should be filled: %+v", got.Tags)
+	if len(got.Genres) != 1 || got.Genres[0] != "drama" {
+		t.Fatalf("missing genres should be filled: %+v", got.Genres)
 	}
 }

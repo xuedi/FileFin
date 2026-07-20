@@ -77,6 +77,11 @@ type Server struct {
 	// probeStart guards the single format-probe agent goroutine.
 	probeStart sync.Once
 
+	// backfillMu serializes the version-gated cache backfill. ensureDB runs on every request,
+	// so without it a burst of concurrent first requests each start the whole pass before any
+	// of them stamps the new version - on a large library, the same walk several times over.
+	backfillMu sync.Mutex
+
 	// discovery orchestration. The supervisor (optimizer pattern) re-arms its ticker on a
 	// reconfigDisc signal when the interval setting changes. maintMu serializes the cache
 	// mutations of a discovery tick against a full rebuild so the two never overlap;
@@ -263,6 +268,7 @@ func (s *Server) handler() http.Handler {
 		// End-user library, detail, status, and playback.
 		mux.Handle("GET /api/home", s.auth(s.handleHome))
 		mux.Handle("GET /api/search", s.auth(s.handleSearch))
+		mux.Handle("GET /api/tags", s.auth(s.handleListTags))
 		mux.Handle("GET /api/category/{id}/media", s.auth(s.handleCategoryMedia))
 		mux.Handle("GET /api/media/{id}", s.auth(s.handleMediaDetail))
 		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
@@ -311,6 +317,10 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/admin/media/{id}/meta", s.admin(s.handleMetaEdit))
 		mux.Handle("POST /api/admin/media/{id}/meta", s.admin(s.handleSaveMeta))
 		mux.Handle("POST /api/admin/media/{id}/poster", s.admin(s.handleUploadPoster))
+		mux.Handle("POST /api/admin/media/{id}/tags", s.admin(s.handleSetMediaTags))
+		mux.Handle("GET /api/admin/tags", s.admin(s.handleAdminTags))
+		mux.Handle("PUT /api/admin/tags/{tag}", s.admin(s.handleRenameTag))
+		mux.Handle("DELETE /api/admin/tags/{tag}", s.admin(s.handleDeleteTag))
 		mux.Handle("GET /api/admin/media/{id}/match", s.admin(s.handleMatchContext))
 		mux.Handle("POST /api/admin/media/{id}/omdb-search", s.admin(s.handleOmdbSearch))
 		mux.Handle("POST /api/admin/media/{id}/match", s.admin(s.handleApplyMatch))

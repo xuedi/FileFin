@@ -109,10 +109,16 @@
       </div>
 
       <div class="box ff-settings-card">
-        <h3 class="title is-6">Genres</h3>
+        <h3 class="title is-6">Genres and tags</h3>
+        <div class="field">
+          <label class="label is-small" for="ff-edit-genres">Genres (comma separated)</label>
+          <input id="ff-edit-genres" class="input" type="text" bind:value={f.genres} />
+          <p class="help">Supplied by the metadata source; replaced whenever this item is re-matched.</p>
+        </div>
         <div class="field">
           <label class="label is-small" for="ff-edit-tags">Tags (comma separated)</label>
           <input id="ff-edit-tags" class="input" type="text" bind:value={f.tags} />
+          <p class="help">Your own classification. Never touched by the metadata agents.</p>
         </div>
       </div>
 

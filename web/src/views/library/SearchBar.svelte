@@ -9,6 +9,7 @@
     { value: 'description', label: 'Description' },
     { value: 'cast', label: 'Cast' },
     { value: 'genre', label: 'Genre' },
+    { value: 'tag', label: 'Tags' },
     { value: 'language', label: 'Language' },
     { value: 'director', label: 'Director' },
     { value: 'writer', label: 'Writer' },

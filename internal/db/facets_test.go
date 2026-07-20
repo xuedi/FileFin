@@ -34,24 +34,32 @@ func TestMediaFacets(t *testing.T) {
 		t.Fatalf("scalar facets not round-tripped: %+v", got)
 	}
 
-	// Multivalued facets land in media_facets, tagged by kind, skipping empties.
+	// Multivalued facets land in media_facets, tagged by kind, skipping empties. Genres and
+	// curated tags are distinct kinds, so one never shows up under the other's scope.
 	if err := ReplaceMediaFacets(ctx, pool, "m1",
-		[]string{"Keanu Reeves", "Carrie-Anne Moss", ""}, []string{"action", "sci-fi"}); err != nil {
+		[]string{"Keanu Reeves", "Carrie-Anne Moss", ""}, []string{"action", "sci-fi"},
+		[]string{"rewatch"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := countFacets(t, ctx, pool, "m1", "actor"); n != 2 {
 		t.Fatalf("actors: got %d, want 2 (empty dropped)", n)
 	}
-	if n := countFacets(t, ctx, pool, "m1", "tag"); n != 2 {
-		t.Fatalf("tags: got %d, want 2", n)
+	if n := countFacets(t, ctx, pool, "m1", "genre"); n != 2 {
+		t.Fatalf("genres: got %d, want 2", n)
+	}
+	if n := countFacets(t, ctx, pool, "m1", "tag"); n != 1 {
+		t.Fatalf("tags: got %d, want 1", n)
 	}
 
 	// Replace swaps the whole set rather than appending.
-	if err := ReplaceMediaFacets(ctx, pool, "m1", []string{"Neo"}, nil); err != nil {
+	if err := ReplaceMediaFacets(ctx, pool, "m1", []string{"Neo"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if n := countFacets(t, ctx, pool, "m1", "actor"); n != 1 {
 		t.Fatalf("after replace actors: got %d, want 1", n)
+	}
+	if n := countFacets(t, ctx, pool, "m1", "genre"); n != 0 {
+		t.Fatalf("after replace genres: got %d, want 0", n)
 	}
 	if n := countFacets(t, ctx, pool, "m1", "tag"); n != 0 {
 		t.Fatalf("after replace tags: got %d, want 0", n)

@@ -445,7 +445,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		fail("could not write media row: " + err.Error())
 		return
 	}
-	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags)
+	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags)
 	if len(meta.State) > 0 {
 		us := make(map[string]db.UserStateRow, len(meta.State))
 		for u, st := range meta.State {

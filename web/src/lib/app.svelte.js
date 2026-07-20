@@ -61,6 +61,19 @@ export function treeMarker(depth) {
   return '  '.repeat(depth - 1) + '└─ '
 }
 
+const sidebarKey = 'ff-sidebar-open'
+
+// readSidebarOpen restores which library sidebar accordions were left open. Categories
+// default to open (the browse axis that always exists), tags to closed.
+function readSidebarOpen() {
+  const fallback = { categories: true, tags: false }
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem(sidebarKey) || '{}') }
+  } catch {
+    return fallback
+  }
+}
+
 // humanDuration renders a span of seconds as a short "2h 5m" / "5m 10s" / "10s" label.
 function humanDuration(secs) {
   secs = Math.max(0, Math.floor(secs))
@@ -173,6 +186,17 @@ export class AppState {
   // end-user home: category aliases shown as nav links under Home
   homeCategories = $state([])
   homeCategory = $state('') // selected category name, '' = Home
+
+  // The library sidebar groups its two browse axes into accordions: the category tree and
+  // the curated tag vocabulary ([{ tag, count }], newest counts from /api/tags).
+  tags = $state([])
+  sidebarOpen = $state(readSidebarOpen())
+
+  // admin tag manager: the vocabulary by name, plus the row being renamed in place
+  adminTags = $state([])
+  tagEdit = $state('') // the tag whose rename input is open; '' = none
+  tagEditValue = $state('')
+  tagBusy = $state(false)
 
   // library views: home grids, category grid, media detail + player
   libMode = $state('home') // 'home' | 'category' | 'detail' | 'search'
@@ -545,6 +569,118 @@ export class AppState {
     return this.homeCategories.find((c) => c.name === name)?.alias ?? name
   }
 
+  // --- tags ---
+
+  async loadTags() {
+    try {
+      this.tags = await api('/api/tags')
+    } catch {
+      this.tags = []
+    }
+  }
+
+  toggleSidebar(section) {
+    this.sidebarOpen = { ...this.sidebarOpen, [section]: !this.sidebarOpen[section] }
+    try {
+      localStorage.setItem(sidebarKey, JSON.stringify(this.sidebarOpen))
+    } catch {}
+  }
+
+  // goTag pivots into a tag-scoped search, so one grid renders every way of browsing.
+  goTag(tag) {
+    this.go('/search?field=tag&q=' + encodeURIComponent(tag))
+  }
+
+  // activeTag is the tag the current view is filtered by, or '' - used to mark the sidebar
+  // entry active without a separate route.
+  get activeTag() {
+    return this.libMode === 'search' && this.searchField === 'tag' ? this.searchQuery : ''
+  }
+
+  // saveTags replaces the open item's curated tags. The server normalises (trim, lowercase,
+  // dedupe) and returns the stored list, so the chips always show what is actually on disk.
+  async saveTags(tags) {
+    if (!this.detail) return
+    try {
+      const r = await api('/api/admin/media/' + this.detail.id + '/tags', {
+        method: 'POST',
+        body: JSON.stringify({ tags }),
+      })
+      this.detail = { ...this.detail, tags: r.tags }
+      await this.loadTags() // the sidebar counts follow immediately
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save the tags')
+    }
+  }
+
+  addTag(tag) {
+    const t = (tag || '').trim().toLowerCase()
+    if (!t || (this.detail?.tags ?? []).includes(t)) return
+    return this.saveTags([...(this.detail?.tags ?? []), t])
+  }
+
+  removeTag(tag) {
+    return this.saveTags((this.detail?.tags ?? []).filter((t) => t !== tag))
+  }
+
+  // --- admin tag manager ---
+
+  async loadAdminTags() {
+    this.tagBusy = true
+    try {
+      this.adminTags = await api('/api/admin/tags')
+    } catch {
+      this.adminTags = []
+    } finally {
+      this.tagBusy = false
+    }
+  }
+
+  startTagEdit(tag) {
+    this.tagEdit = tag
+    this.tagEditValue = tag
+  }
+
+  cancelTagEdit() {
+    this.tagEdit = ''
+    this.tagEditValue = ''
+  }
+
+  // renameTag doubles as the merge: renaming onto an existing tag folds the two together,
+  // because each item's list is deduplicated on the way in.
+  async renameTag() {
+    const from = this.tagEdit
+    const to = (this.tagEditValue || '').trim().toLowerCase()
+    if (!from || !to || from === to) return this.cancelTagEdit()
+    this.tagBusy = true
+    try {
+      const r = await api('/api/admin/tags/' + encodeURIComponent(from), {
+        method: 'PUT',
+        body: JSON.stringify({ tag: to }),
+      })
+      this.toast('success', `Renamed "${from}" to "${to}" on ${r.changed} item${r.changed === 1 ? '' : 's'}.`)
+      this.cancelTagEdit()
+      await Promise.all([this.loadAdminTags(), this.loadTags()])
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not rename the tag')
+    } finally {
+      this.tagBusy = false
+    }
+  }
+
+  async deleteTag(tag) {
+    this.tagBusy = true
+    try {
+      const r = await api('/api/admin/tags/' + encodeURIComponent(tag), { method: 'DELETE' })
+      this.toast('success', `Removed "${tag}" from ${r.changed} item${r.changed === 1 ? '' : 's'}.`)
+      await Promise.all([this.loadAdminTags(), this.loadTags()])
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not delete the tag')
+    } finally {
+      this.tagBusy = false
+    }
+  }
+
   // categoryIsOtherMedia reports whether the open category page is an other-media category,
   // gating the TokTok button. The flag is set (via the admin checkbox) only on a top-level
   // category and inherited by its sub-categories, so walk up the parent chain: the category
@@ -620,7 +756,7 @@ export class AppState {
   }
 
   // loadEdit fetches one item's raw editable metadata and seeds the form. Actors are edited
-  // one per line, tags as a comma list, matching how they are joined for display.
+  // one per line, genres and tags as comma lists, matching how they are joined for display.
   async loadEdit(id) {
     this.edit.id = id
     this.edit.loading = true
@@ -641,6 +777,7 @@ export class AppState {
         boxOffice: c.boxOffice || '', imdbId: c.imdbId || '',
         imdb: c.imdb || '', rottenTomatoes: c.rottenTomatoes || '', metacritic: c.metacritic || '',
         actors: (c.actors || []).join('\n'),
+        genres: (c.genres || []).join(', '),
         tags: (c.tags || []).join(', '),
       }
     } catch (e) {
@@ -669,6 +806,7 @@ export class AppState {
           awards: f.awards, boxOffice: f.boxOffice, imdbId: f.imdbId,
           imdb: f.imdb, rottenTomatoes: f.rottenTomatoes, metacritic: f.metacritic,
           actors: f.actors.split('\n').map((s) => s.trim()).filter(Boolean),
+          genres: f.genres.split(',').map((s) => s.trim()).filter(Boolean),
           tags: f.tags.split(',').map((s) => s.trim()).filter(Boolean),
         }),
       })
@@ -979,7 +1117,7 @@ export class AppState {
     const segs = location.pathname.split('/').filter(Boolean)
     if (segs[0] === 'admin' && this.me?.admin) {
       this.view = 'admin'
-      const page = ['dashboard', 'stats', 'library', 'import', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
+      const page = ['dashboard', 'stats', 'library', 'tags', 'import', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
       this.applyAdmin(page, segs[2])
       return
     }
@@ -990,7 +1128,7 @@ export class AppState {
     }
     // Library (also the fallback for non-admins hitting /admin).
     this.view = 'library'
-    await this.loadHomeCategories()
+    await Promise.all([this.loadHomeCategories(), this.loadTags()])
     this.playing = false // a route change tears the player down (its effect cleanup reports a stop)
     if (segs[0] === 'media' && segs[1]) {
       if (segs[2] === 'edit' && this.me?.admin) {
@@ -1062,6 +1200,10 @@ export class AppState {
         this.ifBrowseOpen = false
         this.loadSettings()
       }
+    } else if (page === 'tags') {
+      this.tagEdit = ''
+      this.tagEditValue = ''
+      this.loadAdminTags()
     } else if (page === 'users') {
       this.editUserId = 0
       this.loadUsers()

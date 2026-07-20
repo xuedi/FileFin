@@ -308,7 +308,7 @@ func (s *Server) reconcileDiff(ctx context.Context, pool *sql.DB, dataDir string
 			for _, f := range sm.files {
 				_ = db.InsertMediaFile(ctx, pool, f)
 			}
-			_ = db.ReplaceMediaFacets(ctx, pool, id, sm.actors, sm.tags)
+			_ = db.ReplaceMediaFacets(ctx, pool, id, sm.actors, sm.genres, sm.tags)
 			_ = db.ReplaceUserStateForMedia(ctx, pool, id, sm.userState)
 			added++
 		}
@@ -339,7 +339,7 @@ func (s *Server) reconcileItem(ctx context.Context, pool *sql.DB, dataDir string
 		if sm, ok := readMediaFolder(dataDir, ref.cat, ref.folder); ok {
 			s.bestEffort(db.InsertMedia(ctx, pool, sm.media), "reconcile media row")
 			s.bestEffort(db.ReplaceMediaFiles(ctx, pool, id, sm.files), "reconcile media files")
-			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, id, sm.actors, sm.tags), "reconcile media facets")
+			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, id, sm.actors, sm.genres, sm.tags), "reconcile media facets")
 			s.bestEffort(db.ReplaceUserStateForMedia(ctx, pool, id, sm.userState), "reconcile user state")
 		}
 	}

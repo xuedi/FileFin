@@ -57,8 +57,8 @@ func TestMetaFromJellyfin(t *testing.T) {
 	if len(m.Actors) != 1 || m.Actors[0] != "Keanu Reeves (Neo)" {
 		t.Errorf("actors = %v", m.Actors)
 	}
-	if len(m.Tags) != 2 || m.Tags[0] != "action" || m.Tags[1] != "sci-fi" {
-		t.Errorf("tags = %v (want lowercased genres)", m.Tags)
+	if len(m.Genres) != 2 || m.Genres[0] != "action" || m.Genres[1] != "sci-fi" {
+		t.Errorf("genres = %v (want lowercased)", m.Genres)
 	}
 }
 

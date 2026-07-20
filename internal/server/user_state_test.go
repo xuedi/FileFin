@@ -85,7 +85,7 @@ func TestUserStateMirrorAndRebuild(t *testing.T) {
 func TestSearchWatchedOverlay(t *testing.T) {
 	s, h, admin, dataDir, catID := mediaTestServer(t)
 	id, _ := seedMedia(t, s, dataDir, "Movies", catID, "(1999) The Matrix", "(1999) The Matrix.mp4",
-		importer.Meta{Title: "The Matrix", Year: 1999, Tags: []string{"action"}})
+		importer.Meta{Title: "The Matrix", Year: 1999, Genres: []string{"action"}})
 
 	// Before watching, a genre search returns it unwatched.
 	rr := do(t, h, "GET", "/api/search?field=genre&q=action", "", admin)

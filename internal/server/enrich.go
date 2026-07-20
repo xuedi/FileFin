@@ -188,7 +188,7 @@ func (s *Server) writeMediaCacheRow(ctx context.Context, pool *sql.DB, id, title
 	_ = db.SetMediaEnriched(ctx, pool, id, meta.Description, meta.Plot, posterRel)
 	_ = db.SetMediaFacets(ctx, pool, id,
 		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
-	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags)
+	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags)
 	return nil
 }
 

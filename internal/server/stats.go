@@ -94,8 +94,13 @@ type statsView struct {
 	VideoCodecs []labelCount `json:"videoCodecs"`
 	AudioCodecs []labelCount `json:"audioCodecs"`
 	Playability []labelCount `json:"playability"`
+	Tags        []labelCount `json:"tags"`
 	Coverage    coverageStat `json:"coverage"`
 }
+
+// statsTagLimit caps the tag breakdown to the head of the distribution: a long tail of
+// one-item tags says nothing a chart can show, and the admin Tags page lists them all.
+const statsTagLimit = 15
 
 // handleStats walks every cached media file once and reports the library's container and
 // codec distributions, the playability breakdown, and the optimize coverage, for the admin
@@ -140,11 +145,25 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		play[bucket]++
 	}
 
+	tags, err := db.ListTags(ctx, pool)
+	if err != nil {
+		http.Error(w, "could not read library stats", http.StatusInternalServerError)
+		return
+	}
+	topTags := []labelCount{}
+	for _, t := range tags {
+		if len(topTags) == statsTagLimit {
+			break
+		}
+		topTags = append(topTags, labelCount{Label: t.Tag, Count: t.Count})
+	}
+
 	writeJSON(w, statsView{
 		Containers:  sortedCounts(containers),
 		VideoCodecs: sortedCounts(video),
 		AudioCodecs: sortedCounts(audio),
 		Playability: sortedCounts(play),
+		Tags:        topTags,
 		Coverage: coverageStat{
 			Optimized:  optimized,
 			Pending:    pending,

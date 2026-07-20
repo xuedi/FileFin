@@ -154,7 +154,7 @@ func (s *Server) runRebuild(ctx context.Context, pool *sql.DB, dataDir string) {
 				for _, f := range m.files {
 					_ = db.InsertMediaFile(ctx, pool, f)
 				}
-				_ = db.ReplaceMediaFacets(ctx, pool, m.media.ID, m.actors, m.tags)
+				_ = db.ReplaceMediaFacets(ctx, pool, m.media.ID, m.actors, m.genres, m.tags)
 				_ = db.ReplaceUserStateForMedia(ctx, pool, m.media.ID, m.userState)
 				mediaCount++
 			}
@@ -167,13 +167,14 @@ func (s *Server) runRebuild(ctx context.Context, pool *sql.DB, dataDir string) {
 	s.rebuildJob.finish(len(cats), mediaCount)
 }
 
-// scannedMedia pairs a media row with its file rows, its multivalued facets (actors, genres),
-// and the per-user playback state from meta.json. The scalar facets ride on media; actors/tags
-// go to media_facets; userState re-derives the user_state mirror.
+// scannedMedia pairs a media row with its file rows, its multivalued facets (actors, genres,
+// curated tags), and the per-user playback state from meta.json. The scalar facets ride on
+// media; the multivalued ones go to media_facets; userState re-derives the user_state mirror.
 type scannedMedia struct {
 	media     db.Media
 	files     []db.MediaFile
 	actors    []string
+	genres    []string
 	tags      []string
 	userState map[string]db.UserStateRow
 }
@@ -217,7 +218,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 	title, year, desc, plot := "", 0, "", ""
 	enriched := false
 	var language, country, director, writer string
-	var actors, tags []string
+	var actors, genres, tags []string
 	userState := map[string]db.UserStateRow{}
 	if m, err := importer.ReadMeta(dir); err == nil {
 		title, year, desc, plot = m.Title, m.Year, m.Description, m.Plot
@@ -226,7 +227,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		enriched = m.Enriched || m.Metadata["imdbID"] != ""
 		language, country = m.Metadata["language"], m.Metadata["origin"]
 		director, writer = m.Metadata["directedBy"], m.Metadata["writtenBy"]
-		actors, tags = m.Actors, m.Tags
+		actors, genres, tags = m.Actors, m.Genres, m.Tags
 		for u, st := range m.State {
 			userState[u] = userStateRow(st)
 		}
@@ -247,6 +248,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 			Language: language, Country: country, Director: director, Writer: writer,
 		},
 		actors:    actors,
+		genres:    genres,
 		tags:      tags,
 		userState: userState,
 	}

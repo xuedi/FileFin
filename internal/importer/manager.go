@@ -100,6 +100,7 @@ func LoadState(folder string) (map[string]state.UserState, error) {
 // writeMetaAtomic marshals meta to folder/meta.json via a temp file plus rename so a
 // concurrent reader never observes a half-written file.
 func writeMetaAtomic(folder string, meta Meta) error {
+	meta.Version = MetaVersion
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)

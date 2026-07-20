@@ -121,7 +121,7 @@ func TestJellyfinImportEndToEnd(t *testing.T) {
 	if meta.Enriched || meta.Description != "Truth." {
 		t.Fatalf("jellyfin meta should be unenriched but carry NFO fields: %+v", meta)
 	}
-	if len(meta.Tags) != 1 || meta.Tags[0] != "action" {
-		t.Fatalf("meta tags = %v, want [action]", meta.Tags)
+	if len(meta.Genres) != 1 || meta.Genres[0] != "action" {
+		t.Fatalf("meta genres = %v, want [action]", meta.Genres)
 	}
 }

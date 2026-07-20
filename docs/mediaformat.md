@@ -12,7 +12,8 @@ dataDir/
     <sub-category>/                   config.json  -> nested category (any depth)
       <media-folder>/                 no config.json, has video -> media item
         <video file(s)>
-        meta.json                     title, year, rich fields, technical, per-user state
+        meta.json                     version, title, year, rich fields, genres, tags,
+                                      technical, per-user state
         poster.*                      base poster (jpg/png/webp)
         poster_280.webp               detail variant (thumbnail agent)
         poster_180.webp               tile variant (thumbnail agent)
@@ -125,7 +126,7 @@ required no data migration.
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
 | `config.json` (id, alias, top-level other-media, position, markers) | `categories` rows (parent_id, effective other_media, position) |
-| `meta.json` (title, year, rich fields, technical, per-user state) | `media` / `media_files` rows |
+| `meta.json` (version, title, year, rich fields, genres, tags, technical, per-user state) | `media` / `media_files` / `media_facets` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
 
 The **filename extension is never trusted** for a playback or optimize decision: a library
@@ -136,5 +137,14 @@ written into the `meta.json` `technical` block and mirrored onto `media_files`
 decisions read those columns. The on-disk filename is left untouched. A rebuild leaves the
 format columns empty and the probe agent backfills them, exactly like enrich/thumbnail work
 (see `agents/probe.md`).
+
+## meta.json carries a version
+
+`meta.json` declares its own shape in a **`version`** key, because one rename could not
+otherwise be told apart from the shape that preceded it: before version 2 the key `tags` held
+the **genres**, and version 2 renamed it to `genres` so `tags` could carry the hand-curated
+list. A file with no version key (or a lower one) is read as the older shape and folded into
+the current one; any write stamps the current version. See `tags.md` for the fold and how a
+library settles onto the new shape without a manual migration.
 
 See `library.md` for how the cache is built, rebuilt, and browsed.

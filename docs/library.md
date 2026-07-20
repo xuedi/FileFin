@@ -24,7 +24,7 @@ built entirely from a filesystem scan and exists only to make listing and lookup
 | `categories`      | id / name (relpath) / parent_id / alias / effective other_media / position                                                     | rebuild, category admin                      |
 | `media`           | one row per media folder (title, year, description, poster, enriched, + denormalized facets: language/country/director/writer) | importer, rebuild, enricher, thumbnail agent |
 | `media_files`     | one row per video file (index, season/episode, ext, path)                                                                      | importer, rebuild                            |
-| `media_facets`    | the multivalued search facets (one row per actor/genre, tagged by kind)                                                        | importer, rebuild, reconcile, enricher       |
+| `media_facets`    | the multivalued search facets (one row per actor/genre/tag, tagged by kind)                                                    | importer, rebuild, reconcile, enricher       |
 | `user_state`      | per-user playback-state mirror (watched/favorite/rating/has_progress/updated) for cache-served home + watched overlays         | playback-state writers, rebuild, reconcile   |
 | `imports`         | the transient import interface                                                                                                 | producers + importer (see `import.md`)       |
 | `optimize_tasks`  | transient pre-transcode queue (see `agents/optimizer.md`)                                                                      | optimizer                                    |
@@ -112,8 +112,8 @@ flowchart LR
 ## Search
 
 Browsing is category-first; **search** is the cross-library way to find a title or pivot on a
-facet. The searchable facets - actors, genres (tags), language, country, director, writer -
-are **denormalized** out of each folder's `meta.json` into the cache (scalar columns on `media`
+facet. The searchable facets - actors, genres, curated tags, language, country, director,
+writer - are **denormalized** out of each folder's `meta.json` into the cache (scalar columns on `media`
 plus the `media_facets` child table) by the scanner that already reads `meta.json` on import,
 rebuild, reconcile, and enrich. So a query is **one indexed SQL statement** (`LIKE` on the text
 columns, an `EXISTS` on `media_facets` for the multivalued facets), returning the same
@@ -125,10 +125,11 @@ Search is **submit-driven** (Enter or the button), never per-keystroke. An empty
 nothing rather than the whole library. A query is one text value `q` plus a `field` scope
 (default `all`):
 
-- `all` - case-insensitive substring across title, description, plot, actors, tags, language,
-  country, director, and writer.
-- a single text field (`title`, `description`, `cast`, `genre`, `language`, `director`,
-  `writer`) - the same substring match within just that facet.
+- `all` - case-insensitive substring across title, description, plot, actors, genres, tags,
+  language, country, director, and writer.
+- a single text field (`title`, `description`, `cast`, `genre`, `tag`, `language`, `director`,
+  `writer`) - the same substring match within just that facet. `genre` matches what the
+  metadata source supplied; `tag` matches the hand-curated ones (see [`tags.md`](tags.md)).
 - `year` - exact match against the item's year; `decade` - `1990` or `1990s` matches 1990-1999.
 
 LIKE wildcards in `q` (`%`, `_`) are escaped, so they match literally. Because the facets are a
@@ -145,9 +146,9 @@ flowchart LR
     WATCH --> OUT[MediaSummary results]
 ```
 
-The same facets are clickable on a media detail page (cast, genre, director, language, year),
-each navigating to `field=<scope>&q=<value>` - the detail page's facets become entry points
-into a scoped search. Matching is plain substring (`LIKE`); ranked/tokenized search (FTS5) was
+The same facets are clickable on a media detail page (cast, genre, tag, director, language,
+year), each navigating to `field=<scope>&q=<value>` - the detail page's facets become entry
+points into a scoped search. The library sidebar's Tags accordion pivots the same way. Matching is plain substring (`LIKE`); ranked/tokenized search (FTS5) was
 considered and deliberately not adopted, to keep the exact substring semantics with no
 driver-feature dependency.
 
@@ -192,6 +193,7 @@ format only dictates how the importer names media folders and their files.
 | `GET /api/media/{id}/poster`            | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
 | `GET /api/home`                         | continue / favorites / completed buckets                                             |
 | `GET /api/search`                       | library-wide facet search (`q`, `field`; live `meta.json` scan)                      |
+| `GET /api/tags`                         | the curated tag vocabulary with counts (see `tags.md`)                              |
 | `POST/DELETE /api/admin/categories`     | create / delete (empty only)                                                         |
 | `GET /api/admin/categories/{name}`      | one category's page: identity, markers, learned markers with their other homes       |
 | `PUT /api/admin/categories/{name}`      | the single write path: alias, other-media flag, markers                              |

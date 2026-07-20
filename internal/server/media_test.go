@@ -51,7 +51,7 @@ func seedMedia(t *testing.T, s *Server, dataDir, category string, catID int64, f
 		t.Fatal(err)
 	}
 	// Mirror the denormalized facets the importer/scanner would write, so search tests see them.
-	if err := db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Tags); err != nil {
+	if err := db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags); err != nil {
 		t.Fatal(err)
 	}
 	ext := strings.ToLower(filepath.Ext(fileName))
@@ -84,7 +84,8 @@ func TestCategoryMediaAndDetail(t *testing.T) {
 		Metadata: map[string]string{"runtime": "136", "directedBy": "The Wachowskis"},
 		Ratings:  map[string]string{"imdb": "8.7"},
 		Actors:   []string{"Keanu Reeves"},
-		Tags:     []string{"action", "sci-fi"},
+		Genres:   []string{"action", "sci-fi"},
+		Tags:     []string{"rewatch"},
 	}
 	id, _ := seedMedia(t, s, dataDir, "Movies", catID, "(1999) The Matrix", "(1999) The Matrix.mkv", meta)
 

@@ -15,21 +15,23 @@ func TestSearchMedia(t *testing.T) {
 			Title: "The Matrix", Year: 1999, Description: "A hacker learns the truth.",
 			Metadata: map[string]string{"language": "English", "directedBy": "The Wachowskis"},
 			Actors:   []string{"Keanu Reeves", "Carrie-Anne Moss"},
-			Tags:     []string{"action", "sci-fi"},
+			Genres:   []string{"action", "sci-fi"},
+			Tags:     []string{"rewatch"},
 		})
 	seedMedia(t, s, dataDir, "Movies", catID, "(1994) Leon", "(1994) Leon.mp4",
 		importer.Meta{
 			Title: "Leon", Year: 1994, Description: "A hitman and a girl.",
 			Metadata: map[string]string{"language": "French", "directedBy": "Luc Besson"},
 			Actors:   []string{"Jean Reno", "Natalie Portman"},
-			Tags:     []string{"action", "thriller"},
+			Genres:   []string{"action", "thriller"},
+			Tags:     []string{"rewatch", "subtitled"},
 		})
 	seedMedia(t, s, dataDir, "Movies", catID, "(2003) Oldboy", "(2003) Oldboy.mp4",
 		importer.Meta{
 			Title: "Oldboy", Year: 2003, Description: "A man seeks revenge.",
 			Metadata: map[string]string{"language": "Korean", "directedBy": "Park Chan-wook"},
 			Actors:   []string{"Choi Min-sik"},
-			Tags:     []string{"thriller", "mystery"},
+			Genres:   []string{"thriller", "mystery"},
 		})
 
 	cases := []struct {
@@ -42,6 +44,10 @@ func TestSearchMedia(t *testing.T) {
 		{"all is case-insensitive over actors", "q=reeves", []string{"The Matrix"}, []string{"Leon", "Oldboy"}},
 		{"cast scope", "field=cast&q=reno", []string{"Leon"}, []string{"The Matrix", "Oldboy"}},
 		{"genre scope", "field=genre&q=thriller", []string{"Leon", "Oldboy"}, []string{"The Matrix"}},
+		{"tag scope", "field=tag&q=rewatch", []string{"The Matrix", "Leon"}, []string{"Oldboy"}},
+		{"tag scope does not match a genre", "field=tag&q=thriller", nil, []string{"Leon", "Oldboy", "The Matrix"}},
+		{"genre scope does not match a tag", "field=genre&q=rewatch", nil, []string{"The Matrix", "Leon", "Oldboy"}},
+		{"all finds a curated tag", "q=subtitled", []string{"Leon"}, []string{"The Matrix", "Oldboy"}},
 		{"language scope", "field=language&q=korean", []string{"Oldboy"}, []string{"The Matrix", "Leon"}},
 		{"director scope", "field=director&q=besson", []string{"Leon"}, []string{"The Matrix", "Oldboy"}},
 		{"year scope is exact", "field=year&q=1999", []string{"The Matrix"}, []string{"Leon", "Oldboy"}},

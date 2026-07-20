@@ -41,6 +41,7 @@ flowchart TD
   App --> Lib["library/LibraryView"]
   App --> Tok["library/TokPlayer"]
   App --> AdminLib["admin/AdminLibrary"]
+  App --> AdminTags["admin/AdminTags"]
   App --> AdminCat["admin/AdminCategory"]
   App --> AdminImp["admin/AdminImport"]
   App --> ImportWork["admin/import/ImportWork"]
@@ -102,8 +103,16 @@ input next to a field-scope dropdown) at the top, and `route()` reads `q` + `fie
 results grid (with a result count, or a plain "No matches"). `LibraryView` reuses `Home` for
 both modes, so the search section is shared. Submitting calls `runSearch` (pushes the `/search`
 URL); Clear calls `clearSearch` (returns to `/`). The [media detail page](library.md#search)
-turns its facets - cast, genre, director, language, year - into pivot links that navigate into
-a scoped search.
+turns its facets - cast, genre, tag, director, language, year - into pivot links that navigate
+into a scoped search.
+
+The library sidebar is **Home** plus two accordions: **Categories** (the indented category tree)
+and **Tags** (the whole curated vocabulary with per-tag counts, from `GET /api/tags`). Which are
+open lives on `AppState.sidebarOpen` and is persisted to `localStorage`, so the choice survives a
+reload. A tag is not its own route: selecting one pushes a `field=tag` search URL, so the existing
+results grid renders it and the sidebar entry marks itself active off the live query (see
+[`tags.md`](tags.md)). The detail page renders genres and tags as two chip rows, the tag row
+carrying an admin-only inline editor (type-ahead `<datalist>` over the vocabulary, `x` per chip).
 
 The top bar is a Bulma `navbar`: the **FileFin** brand on the left, which is a link back to the
 library home, and a right-aligned `navbar-end` holding a username dropdown. The dropdown's trigger
@@ -159,11 +168,16 @@ optimizer decides candidacy, so direct-playable and remux-eligible files (which 
 excluded from the ratio (see `agents/optimizer.md`).
 
 The **Statistics** page (`admin/AdminStats.svelte`) is a deeper view over the same media-format data from
-`GET /api/admin/stats`: the library broken down by container, video codec, and audio codec, and a
-playability breakdown (direct play / remux / optimized / needs optimize / unprobed). Each dimension is
-shown as a chart beside an exact-count table. Charts use Chart.js, vendored via npm and **lazy-imported**
-in this component only (a separate bundle chunk, like hls.js), so it stays out of the main bundle and the
-app remains fully offline.
+`GET /api/admin/stats`: the library broken down by container, video codec, and audio codec, a
+playability breakdown (direct play / remux / optimized / needs optimize / unprobed), and the head of the
+tag distribution. Each dimension is shown as a chart beside an exact-count table. Charts use Chart.js,
+vendored via npm and **lazy-imported** in this component only (a separate bundle chunk, like hls.js), so
+it stays out of the main bundle and the app remains fully offline.
+
+The **Tags** page (`admin/AdminTags.svelte`, sidebar entry under Library) is the tag manager: the whole
+vocabulary by name with its item counts, an in-place **rename** (which merges when the target already
+exists) and a confirm-then-**delete** that strips the tag library-wide. Both report how many items
+changed and refresh the sidebar vocabulary (see [`tags.md`](tags.md)).
 
 The **Unhealthy media** page (`admin/UnhealthyMedia.svelte`) is one component with two modes off the
 route sub-segment: a list of items with no OMDb metadata match yet (plus the read-only disk-health

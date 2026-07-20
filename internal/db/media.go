@@ -58,10 +58,10 @@ func InsertMedia(ctx context.Context, pool *sql.DB, m Media) error {
 	return nil
 }
 
-// ReplaceMediaFacets swaps a media item's multivalued facets (actors, genres) for a fresh
-// set, mirroring ReplaceMediaFiles. Each list is stored one value per row in media_facets,
-// tagged by kind, so search can match a single facet with an indexed lookup.
-func ReplaceMediaFacets(ctx context.Context, pool *sql.DB, mediaID string, actors, tags []string) error {
+// ReplaceMediaFacets swaps a media item's multivalued facets (actors, genres, curated tags)
+// for a fresh set, mirroring ReplaceMediaFiles. Each list is stored one value per row in
+// media_facets, tagged by kind, so search can match a single facet with an indexed lookup.
+func ReplaceMediaFacets(ctx context.Context, pool *sql.DB, mediaID string, actors, genres, tags []string) error {
 	tx, err := pool.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin replace media facets %s: %w", mediaID, err)
@@ -83,6 +83,9 @@ func ReplaceMediaFacets(ctx context.Context, pool *sql.DB, mediaID string, actor
 		return nil
 	}
 	if err := insert("actor", actors); err != nil {
+		return err
+	}
+	if err := insert("genre", genres); err != nil {
 		return err
 	}
 	if err := insert("tag", tags); err != nil {

@@ -53,6 +53,7 @@ type mediaMetaForm struct {
 	RottenTomatoes string   `json:"rottenTomatoes"`
 	Metacritic     string   `json:"metacritic"`
 	Actors         []string `json:"actors"`
+	Genres         []string `json:"genres"`
 	Tags           []string `json:"tags"`
 }
 
@@ -91,7 +92,7 @@ func (s *Server) handleMetaEdit(w http.ResponseWriter, r *http.Request) {
 			BoxOffice: meta.Metadata["boxOffice"], ImdbID: meta.Metadata["imdbID"],
 			Imdb: meta.Ratings["imdb"], RottenTomatoes: meta.Ratings["rottenTomatoes"],
 			Metacritic: meta.Ratings["metacritic"],
-			Actors:     nonNil(meta.Actors), Tags: nonNil(meta.Tags),
+			Actors:     nonNil(meta.Actors), Genres: nonNil(meta.Genres), Tags: nonNil(meta.Tags),
 		},
 	}
 	writeJSON(w, out)
@@ -130,7 +131,8 @@ func (s *Server) handleSaveMeta(w http.ResponseWriter, r *http.Request) {
 		out.Metadata = applyMetaFields(cur.Metadata, req)
 		out.Ratings = applyRatingFields(cur.Ratings, req)
 		out.Actors = trimList(req.Actors)
-		out.Tags = lowerList(req.Tags)
+		out.Genres = lowerList(req.Genres)
+		out.Tags = normalizeTags(req.Tags)
 		out.Enriched = true
 		return out
 	})
@@ -273,7 +275,7 @@ func trimList(in []string) []string {
 	return out
 }
 
-// lowerList is trimList with each entry lowercased (genres/tags are stored lowercase).
+// lowerList is trimList with each entry lowercased (genres are stored lowercase).
 func lowerList(in []string) []string {
 	out := trimList(in)
 	for i, v := range out {

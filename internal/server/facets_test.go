@@ -53,7 +53,8 @@ func TestFacetDenormalizationOnDiscovery(t *testing.T) {
 		Title: "The Matrix", Year: 1999,
 		Metadata: map[string]string{"language": "English", "origin": "USA", "directedBy": "The Wachowskis", "writtenBy": "The Wachowskis"},
 		Actors:   []string{"Keanu Reeves", "Carrie-Anne Moss"},
-		Tags:     []string{"action", "sci-fi"},
+		Genres:   []string{"action", "sci-fi"},
+		Tags:     []string{"rewatch"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,10 @@ func TestFacetDenormalizationOnDiscovery(t *testing.T) {
 	if got := mediaFacetValues(t, s, id, "actor"); len(got) != 2 {
 		t.Fatalf("actor facets: %v", got)
 	}
-	if got := mediaFacetValues(t, s, id, "tag"); len(got) != 2 || got[0] != "action" {
+	if got := mediaFacetValues(t, s, id, "genre"); len(got) != 2 || got[0] != "action" {
+		t.Fatalf("genre facets: %v", got)
+	}
+	if got := mediaFacetValues(t, s, id, "tag"); len(got) != 1 || got[0] != "rewatch" {
 		t.Fatalf("tag facets: %v", got)
 	}
 
@@ -80,7 +84,7 @@ func TestFacetDenormalizationOnDiscovery(t *testing.T) {
 		Title: "The Matrix", Year: 1999,
 		Metadata: map[string]string{"language": "French", "directedBy": "Someone Else"},
 		Actors:   []string{"Neo"},
-		Tags:     []string{"thriller"},
+		Genres:   []string{"thriller"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,10 @@ func TestFacetDenormalizationOnDiscovery(t *testing.T) {
 	if got := mediaFacetValues(t, s, id, "actor"); len(got) != 1 || got[0] != "Neo" {
 		t.Fatalf("actor facets not refreshed: %v", got)
 	}
-	if got := mediaFacetValues(t, s, id, "tag"); len(got) != 1 || got[0] != "thriller" {
+	if got := mediaFacetValues(t, s, id, "genre"); len(got) != 1 || got[0] != "thriller" {
+		t.Fatalf("genre facets not refreshed: %v", got)
+	}
+	if got := mediaFacetValues(t, s, id, "tag"); len(got) != 0 {
 		t.Fatalf("tag facets not refreshed: %v", got)
 	}
 }
@@ -116,7 +123,7 @@ func TestFacetBackfill(t *testing.T) {
 	}
 	if err := importer.WriteMeta(dir, importer.Meta{
 		Title: "Leon", Year: 1994, Metadata: map[string]string{"language": "French"},
-		Actors: []string{"Jean Reno"}, Tags: []string{"thriller"},
+		Actors: []string{"Jean Reno"}, Genres: []string{"thriller"},
 	}); err != nil {
 		t.Fatal(err)
 	}

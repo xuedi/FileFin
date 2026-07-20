@@ -11,6 +11,12 @@
   --bulma-link-h: 219deg;
   --bulma-link-s: 100%;
   --bulma-link-l: 65%;
+
+  /* The content canvas, one step below Bulma's dark ramp (main 9%, bis 11%, ter 13%) in the
+     scheme's own hue. It sits under the sidebar rather than above it, because Bulma's box and
+     table surfaces are scheme-main: a lighter canvas would push every card darker than its
+     page and invert the elevation. Recessed instead, the cards read as raised. */
+  --ff-content-bg: hsl(var(--bulma-scheme-h), var(--bulma-scheme-s), 6%);
 }
 
 body { min-height: 100vh; }
@@ -32,17 +38,91 @@ body { min-height: 100vh; }
 
 .ff-layout { display: flex; min-height: calc(100vh - 53px); }
 .ff-sidebar {
-  width: 220px;
+  width: 260px;
   flex-shrink: 0;
   padding: 0.75rem 0.5rem;
-  background: var(--bulma-scheme-main-bis);
   border-right: 1px solid var(--bulma-border-weak);
   display: flex;
   flex-direction: column;
+  /* Nested browse lists sit flush left with the top-level entries: Bulma's nested indent,
+     margin, and left rule are all switched off, so depth is carried by colour and the tree
+     markers alone. */
+  --bulma-menu-list-border-left: none;
+  --bulma-menu-nested-list-margin: 0;
+  --bulma-menu-nested-list-padding-left: 0;
 }
+/* The sidebar is one flat surface with the page: nothing inside it paints its own background,
+   so hover and the active entry read as a colour change rather than a block. */
+.ff-sidebar .menu-list a,
+.ff-sidebar .menu-list a:hover,
+.ff-sidebar .menu-list a.is-active,
+.ff-sidebar .menu-list button,
+.ff-sidebar .menu-list button:hover { background-color: transparent; }
 .ff-sidebar .menu-list a { white-space: pre; }
-.ff-sidebar-foot { margin-top: auto; padding: 0.75rem 0.75rem 0.25rem; }
-.ff-main { flex: 1; padding: 1.25rem; overflow-y: auto; }
+.ff-sidebar .menu-list a:hover { color: var(--bulma-link); }
+.ff-sidebar .menu-list a.is-active { color: var(--bulma-link); font-weight: 600; }
+.ff-sidebar-foot { margin-top: auto; padding: 0.75rem 0.75rem 0.25rem; text-align: center; }
+
+/* Sidebar accordions: one collapsible group per browse axis (categories, tags). Scoped under
+   .ff-sidebar to outrank Bulma's own `.menu-list button`, which is display:block - unscoped,
+   these headers never became flex containers and the gap below did nothing. */
+.ff-sidebar .ff-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5em 0.75em;
+  border: 0;
+  cursor: pointer;
+  color: var(--bulma-text-weak);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ff-sidebar .ff-acc-head:hover { color: var(--bulma-text); }
+/* A fixed box keeps the gap to the label reading the same closed (>) and open (v), since the
+   glyph's side bearings swap places when it rotates. */
+.ff-sidebar .ff-acc-chevron {
+  flex: none;
+  width: 0.8rem;
+  text-align: center;
+  transition: transform 0.15s ease;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.ff-sidebar .ff-acc-head.is-open .ff-acc-chevron { transform: rotate(90deg); }
+.ff-acc-body { margin: 0 0 0.35rem; }
+/* An accordion's entries are muted against the top-level items, which is what marks them as
+   belonging to the group now that they are no longer indented. */
+.ff-acc-body a { color: var(--bulma-text-weak); }
+.ff-acc-empty {
+  display: block;
+  padding: 0.5em 0.75em;
+  color: var(--bulma-text-weak);
+  font-size: 0.85rem;
+}
+/* The right-aligned tally on a sidebar entry: media items in a category, items carrying a tag. */
+.ff-side-count {
+  float: right;
+  color: var(--bulma-text-weak);
+  font-size: 0.8rem;
+}
+
+/* Curated tags: the chip row on the detail page and its inline editor. */
+.ff-usertags { align-items: center; }
+.ff-usertags .tag a { color: inherit; }
+.ff-tag-add {
+  border: 1px dashed var(--bulma-border);
+  background: none;
+  color: var(--bulma-text-weak);
+  cursor: pointer;
+}
+.ff-tag-add:hover { color: var(--bulma-link); border-color: var(--bulma-link); }
+.ff-tag-input { width: 12rem; }
+.ff-tag-rename { max-width: 16rem; }
+.ff-tag-actions { display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }
+.ff-main { flex: 1; padding: 1.25rem; overflow-y: auto; background: var(--ff-content-bg); }
 
 .ff-auth-foot { margin-top: 1.25rem; }
 .ff-foot-links {

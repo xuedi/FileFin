@@ -19,19 +19,29 @@ import (
 	"filefin/internal/state"
 )
 
+// MetaVersion is the current meta.json shape. Version 2 split the single "tags" list
+// into "genres" (what the API supplies) and "tags" (what a human curates); a file at
+// version 1 or with no version key stores its genres under the old "tags" key, and
+// ReadMeta folds it so every caller sees the version 2 shape.
+const MetaVersion = 2
+
 // Meta is a media folder's metadata, serialized to meta.json. The app edits it
 // through the GUI, so structured JSON is cleaner than markdown. It carries the OMDb
 // field set plus a ffprobe-derived technical block.
 type Meta struct {
-	Title       string             `json:"title"`
-	Year        int                `json:"year"`
-	Description string             `json:"description,omitempty"`
-	Plot        string             `json:"plot,omitempty"`
-	Metadata    map[string]string  `json:"metadata,omitempty"`
-	Ratings     map[string]string  `json:"ratings,omitempty"`
-	Actors      []string           `json:"actors,omitempty"`
-	Tags        []string           `json:"tags,omitempty"`
-	Technical   *ffprobe.Technical `json:"technical,omitempty"`
+	Version     int               `json:"version,omitempty"`
+	Title       string            `json:"title"`
+	Year        int               `json:"year"`
+	Description string            `json:"description,omitempty"`
+	Plot        string            `json:"plot,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Ratings     map[string]string `json:"ratings,omitempty"`
+	Actors      []string          `json:"actors,omitempty"`
+	// Genres come from the metadata source (OMDb, Plex, Jellyfin) and are replaced on
+	// every re-enrich; Tags are hand-curated and no agent ever writes them.
+	Genres    []string           `json:"genres,omitempty"`
+	Tags      []string           `json:"tags,omitempty"`
+	Technical *ffprobe.Technical `json:"technical,omitempty"`
 	// Enriched is true once the enrichment agent has filled this folder from OMDb. A
 	// freshly imported folder carries stub metadata with Enriched false; the scan
 	// queues those, and the agent flips it true after a successful lookup.
@@ -44,6 +54,7 @@ type Meta struct {
 
 // WriteMeta writes meta.json into folder, overwriting any existing file.
 func WriteMeta(folder string, m Meta) error {
+	m.Version = MetaVersion
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal meta: %w", err)
@@ -55,7 +66,8 @@ func WriteMeta(folder string, m Meta) error {
 }
 
 // ReadMeta parses a media folder's meta.json. A cache rebuild uses it to recover the
-// title/year/description it once wrote.
+// title/year/description it once wrote. A pre-version-2 file is folded into the current
+// shape on the way out, so no caller has to know the old layout existed.
 func ReadMeta(folder string) (Meta, error) {
 	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
 	if err != nil {
@@ -65,7 +77,36 @@ func ReadMeta(folder string) (Meta, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Meta{}, fmt.Errorf("parse meta.json in %s: %w", folder, err)
 	}
-	return m, nil
+	return upgradeMeta(m), nil
+}
+
+// upgradeMeta folds a legacy Meta into the current shape. Before version 2 the "tags"
+// key held the genres the metadata source supplied, so it moves to Genres and the
+// curated Tags list starts empty. Already-current files pass through untouched.
+func upgradeMeta(m Meta) Meta {
+	if m.Version < MetaVersion {
+		if len(m.Genres) == 0 {
+			m.Genres = m.Tags
+		}
+		m.Tags = nil
+		m.Version = MetaVersion
+	}
+	return m
+}
+
+// NeedsUpgrade reports whether a folder's meta.json is still stored in a pre-version-2
+// shape, so a caller already reading every folder can rewrite it (see the cache backfill).
+// A missing or unparseable file reports false: that is the health agent's concern.
+func NeedsUpgrade(folder string) bool {
+	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
+	if err != nil {
+		return false
+	}
+	var m Meta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	return m.Version < MetaVersion
 }
 
 // StubMeta is the minimal metadata used when no OMDb enrichment is available.
@@ -110,11 +151,11 @@ func (b *metaBuilder) rate(key, val string) {
 	}
 }
 
-// addTags appends each non-empty genre, lowercased.
-func (b *metaBuilder) addTags(genres []string) {
+// addGenres appends each non-empty genre, lowercased.
+func (b *metaBuilder) addGenres(genres []string) {
 	for _, g := range genres {
 		if g = strings.TrimSpace(g); g != "" {
-			b.m.Tags = append(b.m.Tags, strings.ToLower(g))
+			b.m.Genres = append(b.m.Genres, strings.ToLower(g))
 		}
 	}
 }
@@ -131,8 +172,8 @@ func (b *metaBuilder) build() Meta {
 }
 
 // MetaFromOMDb maps an OMDb result into a Meta. The caller's title/year always win
-// over OMDb's so the file matches its folder name. "N/A" values are dropped, genres
-// are lowercased into tags.
+// over OMDb's so the file matches its folder name. "N/A" values are dropped and genres
+// are lowercased.
 func MetaFromOMDb(mv *omdb.Movie, title string, year int) Meta {
 	b := newMetaBuilder(title, year, clean(mv.Plot))
 	b.m.Enriched = true
@@ -154,7 +195,7 @@ func MetaFromOMDb(mv *omdb.Movie, title string, year int) Meta {
 	b.rate("rottenTomatoes", mv.RatingBySource("Rotten Tomatoes"))
 	b.rate("metacritic", metacritic(mv))
 	b.m.Actors = append(b.m.Actors, splitList(mv.Actors)...)
-	b.addTags(splitList(mv.Genre))
+	b.addGenres(splitList(mv.Genre))
 	return b.build()
 }
 
@@ -177,7 +218,7 @@ func MetaFromPlex(item plex.Item) Meta {
 	b.add("contentRating", item.ContentRating)
 	b.rate("plex", item.Rating)
 	b.m.Actors = append(b.m.Actors, item.Actors...)
-	b.addTags(item.Genres)
+	b.addGenres(item.Genres)
 	return b.build()
 }
 
@@ -197,6 +238,9 @@ func MergeMeta(base, add Meta) Meta {
 	out.Ratings = mergeStringMap(out.Ratings, add.Ratings)
 	if len(out.Actors) == 0 {
 		out.Actors = add.Actors
+	}
+	if len(out.Genres) == 0 {
+		out.Genres = add.Genres
 	}
 	if len(out.Tags) == 0 {
 		out.Tags = add.Tags

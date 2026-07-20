@@ -62,6 +62,8 @@ func searchWhere(field, q string) (string, []any, bool) {
 	case "cast":
 		return facetExists("actor"), []any{p}, true
 	case "genre":
+		return facetExists("genre"), []any{p}, true
+	case "tag":
 		return facetExists("tag"), []any{p}, true
 	case "language":
 		return like("language"), []any{p}, true
@@ -71,14 +73,14 @@ func searchWhere(field, q string) (string, []any, bool) {
 		return like("writer"), []any{p}, true
 	default: // "all" and any unknown scope
 		cols := []string{"title", "description", "plot", "language", "country", "director", "writer"}
-		ors := make([]string, 0, len(cols)+2)
-		args := make([]any, 0, len(cols)+2)
+		ors := make([]string, 0, len(cols)+3)
+		args := make([]any, 0, len(cols)+3)
 		for _, c := range cols {
 			ors = append(ors, like(c))
 			args = append(args, p)
 		}
-		ors = append(ors, facetExists("actor"), facetExists("tag"))
-		args = append(args, p, p)
+		ors = append(ors, facetExists("actor"), facetExists("genre"), facetExists("tag"))
+		args = append(args, p, p, p)
 		return strings.Join(ors, " OR "), args, true
 	}
 }
