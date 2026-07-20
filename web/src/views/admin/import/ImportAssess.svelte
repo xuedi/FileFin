@@ -44,6 +44,9 @@
               <input class="input is-small ff-inline-input" bind:value={app.editTitle} onkeydown={(e) => e.key === 'Enter' && app.saveImportEdit()} />
             {:else}
               {group.title || '(unknown)'}
+              {#if group.duplicate}
+                <span class="tag is-warning is-light" title="Already in the library: {group.duplicate}">in library</span>
+              {/if}
             {/if}
           </td>
           <td>
@@ -84,6 +87,11 @@
       Delete originals from the import folder after a successful import
     {/if}
   </label>
+  {#if app.assessDuplicates > 0}
+    <p class="has-text-warning ff-dup-warning">
+      {app.assessDuplicates} of these are already in the library - remove them with X unless you mean to import them again.
+    </p>
+  {/if}
   <div>
     <button class="button is-primary" disabled={app.assessRows.length === 0} onclick={() => app.startImportBatch()}>Start import</button>
   </div>

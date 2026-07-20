@@ -283,6 +283,86 @@ func TestDeleteAfterRemovesSource(t *testing.T) {
 	}
 }
 
+func TestAssessFlagsMediaAlreadyInLibrary(t *testing.T) {
+	imp := t.TempDir()
+	for _, name := range []string{"(1999) The Matrix.mkv", "(1982) Blade Runner.mkv"} {
+		if err := os.WriteFile(filepath.Join(imp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	// Import The Matrix, then assess the same folder again: only that row is flagged.
+	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	for _, r := range rows {
+		if r.Title == "The Matrix" {
+			s.importOne(ctx, pool, r)
+		}
+	}
+
+	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	var staged []db.Import
+	if err := json.Unmarshal(rr.Body.Bytes(), &staged); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range staged {
+		switch r.Title {
+		case "The Matrix":
+			if !strings.Contains(r.Duplicate, "The Matrix (1999)") {
+				t.Fatalf("imported media should be flagged as a duplicate, got %q", r.Duplicate)
+			}
+		default:
+			if r.Duplicate != "" {
+				t.Fatalf("%s is not in the library but was flagged: %q", r.Title, r.Duplicate)
+			}
+		}
+	}
+}
+
+// A show already in the library is not a duplicate per se: only an episode it already
+// holds is, so the next episode of a running series stages clean.
+func TestDuplicateCheckIsPerEpisode(t *testing.T) {
+	imp := t.TempDir()
+	for _, name := range []string{"Firefly - S01E01.mkv", "Firefly - S01E02.mkv"} {
+		if err := os.WriteFile(filepath.Join(imp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, h, admin, catID := importServer(t, imp)
+
+	do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	do(t, h, "POST", "/api/admin/import/start", "", admin)
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	for _, r := range rows {
+		if r.Episode == 1 {
+			s.importOne(ctx, pool, r)
+		}
+	}
+
+	rr := do(t, h, "POST", "/api/admin/import/assess", `{"categoryId":`+strconv.FormatInt(catID, 10)+`}`, admin)
+	var staged []db.Import
+	if err := json.Unmarshal(rr.Body.Bytes(), &staged); err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 2 {
+		t.Fatalf("want 2 staged rows, got %d", len(staged))
+	}
+	for _, r := range staged {
+		if r.Episode == 1 && r.Duplicate == "" {
+			t.Fatalf("the already-imported episode should be flagged: %+v", r)
+		}
+		if r.Episode == 2 && r.Duplicate != "" {
+			t.Fatalf("a new episode must not be flagged: %q", r.Duplicate)
+		}
+	}
+}
+
 func TestDeleteAfterClearsFolderAndSidecars(t *testing.T) {
 	imp := t.TempDir()
 	dir := filepath.Join(imp, "The.Matrix.1999.1080p", "release")

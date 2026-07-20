@@ -373,16 +373,24 @@ export class AppState {
       const key = (r.title || '') + ' ' + (r.year || 0)
       let g = map.get(key)
       if (!g) {
-        g = { key, title: r.title, year: r.year, category: r.category, ids: [], count: 0, hasPoster: false, subCount: 0 }
+        g = {
+          key, title: r.title, year: r.year, category: r.category,
+          ids: [], count: 0, hasPoster: false, subCount: 0, duplicate: '',
+        }
         map.set(key, g)
       }
       g.ids.push(r.id)
       g.count++
       if (r.hasPoster) g.hasPoster = true
       g.subCount += r.subCount || 0
+      if (r.duplicate && !g.duplicate) g.duplicate = r.duplicate
     }
     return [...map.values()]
   })
+
+  // How many staged items the library already holds, so the preCheck page can warn once
+  // above the button instead of relying on the per-row markers being spotted.
+  assessDuplicates = $derived(this.assessGroups.filter((g) => g.duplicate).length)
 
   // a library is ready to stage when it resolves green (paths located)
   plexReady = $derived(

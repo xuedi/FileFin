@@ -65,6 +65,11 @@ type Import struct {
 	// The importer and preCheck page treat every row the same, but the UI uses it to
 	// drive source-specific affordances (e.g. Plex locks delete-after off).
 	Origin string `json:"origin"`
+	// Duplicate names the library item this row would import a second time, empty when
+	// the media is new. It is derived when rows are handed to the preCheck page, never
+	// stored: the library and the row's own title/year both keep changing, so a stale
+	// answer would be worse than none.
+	Duplicate string `json:"duplicate"`
 }
 
 // InsertImport inserts a staged import row and returns its new id.

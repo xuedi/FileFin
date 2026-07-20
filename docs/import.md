@@ -24,7 +24,8 @@ The import pipeline is split in two halves that only meet at the `imports` table
 - The **preCheck page** is the single mandatory checkpoint every flow lands on. It shows
   the staged `preCheck` rows so the admin can review, edit titles and years, drop rows,
   and finally press **Start import**, which flips those rows to `import`. No source
-  bypasses it; nothing is copied before it.
+  bypasses it; nothing is copied before it. Rows the library already holds are marked
+  here (see **Duplicate detection** below).
 - The **importer** (consumer) is a single shared background process. It drains rows
   whose status is `import`, copies the file into the canonical layout, places any sidecar
   subtitles, extracts embedded subtitle tracks (below), places the poster, probes it with
@@ -113,6 +114,9 @@ stateDiagram-v2
 | `api_json`    | source-supplied `meta.json` blob; written by Plex (an `importer.Meta` from Plex's fields), empty for folder/upload. The importer writes it verbatim but leaves the folder unenriched, so the enricher later fills gaps additively. OMDb is still never called here |
 | `origin`      | which front stage produced the row (`folder` / `upload` / `plex`); a UI hint only, the importer ignores it |
 
+The `duplicate` field on the wire has no column behind it: it is derived per response from
+the live library (see **Duplicate detection**).
+
 `delete_after` makes the source a **vacuum**: when set, the importer deletes the source
 file once the copy and `media` row are committed (best-effort - a failed delete is logged,
 not fatal, because the import already succeeded). It removes the whole footprint, not just
@@ -135,6 +139,26 @@ unfinished row pointing into a session dir completes, the importer removes the w
 `filefin-upload-*` dir that is past a short idle TTL and referenced by no unfinished row
 (files uploaded but never started, or a session abandoned before assessment); a dir whose
 `preCheck` rows still exist is kept regardless of age.
+
+## Duplicate detection
+
+Every staged row is checked against the existing library before it can be started, so
+importing something that is already there is caught on the preCheck page instead of after
+the copy. The check is **derived, never stored**: it runs each time rows are handed to the
+page (assessment, listing, and again after a title/year edit), because both the library and
+the row's own title/year keep moving.
+
+Pairing reuses the **watchlist matcher** (`mdl.md`, `mal.md`) - the same normalized-title,
+year-strict logic the watch-history imports use - so a row matches a library item on an
+exact or confident grade only; the matcher's approximate grade is ignored, since a guessed
+duplicate would train the admin to click past the warning. An **episode** row is judged
+differently: a show folder matching by title is expected, so it counts as a duplicate only
+when the matched item already holds that exact season/episode, and the next episode of a
+running series stages clean.
+
+The result is advisory. The page marks each matched row and warns above **Start import**,
+but nothing is blocked or dropped automatically - a deliberate re-import (a better rip of a
+film already in the library) stays the admin's call.
 
 ## Subtitles
 

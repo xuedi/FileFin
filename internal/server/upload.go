@@ -147,6 +147,7 @@ func (s *Server) handleUploadAssess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not stage the uploaded files", http.StatusInternalServerError)
 		return
 	}
+	s.markDuplicates(r.Context(), pool, rows)
 	writeJSON(w, rows)
 }
 

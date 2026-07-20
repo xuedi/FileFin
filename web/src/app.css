@@ -165,6 +165,7 @@ body { min-height: 100vh; }
 .ff-toast-success { background: var(--bulma-success); }
 .ff-toast-error { background: var(--bulma-danger); }
 .ff-delete-after { display: inline-flex; align-items: center; gap: 0.5rem; margin: 1rem 0; }
+.ff-dup-warning { margin-bottom: 1rem; }
 .ff-prog-section { margin-top: 1.4rem; }
 .ff-prog-waiting { margin-top: 0.5rem; }
 

@@ -92,6 +92,7 @@ func (s *Server) handleAssess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not assess the import folder", http.StatusInternalServerError)
 		return
 	}
+	s.markDuplicates(r.Context(), pool, rows)
 	writeJSON(w, rows)
 }
 
@@ -197,6 +198,7 @@ func (s *Server) handleListImports(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not list imports", http.StatusInternalServerError)
 		return
 	}
+	s.markDuplicates(r.Context(), pool, rows)
 	writeJSON(w, rows)
 }
 
@@ -247,7 +249,11 @@ func (s *Server) handleUpdateImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, row)
+	// The edited title/year decide the match, so the warning is recomputed here rather
+	// than carried over from the assessment.
+	rows := []db.Import{row}
+	s.markDuplicates(ctx, pool, rows)
+	writeJSON(w, rows[0])
 }
 
 // handleDeleteImport drops a row and its temp poster.
