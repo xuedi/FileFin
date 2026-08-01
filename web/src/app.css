@@ -268,8 +268,10 @@ body { min-height: 100vh; }
   border: 0;
   padding: 0;
 }
-/* the incoming-vs-library comparison behind a Dup marker: anchored to the marker, opening
-   upwards on the lower half of a long table so the last row is not cut off by the viewport */
+/* the incoming-vs-library comparison behind a Dup marker: anchored to the marker and always
+   opening downwards. Flipping it upwards near the end of the table was worse: on a short table
+   the last row is at the top of the page, so the panel landed under the browser chrome with no
+   way to reach it, while a panel running past the bottom can simply be scrolled to. */
 .ff-dup { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
 .ff-dup-replace { font-size: 0.75rem; color: var(--bulma-text-weak); white-space: nowrap; }
 .ff-dup-panel {
@@ -288,7 +290,6 @@ body { min-height: 100vh; }
   border-radius: 6px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
-tbody tr:nth-last-child(-n + 4) .ff-dup-panel { top: auto; bottom: 100%; }
 .ff-dup-table { margin-bottom: 0; font-size: 0.8rem; }
 .ff-dup-table th, .ff-dup-table td { white-space: nowrap; vertical-align: top; }
 .ff-dup-wrap { white-space: normal; word-break: break-all; }
