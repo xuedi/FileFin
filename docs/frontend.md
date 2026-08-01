@@ -115,7 +115,9 @@ results grid renders it and the sidebar entry marks itself active off the live q
 carrying an admin-only inline editor (type-ahead `<datalist>` over the vocabulary, `x` per chip).
 
 The top bar is a Bulma `navbar`: the **FileFin** brand on the left, which is a link back to the
-library home, and a right-aligned `navbar-end` holding a username dropdown. The dropdown's trigger
+library home, and a right-aligned `navbar-end` holding an admin-only **+** shortcut straight to
+the import page (importing is a repeated errand, and it is the only shortcut in the bar; a
+non-admin is never shown a door they cannot open) and a username dropdown. The dropdown's trigger
 is the current user's display name; its items are **Settings** (routes to `/settings`), **Admin**
 (admin-only, routes to the admin area), and **Sign out**, with `is-active` marking the current
 view. It is a click-toggle backed by `AppState.userMenuOpen` and closes on an outside click (a

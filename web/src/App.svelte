@@ -79,6 +79,17 @@
     </div>
     <div class="navbar-menu">
       <div class="navbar-end">
+        <!-- Importing is a repeated errand, so it gets the one shortcut in the bar. Only an
+             admin can import, so nobody else is shown a door they cannot open. -->
+        {#if app.me.admin}
+          <a
+            href={null}
+            class="navbar-item ff-import-shortcut"
+            class:is-active={app.view === 'admin' && app.adminView === 'import'}
+            title="Import media"
+            aria-label="Import media"
+            onclick={() => app.openAdminImport()}>+</a>
+        {/if}
         <div class="navbar-item has-dropdown" class:is-active={app.userMenuOpen}>
           <a href={null} class="navbar-link" onclick={(e) => { e.stopPropagation(); app.userMenuOpen = !app.userMenuOpen }}>{app.me.alias || app.me.user}</a>
           <div class="navbar-dropdown is-right">
