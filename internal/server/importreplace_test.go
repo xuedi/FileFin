@@ -247,6 +247,79 @@ func TestReplaceSwapsThePayloadAndKeepsTheIdentity(t *testing.T) {
 	}
 }
 
+// The page offers no category picker on a replacing row (the item's own folder decides), so
+// it sends none - and the row must still reach that item's category.
+func TestReplaceNeedsNoCategoryOfItsOwn(t *testing.T) {
+	imp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imp, "(1999) The Matrix.mkv"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, h, admin, catID := importServer(t, imp)
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	dir, mediaID := seedLibraryItem(t, s, h, admin, catID)
+
+	if err := os.WriteFile(filepath.Join(imp, "The.Matrix.1999.2160p.mp4"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items := scanImport(t, h, admin)
+	if rr := startReplaceOf(t, h, admin, 0, items); rr.Code != 200 ||
+		!strings.Contains(rr.Body.String(), `"started":1`) {
+		t.Fatalf("start replace without a category: %d %s", rr.Code, rr.Body.String())
+	}
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 1 || rows[0].ReplaceMediaID != mediaID {
+		t.Fatalf("staged rows = %+v", rows)
+	}
+	if rows[0].CategoryID != catID {
+		t.Fatalf("row category = %d, want the library item's %d", rows[0].CategoryID, catID)
+	}
+	s.importOne(ctx, pool, rows[0])
+	if _, err := os.Stat(filepath.Join(dir, "(1999) The Matrix.mp4")); err != nil {
+		t.Fatalf("replacement did not land in the item's folder: %v", err)
+	}
+}
+
+// A tick that goes stale between the table being drawn and Import being pressed leaves the
+// row with no category at all, since a replacing row picks none. The markers' guess stands in
+// so the file is imported as new rather than dropped.
+func TestStaleReplaceFallsBackToTheGuessedCategory(t *testing.T) {
+	imp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(imp, "(1999) The Matrix.mkv"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, h, admin, catID := importServer(t, imp)
+	ctx := context.Background()
+	pool, _ := s.ensureDB(ctx)
+	seedLibraryItem(t, s, h, admin, catID)
+
+	if err := os.WriteFile(filepath.Join(imp, "The.Matrix.1999.2160p.mp4"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items := scanImport(t, h, admin)
+	if len(items) != 1 || items[0].DuplicateID == "" {
+		t.Fatalf("expected a duplicate to tick, got %+v", items)
+	}
+	// The library item leaves between the scan and the press.
+	if _, err := pool.ExecContext(ctx, `DELETE FROM media`); err != nil {
+		t.Fatal(err)
+	}
+	if rr := startReplaceOf(t, h, admin, 0, items); rr.Code != 200 ||
+		!strings.Contains(rr.Body.String(), `"started":1`) {
+		t.Fatalf("start: %d %s", rr.Code, rr.Body.String())
+	}
+	rows, _ := db.ListImports(ctx, pool, db.StatusImport)
+	if len(rows) != 1 {
+		t.Fatalf("staged rows = %d, want 1", len(rows))
+	}
+	if rows[0].ReplaceMediaID != "" {
+		t.Fatalf("a stale tick must not stage a replace: %q", rows[0].ReplaceMediaID)
+	}
+	if rows[0].CategoryID != catID {
+		t.Fatalf("row category = %d, want the guessed %d", rows[0].CategoryID, catID)
+	}
+}
+
 func TestReplaceOfAVanishedItemImportsNormally(t *testing.T) {
 	imp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(imp, "(1999) The Matrix.mkv"), []byte("bytes"), 0o644); err != nil {

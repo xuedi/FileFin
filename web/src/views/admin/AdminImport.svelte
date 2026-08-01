@@ -91,17 +91,23 @@
             </td>
             <td>
               <div class="ff-import-category">
-                <div class="select is-small">
-                  <select bind:value={item.categoryId} disabled={item.replace}>
-                    {#each app.categoryTree as c}
-                      <option value={c.id}>{treeMarker(c._depth)}{c.alias}</option>
-                    {/each}
-                  </select>
-                </div>
                 {#if item.replace}
-                  <span class="tag is-small ff-guess" title="A replacement lands in the folder of the item it replaces, so that item's category decides">stays put</span>
-                {:else if item.categoryReason}
-                  <span class="tag is-small ff-guess" title={'Preselected because ' + item.categoryReason}>why</span>
+                  <!-- The file lands in the folder of the item it replaces, so there is
+                       nothing to pick here and an empty dropdown would only mislead. -->
+                  <span class="has-text-grey" title="A replacement lands in the folder of the item it replaces, so that item's category decides where it goes">
+                    where it already is
+                  </span>
+                {:else}
+                  <div class="select is-small">
+                    <select bind:value={item.categoryId}>
+                      {#each app.categoryTree as c}
+                        <option value={c.id}>{treeMarker(c._depth)}{c.alias}</option>
+                      {/each}
+                    </select>
+                  </div>
+                  {#if item.categoryReason}
+                    <span class="tag is-small ff-guess" title={'Preselected because ' + item.categoryReason}>why</span>
+                  {/if}
                 {/if}
               </div>
             </td>

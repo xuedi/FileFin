@@ -382,7 +382,11 @@ this item's payload". The identity stays with the library item and only the vide
   reconcile uses, rather than patched.
 
 Because the replacement lands in that folder, the row's category follows the library item rather
-than the dropdown, and the page locks the dropdown to say so.
+than the dropdown. The page drops the dropdown from a ticked row altogether - there is nothing to
+pick - and such a row counts as ready without one. Should the tick have gone stale by the time
+Import is pressed, the row would then have no category at all, so the markers' guess
+(**Which category a row is preselected into**, above) stands in and the file is imported as new
+rather than dropped.
 
 ```mermaid
 flowchart TD

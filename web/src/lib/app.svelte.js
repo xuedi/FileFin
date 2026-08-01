@@ -1927,7 +1927,12 @@ export class AppState {
     this.importItems = [...this.importItems, item].sort((a, b) => a.order - b.order)
   }
 
-  importReady = $derived(this.importItems.length > 0 && this.importItems.every((i) => i.categoryId > 0))
+  // A replacement lands in the folder of the item it replaces, so that item's category
+  // decides where it goes: such a row needs no pick of its own to be ready.
+  importReady = $derived(
+    this.importItems.length > 0 &&
+      this.importItems.every((i) => i.categoryId > 0 || (i.duplicate && i.replace)),
+  )
   importReplacing = $derived(this.importItems.filter((i) => i.duplicate && i.replace).length)
 
   // openDupCompare loads, once, the incoming-vs-library comparison behind a Dup marker and

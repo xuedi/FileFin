@@ -118,10 +118,8 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 			break
 		}
 	}
-	byID := map[string]importItem{}
-	for _, it := range items {
-		byID[it.ID] = it
-	}
+	byID := itemsByID(items)
+	predicted := false // the category guess is only derived when a row turns out to need it
 	staged, skipped := 0, 0
 	for _, want := range req.Items {
 		it, ok := byID[want.ID]
@@ -139,6 +137,17 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 			} else if m, err := db.GetMedia(ctx, pool, replaceID); err == nil {
 				categoryID = m.CategoryID // the item's own folder decides where the file lands
 			}
+		}
+		// A replacing row picks no category of its own, so a tick that has gone stale would
+		// leave it with none at all. The markers' guess stands in, and the row imports as new
+		// instead of being dropped for a decision the page never had to make.
+		if categoryID == 0 {
+			if !predicted {
+				s.predictCategories(items)
+				predicted = true
+				byID = itemsByID(items)
+			}
+			categoryID = byID[want.ID].CategoryID
 		}
 		cat, ok := s.categoryByID(categoryID)
 		if !ok {
@@ -173,6 +182,15 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 		Started int `json:"started"`
 		Skipped int `json:"skipped"`
 	}{staged, skipped})
+}
+
+// itemsByID indexes a scan by the stable row id the page hands back.
+func itemsByID(items []importItem) map[string]importItem {
+	out := make(map[string]importItem, len(items))
+	for _, it := range items {
+		out[it.ID] = it
+	}
+	return out
 }
 
 // stageItem writes one import row per file of a recognised media, already in the import
