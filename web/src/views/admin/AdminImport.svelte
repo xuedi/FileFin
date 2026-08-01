@@ -1,6 +1,7 @@
 <script>
   import { getContext } from 'svelte'
   import { treeMarker, humanSize } from '../../lib/app.svelte.js'
+  import DupCompare from '../../components/DupCompare.svelte'
   const app = getContext('app')
 
   // confidenceHint spells out why a row is not fully trusted, so the marker explains itself
@@ -70,19 +71,36 @@
             <td>{#if item.subCount > 0}<span class="has-text-success has-text-weight-bold" title="Subtitle files found">{item.subCount}</span>{/if}</td>
             <td class="has-text-centered">
               {#if item.duplicate}
-                <span class="ff-dup-icon" title="Already in the library: {item.duplicate}">&#9888;</span>
+                <div class="ff-dup">
+                  <button
+                    class="ff-dup-icon"
+                    aria-label="Compare with the copy already in the library: {item.duplicate}"
+                    onmouseenter={() => app.openDupCompare(item.id, `/api/admin/import/folder/${item.id}/duplicate`)}
+                    onfocus={() => app.openDupCompare(item.id, `/api/admin/import/folder/${item.id}/duplicate`)}
+                    onmouseleave={() => app.closeDupCompare(item.id)}
+                    onblur={() => app.closeDupCompare(item.id)}>&#9888;</button>
+                  {#if app.dupKey === item.id}
+                    <DupCompare data={app.dupCache[item.id]} loading={app.dupLoading} error={app.dupError} />
+                  {/if}
+                  <label class="checkbox ff-dup-replace" title="Replace the copy already in the library with this file. Its metadata, poster, tags and watch state are kept.">
+                    <input type="checkbox" bind:checked={item.replace} />
+                    replace
+                  </label>
+                </div>
               {/if}
             </td>
             <td>
               <div class="ff-import-category">
                 <div class="select is-small">
-                  <select bind:value={item.categoryId}>
+                  <select bind:value={item.categoryId} disabled={item.replace}>
                     {#each app.categoryTree as c}
                       <option value={c.id}>{treeMarker(c._depth)}{c.alias}</option>
                     {/each}
                   </select>
                 </div>
-                {#if item.categoryReason}
+                {#if item.replace}
+                  <span class="tag is-small ff-guess" title="A replacement lands in the folder of the item it replaces, so that item's category decides">stays put</span>
+                {:else if item.categoryReason}
                   <span class="tag is-small ff-guess" title={'Preselected because ' + item.categoryReason}>why</span>
                 {/if}
               </div>
@@ -105,6 +123,12 @@
       <input type="checkbox" bind:checked={app.purgeFolder} disabled={!app.deleteAfter} />
       Clean up also non imported media: delete all data in the import folder after the import
     </label>
+    {#if app.importReplacing > 0}
+      <p class="has-text-warning ff-dup-warning">
+        {app.importReplacing} of these replace the copy already in the library: the old file is deleted once the new
+        one is in place, while its metadata, poster, tags and watch state are kept.
+      </p>
+    {/if}
     <div>
       <button class="button is-primary" disabled={!app.importReady} onclick={() => app.startFolderImport()}>Import</button>
     </div>

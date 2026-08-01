@@ -34,8 +34,12 @@ type subtitleInfo struct {
 }
 
 type fileInfo struct {
-	Index     int            `json:"index"`
-	Name      string         `json:"name"`
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	// Path is where the file sits, relative to the data dir, and Size how much it takes:
+	// the detail page names the file its technical block describes.
+	Path      string         `json:"path"`
+	Size      int64          `json:"size"`
 	Season    int            `json:"season"`
 	Episode   int            `json:"episode"`
 	Ext       string         `json:"ext"`
@@ -292,10 +296,12 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	// Sidecar subtitles in the media folder: those the importer placed alongside the
 	// source, plus any an admin later drops in beside the media.
 	folderEntries, _ := folderFileNames(m.Path)
+	dataDir := s.dataDir()
 	for _, f := range files {
 		_, needsTranscode := playbackTarget(f)
 		fi := fileInfo{
-			Index: f.Idx, Name: f.Name, Season: f.Season, Episode: f.Episode,
+			Index: f.Idx, Name: f.Name, Path: relTo(dataDir, f.Path), Size: fileSize(f.Path),
+			Season: f.Season, Episode: f.Episode,
 			Ext: f.Ext, Transcode: needsTranscode, Subtitles: []subtitleInfo{},
 		}
 		base := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))

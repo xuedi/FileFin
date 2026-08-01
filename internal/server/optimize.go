@@ -369,6 +369,12 @@ func (s *Server) runOptimizeTask(ctx context.Context, pool *sql.DB, task db.Opti
 	ffmpeg, ffprobe := s.cfg.FFmpeg(), s.cfg.FFprobe()
 	s.mu.RUnlock()
 
+	// An import can replace this very file while the encode runs. The output would then be
+	// a copy of a payload that no longer exists, renamed into place with a fresh mtime -
+	// which is exactly what playback reads as "current". So the source is stamped here and
+	// checked again before the rename.
+	srcStamp, srcStamped := fileStamp(task.SourcePath)
+
 	streams, err := transcode.Probe(ctx, ffprobe, task.SourcePath)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -402,6 +408,13 @@ func (s *Server) runOptimizeTask(ctx context.Context, pool *sql.DB, task db.Opti
 		}
 		_ = db.FailTask(ctx, pool, task.ID, err.Error())
 		s.olog().Error("optimize failed for "+film, logging.Fields{"film": film, "error": err.Error()})
+		return
+	}
+	if now, ok := fileStamp(task.SourcePath); srcStamped && (!ok || now != srcStamp) {
+		// Dropping the row rather than failing it lets the planner queue the new payload.
+		_ = db.FinishTask(ctx, pool, task.ID)
+		s.olog().Info("discarded the optimized copy of "+film+": the file changed while it encoded",
+			logging.Fields{"film": film, "path": task.SourcePath})
 		return
 	}
 	if err := os.Rename(tmp, task.OptimizedPath); err != nil {

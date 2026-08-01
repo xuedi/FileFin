@@ -332,6 +332,13 @@ export class AppState {
   importSkipped = $state([]) // rows taken off the table with X, offered back under the button
   importScanning = $state(false)
   importScanError = $state('')
+  // The incoming-vs-library comparison behind a Dup marker. dupKey names the marker whose
+  // panel is open ('' = none); the answers are cached per marker because the scan behind one
+  // walks the whole import folder, so a second hover must cost nothing.
+  dupKey = $state('')
+  dupCache = $state({})
+  dupLoading = $state(false)
+  dupError = $state('')
 
   uploadFiles = $state([])
   uploadProgress = $state([]) // { name, pct, status: 'pending'|'up'|'done'|'error' }
@@ -408,6 +415,9 @@ export class AppState {
 
   // --- derived ---
   seasons = $derived(groupSeasons(this.detail))
+  // The file the detail page's technical block describes, and what the whole item weighs.
+  currentFileInfo = $derived(this.detail?.files.find((f) => f.index === this.currentFile) ?? null)
+  detailBytes = $derived((this.detail?.files ?? []).reduce((n, f) => n + (f.size || 0), 0))
   currentEpisodes = $derived(this.seasons.find((s) => s.season === this.currentSeason)?.episodes ?? [])
   // "Continue" rather than "Play" when there is an unfinished resume point.
   hasResume = $derived(
@@ -427,7 +437,7 @@ export class AppState {
       if (!g) {
         g = {
           key, title: r.title, year: r.year, category: r.category,
-          ids: [], count: 0, hasPoster: false, subCount: 0, duplicate: '',
+          ids: [], count: 0, hasPoster: false, subCount: 0, duplicate: '', replace: false,
         }
         map.set(key, g)
       }
@@ -436,6 +446,7 @@ export class AppState {
       if (r.hasPoster) g.hasPoster = true
       g.subCount += r.subCount || 0
       if (r.duplicate && !g.duplicate) g.duplicate = r.duplicate
+      if (r.replaceMediaId) g.replace = true
     }
     return [...map.values()]
   })
@@ -1872,11 +1883,14 @@ export class AppState {
       const fallback = this.categories.find((c) => c.name === this.importCategory)?.id ?? this.categories[0]?.id ?? 0
       // Least trustworthy first: those are the rows worth reading before pressing Import.
       const rank = { low: 0, medium: 1, high: 2 }
+      this.dupCache = {}
+      this.dupKey = ''
       this.importItems = (r.items || [])
         .map((it, order) => ({
           ...it,
           order, // scan order, so a row taken back lands where it was
           year: it.year || '',
+          replace: false, // ticking it swaps the library copy instead of adding a second one
           // The markers' guess wins when it earned one; below the evidence threshold the row
           // falls back to the plain default and says nothing about why.
           categoryId: it.categoryId || this.categoryForKind(it.isShow) || fallback,
@@ -1914,17 +1928,50 @@ export class AppState {
   }
 
   importReady = $derived(this.importItems.length > 0 && this.importItems.every((i) => i.categoryId > 0))
+  importReplacing = $derived(this.importItems.filter((i) => i.duplicate && i.replace).length)
+
+  // openDupCompare loads, once, the incoming-vs-library comparison behind a Dup marker and
+  // opens its panel. url differs per table (a scanned item vs a staged row); the key is
+  // whatever identifies the marker within its page.
+  async openDupCompare(key, url) {
+    this.dupKey = key
+    this.dupError = ''
+    if (this.dupCache[key]) return
+    this.dupLoading = true
+    try {
+      this.dupCache = { ...this.dupCache, [key]: await api(url) }
+    } catch (e) {
+      this.dupError = (await errText(e)) || 'Could not read the comparison'
+    } finally {
+      this.dupLoading = false
+    }
+  }
+
+  closeDupCompare(key) {
+    if (this.dupKey === key) this.dupKey = ''
+  }
 
   // startFolderImport queues every listed media with its own title, year, and category. The
-  // page the admin just reviewed is the check, so the rows go straight to the copy queue.
+  // page the admin just reviewed is the check, so the rows go straight to the copy queue. A
+  // replace deletes a file that is in the library today, so that much is confirmed once.
   async startFolderImport() {
     if (!this.importReady) return
+    if (
+      this.importReplacing > 0 &&
+      !confirm(
+        `${this.importReplacing} item(s) will replace the copy already in the library. ` +
+          'The old file is deleted once the new one is in place; watch state, ratings and metadata are kept.',
+      )
+    ) {
+      return
+    }
     this.importScanError = ''
     const items = this.importItems.map((i) => ({
       id: i.id,
       title: i.title,
       year: Number(i.year) || 0,
       categoryId: i.categoryId,
+      replace: !!(i.duplicate && i.replace),
     }))
     try {
       const r = await api('/api/admin/import/folder/start', {
@@ -2037,7 +2084,40 @@ export class AppState {
     } catch {}
   }
 
+  // toggleGroupReplace marks (or unmarks) every staged row of a media as replacing the
+  // library copy. The server resolves which item that is from its own fresh match, so the
+  // title and year go along: they are what the match is made on.
+  async toggleGroupReplace(group, on) {
+    try {
+      const updated = await Promise.all(
+        group.ids.map((id) =>
+          api('/api/admin/imports/' + id, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: group.title, year: group.year, replace: on }),
+          }),
+        ),
+      )
+      const byId = new Map(updated.map((u) => [u.id, u]))
+      this.assessRows = this.assessRows.map((r) => byId.get(r.id) || r)
+      this.assessError = ''
+    } catch (e) {
+      this.assessError = (await errText(e)) || 'Could not update the row'
+    }
+  }
+
+  assessReplacing = $derived(this.assessGroups.filter((g) => g.replace).length)
+
   async startImportBatch() {
+    if (
+      this.assessReplacing > 0 &&
+      !confirm(
+        `${this.assessReplacing} item(s) will replace the copy already in the library. ` +
+          'The old file is deleted once the new one is in place; watch state, ratings and metadata are kept.',
+      )
+    ) {
+      return
+    }
     try {
       await api('/api/admin/import/start', {
         method: 'POST',

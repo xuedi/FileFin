@@ -333,6 +333,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
 		mux.Handle("GET /api/admin/rebuild/progress", s.admin(s.handleRebuildProgress))
 		mux.Handle("GET /api/admin/import/folder", s.admin(s.handleImportFolder))
+		mux.Handle("GET /api/admin/import/folder/{id}/duplicate", s.admin(s.handleImportFolderDuplicate))
 		mux.Handle("POST /api/admin/import/folder/start", s.admin(s.handleImportFolderStart))
 		mux.Handle("GET /api/admin/import/plex/default", s.admin(s.handlePlexDefault))
 		mux.Handle("POST /api/admin/import/plex/check", s.admin(s.handlePlexCheck))
@@ -344,6 +345,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/import/start", s.admin(s.handleStartImport))
 		mux.Handle("GET /api/admin/imports", s.admin(s.handleListImports))
 		mux.Handle("GET /api/admin/imports/active", s.admin(s.handleActiveImports))
+		mux.Handle("GET /api/admin/imports/{id}/duplicate", s.admin(s.handleImportRowDuplicate))
 		mux.Handle("PUT /api/admin/imports/{id}", s.admin(s.handleUpdateImport))
 		mux.Handle("DELETE /api/admin/imports/{id}", s.admin(s.handleDeleteImport))
 	}

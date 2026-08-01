@@ -25,19 +25,20 @@ import (
 // derived from the filesystem on every read and never stored - the page is a preview of what
 // an import would create, and nothing is written until the admin presses Import.
 type importItem struct {
-	ID         string   `json:"id"`    // stable across scans: derived from entry + recognised title/year
-	Entry      string   `json:"entry"` // the top-level entry it lives in
-	Dir        bool     `json:"dir"`
-	Title      string   `json:"title"`
-	Year       int      `json:"year"`
-	IsShow     bool     `json:"isShow"`
-	Confidence string   `json:"confidence"` // high, medium or low: how much to trust this row
-	Doubts     []string `json:"doubts"`     // the sanity checks this media failed, in words
-	Files      int      `json:"files"`
-	Bytes      int64    `json:"bytes"`
-	SubCount   int      `json:"subCount"`
-	HasPoster  bool     `json:"hasPoster"`
-	Duplicate  string   `json:"duplicate"` // the library item this would import a second time
+	ID          string   `json:"id"`    // stable across scans: derived from entry + recognised title/year
+	Entry       string   `json:"entry"` // the top-level entry it lives in
+	Dir         bool     `json:"dir"`
+	Title       string   `json:"title"`
+	Year        int      `json:"year"`
+	IsShow      bool     `json:"isShow"`
+	Confidence  string   `json:"confidence"` // high, medium or low: how much to trust this row
+	Doubts      []string `json:"doubts"`     // the sanity checks this media failed, in words
+	Files       int      `json:"files"`
+	Bytes       int64    `json:"bytes"`
+	SubCount    int      `json:"subCount"`
+	HasPoster   bool     `json:"hasPoster"`
+	Duplicate   string   `json:"duplicate"`   // the library item this would import a second time
+	DuplicateID string   `json:"duplicateId"` // that item's media id, for the comparison and replace
 	// CategoryID is the category this row's markers point at, 0 when nothing earned the
 	// guess; CategoryReason says why, in the same spirit as the confidence tooltip.
 	CategoryID     int64  `json:"categoryId"`
@@ -86,6 +87,7 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 			Title      string `json:"title"`
 			Year       int    `json:"year"`
 			CategoryID int64  `json:"categoryId"`
+			Replace    bool   `json:"replace"`
 		} `json:"items"`
 	}](w, r)
 	if err != nil || len(req.Items) == 0 {
@@ -107,11 +109,19 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "could not read the import folder", http.StatusInternalServerError)
 		return
 	}
+	ctx := r.Context()
+	// A replace is a decision about a library item, so the item is re-matched here rather
+	// than trusted from the page: the library can have moved since the table was drawn.
+	for _, want := range req.Items {
+		if want.Replace {
+			s.markDuplicateItems(ctx, pool, items)
+			break
+		}
+	}
 	byID := map[string]importItem{}
 	for _, it := range items {
 		byID[it.ID] = it
 	}
-	ctx := r.Context()
 	staged, skipped := 0, 0
 	for _, want := range req.Items {
 		it, ok := byID[want.ID]
@@ -119,7 +129,18 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 			skipped++
 			continue
 		}
-		cat, ok := s.categoryByID(want.CategoryID)
+		categoryID := want.CategoryID
+		replaceID := ""
+		if want.Replace {
+			replaceID = it.DuplicateID
+			if replaceID == "" {
+				s.logger().For(logging.Import).Info(it.Title+" is no longer in the library, importing it as new",
+					logging.Fields{"entry": it.Entry})
+			} else if m, err := db.GetMedia(ctx, pool, replaceID); err == nil {
+				categoryID = m.CategoryID // the item's own folder decides where the file lands
+			}
+		}
+		cat, ok := s.categoryByID(categoryID)
 		if !ok {
 			skipped++
 			continue
@@ -128,7 +149,7 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 		if title == "" {
 			title = it.Title
 		}
-		n := s.stageItem(ctx, pool, it, cat.ID, title, want.Year, req.DeleteAfter)
+		n := s.stageItem(ctx, pool, it, cat.ID, title, want.Year, req.DeleteAfter, replaceID)
 		staged += n
 		// The source name is about to be replaced by the canonical one, so this is the last
 		// moment its markers exist. Learn once per media, not per file, or a long show would
@@ -156,8 +177,10 @@ func (s *Server) handleImportFolderStart(w http.ResponseWriter, r *http.Request)
 
 // stageItem writes one import row per file of a recognised media, already in the import
 // status so the poller picks them up without a second confirmation. The admin's title and
-// year win over what recognition guessed; season and episode stay per file.
-func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, categoryID int64, title string, year int, deleteAfter bool) int {
+// year win over what recognition guessed; season and episode stay per file. A non-empty
+// replaceID rides on every row of the item, turning the import into a payload swap of that
+// library item.
+func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, categoryID int64, title string, year int, deleteAfter bool, replaceID string) int {
 	n := 0
 	for i, path := range it.paths {
 		subsJSON := ""
@@ -172,7 +195,7 @@ func (s *Server) stageItem(ctx context.Context, pool *sql.DB, it importItem, cat
 			Part:      it.probes[i].Part,
 			Subtitles: subsJSON, Poster: importer.FindSidecarPoster(path),
 			Status: db.StatusImport, DeleteAfter: deleteAfter, Origin: db.OriginFolder,
-			Confidence: it.Confidence,
+			Confidence: it.Confidence, ReplaceMediaID: replaceID,
 		}); err != nil {
 			continue
 		}
@@ -539,18 +562,18 @@ func (s *Server) markDuplicateItems(ctx context.Context, pool *sql.DB, items []i
 	s.markDuplicates(ctx, pool, probes)
 	at := 0
 	for i := range items {
-		all, label := true, ""
+		all, label, id := true, "", ""
 		for _, p := range probes[at : at+len(items[i].probes)] {
 			if p.Duplicate == "" {
 				all = false
 				break
 			}
 			if label == "" {
-				label = p.Duplicate
+				label, id = p.Duplicate, p.DuplicateID
 			}
 		}
 		if all {
-			items[i].Duplicate = label
+			items[i].Duplicate, items[i].DuplicateID = label, id
 		}
 		at += len(items[i].probes)
 	}

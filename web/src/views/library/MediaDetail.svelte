@@ -1,6 +1,6 @@
 <script>
   import { getContext, tick } from 'svelte'
-  import { episodeLabel } from '../../lib/app.svelte.js'
+  import { episodeLabel, humanSize } from '../../lib/app.svelte.js'
   import Player from './Player.svelte'
   const app = getContext('app')
 
@@ -168,10 +168,19 @@
         </tbody></table>
       {/if}
 
-      {#if detail.technical.length}
+      {#if detail.technical.length || app.currentFileInfo}
         <h3 class="title is-6">Technical</h3>
         <table class="table ff-meta-table"><tbody>
           {#each detail.technical as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
+          {#if app.currentFileInfo}
+            <tr>
+              <th>File</th>
+              <td class="ff-file-path">{app.currentFileInfo.path} ({humanSize(app.currentFileInfo.size)})</td>
+            </tr>
+          {/if}
+          {#if detail.files.length > 1}
+            <tr><th>Total size</th><td>{humanSize(app.detailBytes)} in {detail.files.length} files</td></tr>
+          {/if}
         </tbody></table>
       {/if}
 

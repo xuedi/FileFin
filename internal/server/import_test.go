@@ -54,16 +54,17 @@ func do(t *testing.T, h http.Handler, method, path, body string, cookie *http.Co
 
 // scanItem is one row of the import page: a recognised media in the import folder.
 type scanItem struct {
-	ID        string `json:"id"`
-	Entry     string `json:"entry"`
-	Dir       bool   `json:"dir"`
-	Title     string `json:"title"`
-	Year      int    `json:"year"`
-	Files     int    `json:"files"`
-	Bytes     int64  `json:"bytes"`
-	SubCount  int    `json:"subCount"`
-	HasPoster bool   `json:"hasPoster"`
-	Duplicate string `json:"duplicate"`
+	ID          string `json:"id"`
+	Entry       string `json:"entry"`
+	Dir         bool   `json:"dir"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
+	Files       int    `json:"files"`
+	Bytes       int64  `json:"bytes"`
+	SubCount    int    `json:"subCount"`
+	HasPoster   bool   `json:"hasPoster"`
+	Duplicate   string `json:"duplicate"`
+	DuplicateID string `json:"duplicateId"`
 }
 
 // scanImport reads the import page's table.

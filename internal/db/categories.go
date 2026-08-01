@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS imports (
     part         INTEGER NOT NULL DEFAULT 0,
     subtitles    TEXT,
     origin       TEXT,
-    confidence   TEXT NOT NULL DEFAULT ''
+    confidence   TEXT NOT NULL DEFAULT '',
+    replace_media_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS media (
     id          TEXT PRIMARY KEY,
@@ -178,6 +179,9 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		// How much recognition trusts the row's title/year: "high", "medium" or "low".
 		// An existing cache gains it empty, which the UI reads as "not assessed".
 		{"imports", "confidence", `ALTER TABLE imports ADD COLUMN confidence TEXT NOT NULL DEFAULT ''`},
+		// The library item this row replaces instead of creating a media of its own. Empty
+		// on an existing cache, which reads as "import normally".
+		{"imports", "replace_media_id", `ALTER TABLE imports ADD COLUMN replace_media_id TEXT NOT NULL DEFAULT ''`},
 		{"media", "enriched", `ALTER TABLE media ADD COLUMN enriched INTEGER NOT NULL DEFAULT 0`},
 		// When an enrich attempt last failed, so discovery can re-queue stale error rows. An
 		// existing cache gains it as 0, which the first discovery retry sweeps in once.

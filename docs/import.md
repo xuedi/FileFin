@@ -291,10 +291,11 @@ stateDiagram-v2
 | `confidence`  | how much recognition trusted the row's title/year: `high`, `medium`, `low`, empty for rows written before the column existed. Drives nothing in the importer - it records what the admin was shown |
 | `api_json`    | source-supplied `meta.json` blob; written by Plex (an `importer.Meta` from Plex's fields), empty for folder/upload. The importer writes it verbatim but leaves the folder unenriched, so the enricher later fills gaps additively. OMDb is still never called here |
 | `origin`      | which front stage produced the row (`folder` / `upload` / `plex`); a UI hint only, the importer ignores it |
+| `replace_media_id` | the library item this row swaps the payload of instead of creating a media, empty for an ordinary import. Unlike `duplicate` it is stored: it is a decision the admin made, not a derived hint |
 
-The `duplicate` field on the wire has no column behind it: it is derived per response from
-the live library (see **Duplicate detection**), for the import-folder scan and for the
-preCheck page alike.
+The `duplicate` field on the wire (and the `duplicateId` beside it, naming the matched item)
+has no column behind it: both are derived per response from the live library (see **Duplicate
+detection**), for the import-folder scan and for the preCheck page alike.
 
 `delete_after` makes the source a **vacuum**: when set, the importer deletes the source
 file once the copy and `media` row are committed (best-effort - a failed delete is logged,
@@ -344,9 +345,72 @@ when the matched item already holds that exact season/episode. A whole row is a 
 when **every** file behind it is, so a season pack with one episode already imported still
 reads as new work rather than a re-import.
 
-The result is advisory. Both tables carry a read-only **Dup** box per row - ticked, with the
-matched library item in its tooltip - but nothing is blocked or dropped automatically: a
-deliberate re-import (a better rip of a film already in the library) stays the admin's call.
+Nothing is blocked or dropped automatically: a deliberate re-import (a better rip of a film
+already in the library) stays the admin's call. Both tables mark a duplicate row in the **Dup**
+column and offer the two things that decision needs - a comparison to make it, and a replace to
+act on it.
+
+### Comparing the two copies
+
+Hovering (or focusing) the marker opens a panel putting the incoming media beside the library
+one: path, file count and total size, then the size, resolution, codecs, container, duration and
+modification time of one file from each side, with the bigger file and the higher resolution
+marked. It is loaded **on demand and cached per row**, because answering costs a re-scan of the
+import folder plus two ffprobe runs, and it probes **one file per side only** - a season pack
+must not fire an ffprobe per episode because a marker was hovered. ffprobe is best-effort: where
+it is unavailable the library side falls back to the cached format columns and `meta.json`'s
+technical block, and the sizes and paths still answer most of the question.
+
+The import-folder page never holds filesystem paths (its rows travel by id), so the endpoint
+resolves an item exactly the way the import itself does: re-scan, match by id, re-run the
+duplicate check. The preCheck sibling resolves a staged row by its row id and folds in the other
+staged rows of the same title and year, matching the grouping that page shows.
+
+### Replacing the library copy
+
+A **replace** checkbox beside the marker turns the import from "add a second copy" into "swap
+this item's payload". The identity stays with the library item and only the video changes:
+
+- the file lands in the **existing media folder**, named after the **existing** item's title and
+  year, so it sits beside its siblings and the media keeps the id derived from that folder;
+- `meta.json` survives untouched apart from its technical block, which now describes the new
+  payload - so the description, ratings, curated tags, the poster, and every user's watched flag,
+  resume pointer, favorite and rating are all kept;
+- the file the new one supersedes is removed **after** the copy is committed, together with its
+  `.optimized.mp4` pre-transcode and, when the base name changed, its subtitle sidecars;
+- the item's cache rows are re-derived from disk through the same per-folder read the discovery
+  reconcile uses, rather than patched.
+
+Because the replacement lands in that folder, the row's category follows the library item rather
+than the dropdown, and the page locks the dropdown to say so.
+
+```mermaid
+flowchart TD
+    T[Import pressed with replace ticked] --> M{still a duplicate?}
+    M -->|no, the library moved on| N[import as new, logged]
+    M -->|yes| R[stage rows with replace_media_id<br/>+ the item's own category]
+    R --> C[copy into the item's folder,<br/>named by the item's title/year]
+    C --> S{which file does it supersede?}
+    S -->|same name| SN[nothing to retire:<br/>it was overwritten in place]
+    S -->|same season/episode, one match| SO[retire it + its sidecars]
+    S -->|several candidates, no base-name match| SA[retire nothing, log it]
+    SN --> P[drop the pre-transcode, prune the optimize rows]
+    SO --> P
+    SA --> P
+    P --> D[re-derive the folder's cache rows from disk]
+```
+
+The **pre-transcode** is dropped in every case, not only when a file was retired: the common
+replace lands on the same name and retires nothing, and while playback already refuses an
+`.optimized.mp4` older than its source, a replacement that is *direct-playable* is never queued
+for optimizing, so nothing would ever overwrite it. Whether a new one is made at all then falls
+out of the re-derived cache row: the optimizer only queues what its freshly probed format says
+cannot direct-play (`agents/optimizer.md`).
+
+Both halves of the decision are re-resolved server-side. The page's tick is a wish: the handler
+re-runs the match and uses the id **it** found, so a row whose library item vanished between the
+table being drawn and Import being pressed simply imports as new, and the importer falls back to
+a normal import when the item is gone by the time the copy runs.
 
 ## Subtitles
 
@@ -483,7 +547,8 @@ client-side and finishes before staging; it is unrelated to the server-side copy
 
 | method + path                          | purpose                                        |
 |----------------------------------------|------------------------------------------------|
-| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, isShow, confidence, doubts, files, bytes, subs, poster, duplicate, the guessed categoryId + the reason for it); writes nothing |
+| `GET  /api/admin/import/folder`        | import page: the folder path + one item per recognised media (id, entry, title, year, isShow, confidence, doubts, files, bytes, subs, poster, duplicate + duplicateId, the guessed categoryId + the reason for it); writes nothing |
+| `GET  /api/admin/import/folder/{id}/duplicate` | import page: the incoming-vs-library comparison behind a Dup marker (404 when the item is no longer a duplicate) |
 | `POST /api/admin/import/folder/start`  | import page: queue the listed media (per row: id, title, year, categoryId) as `import` rows |
 | `POST /api/admin/import/upload/begin`  | upload source: open a `/tmp` session, return token|
 | `POST /api/admin/import/upload/file`   | upload source: store one file (multipart) in the session|
@@ -496,7 +561,8 @@ client-side and finishes before staging; it is unrelated to the server-side copy
 | `POST /api/admin/import/jellyfin/prepare`  | Jellyfin source: start the background NFO-library staging walk |
 | `GET  /api/admin/import/jellyfin/progress` | Jellyfin source: live staging job state (total/done/staged/missing) |
 | `GET  /api/admin/imports?status=`      | list rows (optionally filtered by status)      |
-| `PUT  /api/admin/imports/{id}`         | edit a staged row's title/year/category        |
+| `GET  /api/admin/imports/{id}/duplicate` | preCheck page: the same comparison for a staged row |
+| `PUT  /api/admin/imports/{id}`         | edit a staged row's title/year/category, and mark or unmark it as replacing the library copy |
 | `DELETE /api/admin/imports/{id}`       | drop a staged row                              |
 | `POST /api/admin/import/start`         | bulk preCheck -> import (the poller does rest) |
 | `GET  /api/admin/imports/active`       | active rows with live copy progress            |

@@ -50,6 +50,7 @@ func (s *Server) markDuplicates(ctx context.Context, pool *sql.DB, rows []db.Imp
 			}
 		}
 		rows[i].Duplicate = libraryLabel(byID[m.Item.ID], dataDir)
+		rows[i].DuplicateID = m.Item.ID
 	}
 }
 

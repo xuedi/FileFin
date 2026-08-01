@@ -44,6 +44,15 @@ Each task's in-progress encode writes to `<optimized>.tmp`, created with `O_EXCL
 On success the temp is atomically renamed into place; on failure or cancellation it is
 removed. The suffix is not a video extension, so a leftover is never scanned as media.
 
+The source can be **replaced while the encode runs** (an import swapping a library item's
+payload, see `../import.md`), and the output would then be a copy of a payload that no longer
+exists, renamed into place with a fresh mtime - exactly what playback reads as current. So the
+source's size and modification time are stamped when the task is claimed and checked again
+before the rename: if either moved, the output is discarded and the queue row dropped, leaving
+the planner to queue the new payload. A replace also deletes the file's existing
+`.optimized.mp4` and prunes the item's queue rows, so the new payload is judged from scratch -
+and a replacement that direct-plays simply never gets a copy back.
+
 Crash recovery runs at the start of every optimizer run (after the previous run's goroutines
 have fully exited, so no live lock is touched): it sweeps stale `.tmp` locks under the data
 dir and resets any `encoding` row orphaned by a crash back to `pending`.

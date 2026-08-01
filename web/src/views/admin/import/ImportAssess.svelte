@@ -1,6 +1,7 @@
 <script>
   import { getContext } from 'svelte'
   import { treeMarker } from '../../../lib/app.svelte.js'
+  import DupCompare from '../../../components/DupCompare.svelte'
   const app = getContext('app')
 </script>
 
@@ -57,7 +58,26 @@
           <td>{#if group.subCount > 0}<span class="has-text-success has-text-weight-bold" title="Subtitle files found">{group.subCount}</span>{/if}</td>
           <td class="has-text-centered">
             {#if group.duplicate}
-              <span class="ff-dup-icon" title="Already in the library: {group.duplicate}">&#9888;</span>
+              {@const rowId = group.ids[0]}
+              <div class="ff-dup">
+                <button
+                  class="ff-dup-icon"
+                  aria-label="Compare with the copy already in the library: {group.duplicate}"
+                  onmouseenter={() => app.openDupCompare(group.key, `/api/admin/imports/${rowId}/duplicate`)}
+                  onfocus={() => app.openDupCompare(group.key, `/api/admin/imports/${rowId}/duplicate`)}
+                  onmouseleave={() => app.closeDupCompare(group.key)}
+                  onblur={() => app.closeDupCompare(group.key)}>&#9888;</button>
+                {#if app.dupKey === group.key}
+                  <DupCompare data={app.dupCache[group.key]} loading={app.dupLoading} error={app.dupError} />
+                {/if}
+                <label class="checkbox ff-dup-replace" title="Replace the copy already in the library with this file. Its metadata, poster, tags and watch state are kept.">
+                  <input
+                    type="checkbox"
+                    checked={group.replace}
+                    onchange={(e) => app.toggleGroupReplace(group, e.currentTarget.checked)} />
+                  replace
+                </label>
+              </div>
             {/if}
           </td>
           <td class="ff-row-actions">
@@ -91,7 +111,8 @@
   </label>
   {#if app.assessDuplicates > 0}
     <p class="has-text-warning ff-dup-warning">
-      {app.assessDuplicates} of these are already in the library - remove them with X unless you mean to import them again.
+      {app.assessDuplicates} of these are already in the library - remove them with X, or tick replace to swap the
+      library copy for this one, unless you mean to import them a second time.
     </p>
   {/if}
   <div>

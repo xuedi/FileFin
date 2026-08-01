@@ -201,6 +201,7 @@ func (s *Server) handleUpdateImport(w http.ResponseWriter, r *http.Request) {
 		Title      string `json:"title"`
 		Year       int    `json:"year"`
 		CategoryID int64  `json:"categoryId"`
+		Replace    *bool  `json:"replace"`
 	}](w, r)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -241,6 +242,35 @@ func (s *Server) handleUpdateImport(w http.ResponseWriter, r *http.Request) {
 	// than carried over from the assessment.
 	rows := []db.Import{row}
 	s.markDuplicates(ctx, pool, rows)
+	// Replacing is a decision about the item the row matches, so it is resolved from that
+	// fresh match: ticking it records the item just matched, and an edit that breaks the
+	// match drops a replace the admin can no longer mean.
+	want := rows[0].ReplaceMediaID
+	if req.Replace != nil {
+		want = ""
+		if *req.Replace {
+			want = rows[0].DuplicateID
+		}
+	} else if want != rows[0].DuplicateID {
+		want = ""
+	}
+	if want != rows[0].ReplaceMediaID {
+		if err := db.UpdateImportReplace(ctx, pool, id, want); err != nil {
+			http.Error(w, "could not update import", http.StatusInternalServerError)
+			return
+		}
+		rows[0].ReplaceMediaID = want
+	}
+	// The folder of the item being replaced decides where the file lands, so the row
+	// follows its category rather than whatever the dropdown said.
+	if want != "" {
+		if m, err := db.GetMedia(ctx, pool, want); err == nil && m.CategoryID != rows[0].CategoryID {
+			s.bestEffort(db.UpdateImportCategory(ctx, pool, id, m.CategoryID), "retarget a replacing import row")
+			if fresh, err := db.GetImport(ctx, pool, id); err == nil {
+				rows[0].CategoryID, rows[0].Category = fresh.CategoryID, fresh.Category
+			}
+		}
+	}
 	writeJSON(w, rows[0])
 }
 
@@ -348,13 +378,23 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	_ = db.UpdateImportProgress(ctx, pool, row.ID, db.StatusImporting, 0, 0, "")
 
 	ext := strings.ToLower(filepath.Ext(row.SourcePath))
-	folder := mediafmt.FolderName(format, row.Year, row.Title)
+	// A replace row swaps a library item's payload rather than creating a media, so that
+	// item decides the placement: its own folder, and its own title/year for the file name,
+	// leaving the row to contribute only the season/episode/part and the extension.
+	rt, replacing := s.resolveReplace(ctx, pool, row)
+	title, year := row.Title, row.Year
+	folder := mediafmt.FolderName(format, year, title)
 	dir := filepath.Join(dataDir, row.Category, folder)
+	if replacing {
+		title, year = rt.title, rt.year
+		dir = rt.dir
+		folder = filepath.Base(dir)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fail("could not create media folder: " + err.Error())
 		return
 	}
-	fileName := mediafmt.FileName(format, row.Year, row.Title, row.Season, row.Episode, row.Part, ext)
+	fileName := mediafmt.FileName(format, year, title, row.Season, row.Episode, row.Part, ext)
 	target := filepath.Join(dir, fileName)
 
 	// The live Progress page reads the in-memory map (updated every chunk), so the DB
@@ -402,17 +442,22 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 	tech := ffprobe.Probe(ctx, ffprobeBin, target)
 	meta, err := s.metaMgr.Update(dir, func(cur importer.Meta) importer.Meta {
 		if cur.Title != "" {
-			return cur // an earlier episode already wrote this folder's meta
+			// A replace changes the payload the folder-wide technical block describes;
+			// every other field belongs to the item and is left exactly as it was.
+			if replacing && !tech.Empty() {
+				cur.Technical = &tech
+			}
+			return cur // otherwise an earlier episode already wrote this folder's meta
 		}
 		var nm importer.Meta
 		if row.APIJSON != "" {
 			if json.Unmarshal([]byte(row.APIJSON), &nm) != nil {
-				nm = importer.StubMeta(row.Title, row.Year)
+				nm = importer.StubMeta(title, year)
 			}
 		} else {
-			nm = importer.StubMeta(row.Title, row.Year)
+			nm = importer.StubMeta(title, year)
 		}
-		nm.Title, nm.Year = row.Title, row.Year // the row's title/year match the folder
+		nm.Title, nm.Year = title, year // the title/year that named the folder
 		if !tech.Empty() {
 			nm.Technical = &tech
 		}
@@ -434,30 +479,36 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		}
 	}
 
-	id := mediaID(row.Category, folder)
-	if err := db.InsertMedia(ctx, pool, db.Media{
-		ID: id, CategoryID: row.CategoryID, Path: dir,
-		Year: row.Year, Title: row.Title, Description: meta.Description, Plot: meta.Plot,
-		Poster: posterRel, Enriched: meta.Enriched,
-		Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
-		Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
-	}); err != nil {
-		fail("could not write media row: " + err.Error())
-		return
-	}
-	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags)
-	if len(meta.State) > 0 {
-		us := make(map[string]db.UserStateRow, len(meta.State))
-		for u, st := range meta.State {
-			us[u] = userStateRow(st)
+	if replacing {
+		// The item already exists; retire what the new file supersedes and re-derive its
+		// cache rows from disk, so its id, meta.json and per-user state are never touched.
+		s.finishReplace(ctx, pool, rt, row, target, tech)
+	} else {
+		id := mediaID(row.Category, folder)
+		if err := db.InsertMedia(ctx, pool, db.Media{
+			ID: id, CategoryID: row.CategoryID, Path: dir,
+			Year: row.Year, Title: row.Title, Description: meta.Description, Plot: meta.Plot,
+			Poster: posterRel, Enriched: meta.Enriched,
+			Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
+			Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
+		}); err != nil {
+			fail("could not write media row: " + err.Error())
+			return
 		}
-		_ = db.ReplaceUserStateForMedia(ctx, pool, id, us)
+		_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags)
+		if len(meta.State) > 0 {
+			us := make(map[string]db.UserStateRow, len(meta.State))
+			for u, st := range meta.State {
+				us[u] = userStateRow(st)
+			}
+			_ = db.ReplaceUserStateForMedia(ctx, pool, id, us)
+		}
+		idx, _ := db.CountMediaFiles(ctx, pool, id)
+		_ = db.InsertMediaFile(ctx, pool, db.MediaFile{
+			MediaID: id, Idx: idx, Path: target, Name: fileName, Season: row.Season, Episode: row.Episode, Ext: ext,
+			Container: tech.Container, VideoCodec: tech.VideoCodec, AudioCodec: tech.AudioCodec,
+		})
 	}
-	idx, _ := db.CountMediaFiles(ctx, pool, id)
-	_ = db.InsertMediaFile(ctx, pool, db.MediaFile{
-		MediaID: id, Idx: idx, Path: target, Name: fileName, Season: row.Season, Episode: row.Episode, Ext: ext,
-		Container: tech.Container, VideoCodec: tech.VideoCodec, AudioCodec: tech.AudioCodec,
-	})
 
 	// The import folder is a vacuum: once the copy and media row are committed, remove
 	// the source if the row asked for it. Best-effort - the import already succeeded, so
@@ -473,9 +524,11 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		// dir, the whole session folder (video, sidecars, dir) is removed.
 		s.cleanupUploadDir(ctx, pool, row.SourcePath)
 	}
-	s.logger().For(logging.Import).Info(fmt.Sprintf("imported %s into %s", row.Title, row.Category),
-		logging.Fields{"title": row.Title, "category": row.Category, "path": target,
-			"bytes": finalTotal, "deletedSource": row.DeleteAfter})
+	if !replacing { // a replace already logged what it did to the library item
+		s.logger().For(logging.Import).Info(fmt.Sprintf("imported %s into %s", row.Title, row.Category),
+			logging.Fields{"title": row.Title, "category": row.Category, "path": target,
+				"bytes": finalTotal, "deletedSource": row.DeleteAfter})
+	}
 }
 
 // vacuumSource removes everything this row consumed from the source tree - the video, the

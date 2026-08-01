@@ -85,7 +85,10 @@ flush-everything path; reconcile is its rolling, in-place sibling.
 End users read the library through the cache: a category lists its media **ordered by year
 then title** (chronological browse order), and a media detail folds the cache row, the rich
 `meta.json` fields, per-file transcode-eligibility and sidecar subtitles, and the live per-user
-watch state into one response. The **home** view is served from the `user_state` mirror: three
+watch state into one response. Each file also carries **where it sits and how big it is** - the
+path relative to the data dir, and the size read from disk - so the detail page's **Technical**
+block names the file it describes and, for a multi-file item, what the whole item weighs. The
+line follows the selected episode, since the size is per file. The **home** view is served from the `user_state` mirror: three
 indexed queries bucket the user's rows into continue / favorites / completed, ordered by the
 per-user updated time (newest first). The per-item watched flag on a category listing comes from
 the same mirror in one set lookup, rather than a read per folder.

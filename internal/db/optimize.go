@@ -78,8 +78,10 @@ func UpdateTaskPercent(ctx context.Context, pool *sql.DB, id int64, percent int)
 	return nil
 }
 
-// FinishTask removes a task that completed successfully (the .optimized.mp4 on disk is
-// now the record).
+// FinishTask removes a task the queue is done with: an encode that succeeded (the
+// .optimized.mp4 on disk is now the record), or one whose output was discarded because the
+// source moved under it. Removing the row rather than marking it lets the planner re-queue
+// the file when it still needs work.
 func FinishTask(ctx context.Context, pool *sql.DB, id int64) error {
 	return optimizeQueue.finish(ctx, pool, id)
 }

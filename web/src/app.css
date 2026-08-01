@@ -256,7 +256,41 @@ body { min-height: 100vh; }
 .ff-skipped-name { color: var(--bulma-text-weak); }
 .ff-disabled { color: var(--bulma-text-weak); }
 .ff-dup-warning { margin-bottom: 1rem; }
-.ff-dup-icon { color: var(--bulma-warning); font-size: 1.4rem; font-weight: bold; line-height: 1; cursor: help; }
+.ff-dup-icon {
+  color: var(--bulma-warning);
+  font-size: 1.4rem;
+  font-weight: bold;
+  line-height: 1;
+  cursor: help;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+/* the incoming-vs-library comparison behind a Dup marker: anchored to the marker, opening
+   upwards on the lower half of a long table so the last row is not cut off by the viewport */
+.ff-dup { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
+.ff-dup-replace { font-size: 0.75rem; color: var(--bulma-text-weak); white-space: nowrap; }
+.ff-dup-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  width: 32rem;
+  max-width: 80vw;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+  background: var(--bulma-scheme-main);
+  border: 1px solid var(--bulma-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+tbody tr:nth-last-child(-n + 4) .ff-dup-panel { top: auto; bottom: 100%; }
+.ff-dup-table { margin-bottom: 0; font-size: 0.8rem; }
+.ff-dup-table th, .ff-dup-table td { white-space: nowrap; vertical-align: top; }
+.ff-dup-wrap { white-space: normal; word-break: break-all; }
+.ff-dup-better { color: var(--bulma-success); font-weight: 600; }
 /* how much recognition trusts an import row: low rows sort to the top and read as a warning */
 .ff-confidence-high { background: var(--bulma-success); color: #fff; cursor: help; }
 .ff-confidence-medium { background: var(--bulma-warning); color: #000; cursor: help; }
@@ -470,6 +504,8 @@ body { min-height: 100vh; }
 .ff-meta-table { width: auto; background: transparent; }
 .ff-meta-table th { color: var(--bulma-text-weak); font-weight: normal; vertical-align: top; }
 .ff-meta-table td, .ff-meta-table th { border: none; padding: 0.1rem 1rem 0.1rem 0; }
+/* a media path is long and must wrap inside the cell rather than widen the page */
+.ff-file-path { word-break: break-all; }
 .ff-cast { margin-left: 1.1rem; list-style: disc; }
 /* pivot links: cast/genre/director/language/year that jump into a search */
 .ff-pivot { color: inherit; text-decoration: none; cursor: pointer; }

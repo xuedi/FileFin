@@ -75,19 +75,27 @@ type Import struct {
 	// Duplicate names the library item this row would import a second time, empty when
 	// the media is new. It is derived when rows are handed to the preCheck page, never
 	// stored: the library and the row's own title/year both keep changing, so a stale
-	// answer would be worse than none.
-	Duplicate string `json:"duplicate"`
+	// answer would be worse than none. DuplicateID is that item's media id, derived the
+	// same way, so the page can ask for a comparison or offer to replace it.
+	Duplicate   string `json:"duplicate"`
+	DuplicateID string `json:"duplicateId"`
+	// ReplaceMediaID turns the row from "create a media" into "swap this library item's
+	// payload": the file lands in that item's own folder, keeping its id, meta.json,
+	// poster and per-user playback state, and supersedes the file it replaces. Empty for
+	// an ordinary import. Unlike Duplicate above it *is* stored - it is a decision the
+	// admin made, not a derived hint.
+	ReplaceMediaID string `json:"replaceMediaId"`
 }
 
 // InsertImport inserts a staged import row and returns its new id.
 func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) {
 	res, err := pool.ExecContext(ctx,
 		`INSERT INTO imports
-            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, part, subtitles, origin, confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (category_id, source_path, filename, title, year, status, api_json, poster, copied, total, error, delete_after, season, episode, part, subtitles, origin, confidence, replace_media_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		imp.CategoryID, imp.SourcePath, imp.Filename, imp.Title, imp.Year,
 		imp.Status, imp.APIJSON, imp.Poster, imp.Copied, imp.Total, imp.Error, imp.DeleteAfter,
-		imp.Season, imp.Episode, imp.Part, imp.Subtitles, imp.Origin, imp.Confidence)
+		imp.Season, imp.Episode, imp.Part, imp.Subtitles, imp.Origin, imp.Confidence, imp.ReplaceMediaID)
 	if err != nil {
 		return 0, fmt.Errorf("insert import %q: %w", imp.SourcePath, err)
 	}
@@ -97,19 +105,20 @@ func InsertImport(ctx context.Context, pool *sql.DB, imp Import) (int64, error) 
 // importSelect reads every import row joined to its category so Category carries the
 // live category name (relpath); category is no longer stored on the row. A LEFT JOIN
 // keeps rows whose category_id is unset, yielding an empty Category.
-const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.part, i.subtitles, i.origin, i.confidence FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
+const importSelect = `SELECT i.id, i.category_id, c.name, i.source_path, i.filename, i.title, i.year, i.status, i.api_json, i.poster, i.copied, i.total, i.error, i.delete_after, i.season, i.episode, i.part, i.subtitles, i.origin, i.confidence, i.replace_media_id FROM imports i LEFT JOIN categories c ON c.id = i.category_id`
 
 func scanImport(rows interface{ Scan(...any) error }) (Import, error) {
 	var imp Import
-	var category, subtitles, origin, confidence sql.NullString
+	var category, subtitles, origin, confidence, replaceID sql.NullString
 	err := rows.Scan(&imp.ID, &imp.CategoryID, &category, &imp.SourcePath, &imp.Filename,
 		&imp.Title, &imp.Year, &imp.Status, &imp.APIJSON, &imp.Poster, &imp.Copied, &imp.Total, &imp.Error,
-		&imp.DeleteAfter, &imp.Season, &imp.Episode, &imp.Part, &subtitles, &origin, &confidence)
+		&imp.DeleteAfter, &imp.Season, &imp.Episode, &imp.Part, &subtitles, &origin, &confidence, &replaceID)
 	imp.HasPoster = imp.Poster != ""
 	imp.Category = category.String
 	imp.Subtitles = subtitles.String
 	imp.Origin = origin.String
 	imp.Confidence = confidence.String
+	imp.ReplaceMediaID = replaceID.String
 	imp.SubCount = countJSONArray(imp.Subtitles)
 	imp.HasSubtitles = imp.SubCount > 0
 	return imp, err
@@ -205,6 +214,17 @@ func UpdateImportCategory(ctx context.Context, pool *sql.DB, id, categoryID int6
 		`UPDATE imports SET category_id = ? WHERE id = ?`, categoryID, id)
 	if err != nil {
 		return fmt.Errorf("update import category %d: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateImportReplace records (or clears, with an empty id) the library item a staged row
+// replaces, so the preCheck page can mark a row before Start import is pressed.
+func UpdateImportReplace(ctx context.Context, pool *sql.DB, id int64, mediaID string) error {
+	_, err := pool.ExecContext(ctx,
+		`UPDATE imports SET replace_media_id = ? WHERE id = ?`, mediaID, id)
+	if err != nil {
+		return fmt.Errorf("update import replace %d: %w", id, err)
 	}
 	return nil
 }
