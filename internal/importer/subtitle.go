@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -118,9 +119,9 @@ func PlaceSubtitles(ctx context.Context, videoTarget, defaultLang, ffmpegPath st
 			_ = copySidecar(srcBase+".idx", dstBase+".idx")
 		case bitmapSubExts[ext]: // .sup
 			_ = copySidecar(s.Path, name(lang, ext))
-		case ext == ".srt":
+		case ext == ".srt" && !isASSFile(s.Path):
 			_ = copySidecar(s.Path, name(lang, ".srt"))
-		default: // text subtitle (.ass/.ssa/.vtt/.smi/...) -> convert to SRT
+		default: // text subtitle (.ass/.ssa/.vtt/.smi/..., or a mislabelled .srt) -> convert to SRT
 			dst := name(lang, ".srt")
 			if err := runFFmpegToSRT(ctx, ffmpegPath, s.Path, dst); err != nil {
 				// ffmpeg missing or failed: keep the original verbatim under the same
@@ -155,6 +156,21 @@ func runFFmpegToSRT(ctx context.Context, ffmpegBin, src, dst string, extraArgs .
 		return fmt.Errorf("rename subtitle %s: %w", dst, err)
 	}
 	return nil
+}
+
+// isASSFile reports whether path holds an ASS/SSA script whatever its extension claims.
+// ASS content shipped under an ".srt" name is common, and copying it verbatim would leave a
+// sidecar the player lists but cannot draw cues from, so it is routed through the converter
+// instead. An unreadable file is treated as not-ASS, leaving the extension-based path.
+func isASSFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 4096)
+	n, _ := io.ReadFull(f, head) // a short read still fills head[:n]
+	return subtitle.IsASS(head[:n])
 }
 
 // copySidecar copies src to dst. A missing source (e.g. half a VobSub pair) is

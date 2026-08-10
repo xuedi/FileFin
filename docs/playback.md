@@ -84,9 +84,37 @@ through the shared `ffrun` runner used by the optimizer and thumbnailer too.
 
 Sidecar subtitle files dropped next to a media file (`<base>.<lang>.srt`, optional qualifiers
 like `.forced`) are surfaced per file in the detail view. The browser's native `<track>`
-needs WebVTT, so each subtitle is converted from SRT to WebVTT **per request, streamed**,
-while the source stays SRT on disk. Sidecar recognition and the language labelling live in
-the `subtitle` package; matching/listing is shared with import and the detail view.
+needs WebVTT, so each subtitle is converted to WebVTT **per request, streamed**, while the
+source stays untouched on disk. Sidecar recognition and the language labelling live in the
+`subtitle` package; matching/listing is shared with import and the detail view.
+
+The **source format is sniffed from the file's opening bytes, never from its extension**,
+because ASS/SSA scripts shipped under an `.srt` name are common in the wild. Two renderers
+sit behind one entry point:
+
+```mermaid
+flowchart TD
+    REQ[GET .../sub/k] --> SNIFF{opening bytes look like ASS/SSA?}
+    SNIFF -->|no| SRT[SRT -> VTT: rewrite the timestamp separator,\ndrop cue-index lines, stream through]
+    SNIFF -->|yes| ASS[ASS -> VTT: read the Events section,\none cue per Dialogue line]
+    SRT --> OUT[text/vtt]
+    ASS --> OUT
+```
+
+- **SRT** differs from VTT only in the header, the timestamp decimal separator and the
+  optional numeric cue index, so it streams through as a textual rewrite; unrecognised lines
+  pass through, and a malformed file still produces output rather than failing.
+- **ASS/SSA** carries its timed text only in the `[Events]` section: the `Format:` line names
+  the field order and each `Dialogue:` line becomes one cue. Style/positioning override
+  blocks are dropped, the line-break and hard-space escapes are expanded, and markup
+  characters are escaped so cue text is never parsed as WebVTT tags. Script info, styles and
+  `Comment:` lines have no WebVTT counterpart and are skipped. Cues are buffered and emitted
+  in start order, which WebVTT requires and ASS does not guarantee. A line that will not
+  parse is dropped rather than failing the render, so a partly malformed script still shows
+  the cues it does have.
+
+Sniffing at serve time is what makes an already-imported mislabelled file play without
+touching the disk; import does the same check when placing the sidecar (see `import.md`).
 
 Only external `.srt` sidecars are rendered - embedded subtitle tracks are not read at play
 time. Instead, **import** externalises a file's embedded text subtitle tracks to `.srt`

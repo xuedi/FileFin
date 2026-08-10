@@ -423,7 +423,13 @@ never fails an import):
 
 1. **Sidecars** detected beside the source ride along on the row (`subtitles` column) and are
    placed next to the placed video as `<base>.<lang>.srt`, converting non-SRT text formats to
-   SRT and copying bitmap formats (VobSub/PGS) verbatim.
+   SRT and copying bitmap formats (VobSub/PGS) verbatim. Whether a text sidecar is already SRT
+   is decided by **reading its opening bytes, not by its extension**: ASS/SSA scripts shipped
+   under an `.srt` name are common, and copying one verbatim would leave a sidecar the player
+   lists but cannot draw cues from. A mislabelled file is therefore routed through the
+   converter like any other non-SRT text format. When the conversion cannot run (no ffmpeg),
+   the original is kept rather than lost, and the player's own format sniffing still renders
+   it (see `playback.md`).
 2. **Embedded tracks** are then externalised: the importer probes the copied file with ffprobe
    and, for each **text** subtitle track that carries a **known language** (a real
    `tags.language` that is not `und`; bitmap codecs like PGS/VobSub/DVB are skipped because

@@ -3,8 +3,10 @@ package importer
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,61 @@ func TestPlaceSubtitles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dst, n)); err != nil {
 			t.Errorf("expected placed subtitle %q: %v", n, err)
 		}
+	}
+}
+
+// assUnderSrtName is ASS content carrying an ".srt" extension - the shape that used to be
+// copied verbatim, leaving a sidecar the player listed but could not draw cues from.
+const assUnderSrtName = "[Script Info]\nScriptType: v4.00+\n\n[Events]\n" +
+	"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" +
+	"Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0000,0000,0000,,Hello\n"
+
+func TestIsASSFileIgnoresExtension(t *testing.T) {
+	dir := t.TempDir()
+	ass := filepath.Join(dir, "mislabelled.srt")
+	if err := os.WriteFile(ass, []byte(assUnderSrtName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srt := filepath.Join(dir, "real.srt")
+	if err := os.WriteFile(srt, []byte("1\n00:00:01,000 --> 00:00:02,000\nHello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isASSFile(ass) {
+		t.Error("ASS content under an .srt name not detected")
+	}
+	if isASSFile(srt) {
+		t.Error("real SRT misdetected as ASS")
+	}
+	if isASSFile(filepath.Join(dir, "missing.srt")) {
+		t.Error("missing file should not report as ASS")
+	}
+}
+
+// TestPlaceSubtitlesConvertsMislabelledSRT pins that a ".srt" holding ASS goes down the
+// conversion path, not the verbatim copy. With ffmpeg absent the convert fails and the
+// fallback keeps the file under its ".srt" name, so the check is that the branch was taken.
+func TestPlaceSubtitlesConvertsMislabelledSRT(t *testing.T) {
+	src := t.TempDir()
+	bad := filepath.Join(src, "Sub.en.srt")
+	if err := os.WriteFile(bad, []byte(assUnderSrtName), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	PlaceSubtitles(context.Background(), filepath.Join(dst, "Movie.mkv"), "en", ffmpeg,
+		[]Subtitle{{Path: bad, Language: "en", Ext: ".srt"}})
+
+	got, err := os.ReadFile(filepath.Join(dst, "Movie.en.srt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "-->") {
+		t.Errorf("placed sidecar has no SRT cues, ASS was copied verbatim:\n%s", got)
+	}
+	if strings.Contains(string(got), "[Script Info]") {
+		t.Errorf("ASS header still present in the placed sidecar:\n%s", got)
 	}
 }
