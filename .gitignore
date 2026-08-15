@@ -37,5 +37,8 @@ Thumbs.db
 # Local-only working files (security reports, scratch notes) - never publish.
 /tmp_*
 
+# tokf (output-filtering hook) - personal dev tooling, not shipped
+/.tokf/
+
 # GoReleaser output
 /dist/
