@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.20.4-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.20.5-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -98,6 +98,13 @@ With no config (`~/.filefin.json`), the first `serve` comes up in **install mode
 setup URL; open it to create the admin account and pick your data directory. After that, everything - media,
 categories, users, and settings - is managed from the web UI.
 
+## Clients
+
+The web UI is fully offline-capable and needs no companion app, but a native client is in
+development: [FileFin-client](https://github.com/mpecan/FileFin-client), a phone and television
+app built in Flutter, with playback by `media_kit` (libmpv) so MKV and HEVC play without asking
+the server to transcode them. It is not yet released - see that repo's own README for status.
+
 ## Features
 
 - **Single binary** - the CLI, web server, and frontend ship in one self-contained executable that runs
@@ -132,9 +139,10 @@ categories, users, and settings - is managed from the web UI.
 
 ## What FileFin is not
 
-No live TV or DVR, no music or photo libraries, no native mobile or TV apps - the web UI is the client.
-It is one server for a household, not a cluster. If you need any of that, Jellyfin is the better fit -
-and FileFin will happily import from it.
+No live TV or DVR, no music or photo libraries. The web UI and the in-development
+[FileFin-client](https://github.com/mpecan/FileFin-client) app are the only first-party clients. It is
+one server for a household, not a cluster. If you need any of that, Jellyfin is the better fit - and
+FileFin will happily import from it.
 
 ## License
 

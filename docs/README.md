@@ -8,6 +8,9 @@ them inline.
 Start with [`agents.md`](agents.md) for the background-processing model, then read whichever
 subsystem you are working in.
 
+A native phone/TV client lives in its own repo: [FileFin-client](https://github.com/mpecan/FileFin-client)
+(Flutter, in development, not yet released). These docs cover only the server in this repo.
+
 | Document | Subsystem | What it covers |
 |----------|-----------|----------------|
 | [`agents.md`](agents.md) | Agents overview | Every background agent, the shared task queue, the refill-vs-health split, discovery as the scheduler |
