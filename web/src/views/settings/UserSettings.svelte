@@ -1,6 +1,6 @@
 <script>
   import { getContext } from 'svelte'
-  import { treeMarker } from '../../lib/app.svelte.js'
+  import { treeMarker, fmtTime } from '../../lib/app.svelte.js'
 
   const app = getContext('app')
 
@@ -9,6 +9,7 @@
   app.mdl.username = app.me.mdlUsername || ''
   app.mal.username = app.me.malUsername || ''
   app.loadScopeCategories()
+  app.loadTokens()
 </script>
 
 <h1 class="title is-5">Settings</h1>
@@ -24,6 +25,64 @@
       <tr><td>Role</td><td>{app.me.admin ? 'Administrator' : 'User'}</td></tr>
     </tbody>
   </table>
+</div>
+
+<div class="box ff-settings-card">
+  <h2 class="title is-6">Personal access tokens</h2>
+  <p class="help ff-settings-intro">
+    Tokens let a script call the FileFin API as you, with <code>Authorization: Bearer &lt;token&gt;</code>,
+    instead of a browser login. A token has your full account permissions and is shown only once - copy
+    it now, or revoke it and make a new one.
+  </p>
+
+  {#if app.tokens.justCreated}
+    <div class="notification is-success is-light">
+      <button class="delete" onclick={() => (app.tokens.justCreated = null)} aria-label="dismiss"></button>
+      <p><strong>{app.tokens.justCreated.label || 'New token'}</strong> - copy it now, it will not be shown again:</p>
+      <div class="field has-addons">
+        <div class="control is-expanded">
+          <input class="input" type="text" readonly value={app.tokens.justCreated.token} onclick={(e) => e.target.select()} />
+        </div>
+        <div class="control">
+          <button class="button" onclick={() => navigator.clipboard?.writeText(app.tokens.justCreated.token)}>Copy</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <div class="field has-addons">
+    <div class="control is-expanded">
+      <input
+        class="input"
+        type="text"
+        placeholder="Label, e.g. laptop script"
+        bind:value={app.tokens.label}
+        onkeydown={(e) => e.key === 'Enter' && app.createToken()} />
+    </div>
+    <div class="control">
+      <button class="button is-link" class:is-loading={app.tokens.creating} onclick={() => app.createToken()}>Generate</button>
+    </div>
+  </div>
+
+  {#if app.tokens.list.length}
+    <table class="table is-fullwidth is-hoverable">
+      <thead>
+        <tr><th>Label</th><th>Created</th><th>Last used</th><th></th></tr>
+      </thead>
+      <tbody>
+        {#each app.tokens.list as t}
+          <tr>
+            <td>{t.label || '(unlabeled)'}</td>
+            <td>{fmtTime(t.createdAt)}</td>
+            <td>{fmtTime(t.lastUsedAt)}</td>
+            <td><button class="button is-small is-danger is-light" onclick={() => app.revokeToken(t.id)}>Revoke</button></td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {:else if !app.tokens.loading}
+    <p class="help">No tokens yet.</p>
+  {/if}
 </div>
 
 {#snippet scope(store, id)}

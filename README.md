@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.20.5-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.21.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -126,6 +126,8 @@ the server to transcode them. It is not yet released - see that repo's own READM
   formats are converted.
 - **Multi-user with per-user state** - accounts with admin/block controls; resume points, watched flags,
   favorites, and 1-10 ratings, each stored per user in the item's `meta.json`.
+- **Personal access tokens** - mint and revoke your own API tokens from Settings, so a script can call
+  the API with `Authorization: Bearer <token>` instead of a browser session.
 - **Bring your ratings with you** - import a public MyDramaList or MyAnimeList list and apply its
   watched flags and scores to the titles you own.
 - **Search the whole library** - by title, cast, genre, tag, director, language, or year, with every

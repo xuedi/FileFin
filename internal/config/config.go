@@ -5,13 +5,16 @@ package config
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"filefin/internal/fsutil"
 )
@@ -25,15 +28,62 @@ const DefaultPort = 8080
 // free-editable display name; Blocked temporarily bars login; CreatedAt/LastLoginAt are
 // unix seconds (LastLoginAt 0 = never).
 type User struct {
-	ID          int64  `json:"id,omitempty"`
-	Hash        string `json:"hash"`
-	Alias       string `json:"alias,omitempty"`
-	Admin       bool   `json:"admin,omitempty"`
-	Blocked     bool   `json:"blocked,omitempty"`
-	CreatedAt   int64  `json:"createdAt,omitempty"`
-	LastLoginAt int64  `json:"lastLoginAt,omitempty"`
-	MDLUsername string `json:"mdlUsername,omitempty"` // MyDramaList account to import watched + ratings from
-	MALUsername string `json:"malUsername,omitempty"` // MyAnimeList account to import watched + ratings from
+	ID          int64           `json:"id,omitempty"`
+	Hash        string          `json:"hash"`
+	Alias       string          `json:"alias,omitempty"`
+	Admin       bool            `json:"admin,omitempty"`
+	Blocked     bool            `json:"blocked,omitempty"`
+	CreatedAt   int64           `json:"createdAt,omitempty"`
+	LastLoginAt int64           `json:"lastLoginAt,omitempty"`
+	MDLUsername string          `json:"mdlUsername,omitempty"` // MyDramaList account to import watched + ratings from
+	MALUsername string          `json:"malUsername,omitempty"` // MyAnimeList account to import watched + ratings from
+	Tokens      []PersonalToken `json:"tokens,omitempty"`      // self-service API credentials, see PersonalToken
+}
+
+// PersonalToken is a self-service API credential a user mints from Settings to call the API
+// as themselves (full account permissions, no scoping) without a browser session cookie. Hash
+// is the sha256 hex digest of the secret - the secret itself is returned once at creation and
+// never stored. ID is a public, non-secret handle used to list/revoke the token.
+type PersonalToken struct {
+	ID         string `json:"id"`
+	Label      string `json:"label,omitempty"`
+	Hash       string `json:"hash"`
+	CreatedAt  int64  `json:"createdAt"`
+	LastUsedAt int64  `json:"lastUsedAt,omitempty"`
+}
+
+// personalTokenPrefix marks a personal access token secret, so it is recognizable to secret
+// scanners and to a human glancing at a credential.
+const personalTokenPrefix = "ffpat_"
+
+// HashPersonalToken returns the sha256 hex digest used both to store a token at rest and to
+// verify a presented secret against that stored hash.
+func HashPersonalToken(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// NewPersonalToken mints a fresh personal access token: a random secret (returned once, never
+// stored) and its PersonalToken record - a random public ID for addressing plus the sha256
+// hash of the secret for later verification.
+func NewPersonalToken(label string) (secret string, rec PersonalToken, err error) {
+	secretBytes := make([]byte, 32)
+	if _, err = rand.Read(secretBytes); err != nil {
+		return "", PersonalToken{}, err
+	}
+	secret = personalTokenPrefix + base64.RawURLEncoding.EncodeToString(secretBytes)
+
+	idBytes := make([]byte, 16)
+	if _, err = rand.Read(idBytes); err != nil {
+		return "", PersonalToken{}, err
+	}
+	rec = PersonalToken{
+		ID:        hex.EncodeToString(idBytes),
+		Label:     strings.TrimSpace(label),
+		Hash:      HashPersonalToken(secret),
+		CreatedAt: time.Now().Unix(),
+	}
+	return secret, rec, nil
 }
 
 // NormalizeUsername canonicalizes a username (an email) for use as a Users map key and

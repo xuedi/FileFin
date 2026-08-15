@@ -72,6 +72,18 @@ cookie from cross-site POSTs, which covers the state-changing API, and every mut
 POST/PUT/DELETE with a JSON body, so no cross-site form can reach one. A token scheme would be
 the stronger answer and is not ruled out; today the cookie attribute is the whole of it.
 
+A user can also mint their own **personal access tokens** from Settings, for scripts and other
+API callers that cannot hold a browser session: `Authorization: Bearer <token>` authenticates
+exactly like the cookie, with the full permissions of the owning account (there is no scoping
+model elsewhere in the app to plug a narrower one into). Only the token's sha256 hash is
+stored - the raw secret is returned once, at creation, and never again. A token is high-entropy
+(256 bits) rather than user-chosen, so unlike a password it needs no guessing throttle. Tokens
+are individually revocable, and blocking the owning account cuts all of them off immediately,
+the same as it does sessions, since the check is against the live `Blocked` flag on every
+request rather than a separate revocation list. Bearer auth is also naturally immune to the
+CSRF concern above: a browser never attaches an `Authorization` header on its own, so it cannot
+be smuggled in from a cross-site form the way a cookie can.
+
 ```mermaid
 flowchart TD
     L[POST /api/login] --> T{throttled? account/IP over limit}
@@ -79,9 +91,11 @@ flowchart TD
     T -->|no| V{constant-time hash match and not blocked?}
     V -->|no| U401[401 + record failure]
     V -->|yes| SES[clear counter, stamp last login, create session -> cookie]
-    REQ[any app route] --> AUTH[auth: valid session cookie?]
-    AUTH -->|no| R401[401]
+    REQ[any app route] --> AUTH{valid session cookie?}
     AUTH -->|yes| ADM{admin route?}
+    AUTH -->|no| BEAR{valid, non-blocked<br/>bearer token?}
+    BEAR -->|yes| ADM
+    BEAR -->|no| R401[401]
     ADM -->|no| OK[handler]
     ADM -->|admin user?| OK
     ADM -->|not admin| F403[403]

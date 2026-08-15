@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,21 +77,56 @@ func (s *sessionStore) deleteUser(user string) {
 	}
 }
 
-// auth guards a handler, requiring a valid session cookie and stashing the username.
+// auth guards a handler, requiring either a valid session cookie (the browser) or a valid
+// personal access token in an Authorization: Bearer header (scripts/automation), and stashes
+// the resolved username.
 func (s *Server) auth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if c, err := r.Cookie(sessionCookie); err == nil {
+			if user, ok := s.sessions.user(c.Value); ok {
+				next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+				return
+			}
+		}
+		if user, ok := s.authUserFromBearer(r); ok {
+			next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
 			return
 		}
-		user, ok := s.sessions.user(c.Value)
-		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+// authUserFromBearer resolves an Authorization: Bearer <token> header to a username by
+// scanning every account's personal access tokens for a hash match on a non-blocked account.
+// A token is high-entropy (256 bits), unlike a password, so unlike login this needs no
+// throttle - it cannot be feasibly guessed. On a match it best-effort stamps the token's
+// LastUsedAt, following the same lock-mutate-save-in-place pattern as the per-user profile
+// handlers (e.g. handleMDLProfile) rather than mutateConfig's copy-on-write: a lost stamp on a
+// rare save failure is harmless and must never fail the request it is piggybacking on.
+func (s *Server) authUserFromBearer(r *http.Request) (string, bool) {
+	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || secret == "" {
+		return "", false
+	}
+	hash := []byte(config.HashPersonalToken(secret))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for username, u := range s.cfg.Users {
+		if u.Blocked {
+			continue
+		}
+		for i, t := range u.Tokens {
+			if subtle.ConstantTimeCompare([]byte(t.Hash), hash) != 1 {
+				continue
+			}
+			u.Tokens[i].LastUsedAt = time.Now().Unix()
+			s.cfg.Users[username] = u
+			_ = config.Save(s.cfg)
+			return username, true
+		}
+	}
+	return "", false
 }
 
 // admin guards a handler, requiring a valid session whose user is an admin. Entering

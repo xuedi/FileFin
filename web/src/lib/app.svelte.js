@@ -147,6 +147,10 @@ export class AppState {
   mdl = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
   mal = $state({ username: '', categoryId: 0, loading: false, applying: false, preview: null })
 
+  // user settings: personal access tokens (list, new-label input, in-flight flags, and the
+  // just-minted secret shown once until dismissed)
+  tokens = $state({ list: [], label: '', loading: false, creating: false, justCreated: null })
+
   // admin: unhealthy media (metadata matching). The list of unmatched items, plus a drill-in
   // detail with an editable title/year/IMDb-id form and the OMDb candidates it searches up.
   // misfiled holds the items whose looked-up language/country contradicts their category.
@@ -1003,6 +1007,49 @@ export class AppState {
       this.toast('error', (await errText(e)) || 'Could not import ' + noun)
     } finally {
       store.applying = false
+    }
+  }
+
+  // --- Personal access tokens (user settings) ---
+
+  async loadTokens() {
+    this.tokens.loading = true
+    try {
+      this.tokens.list = await api('/api/profile/tokens')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not load your tokens')
+    } finally {
+      this.tokens.loading = false
+    }
+  }
+
+  async createToken() {
+    const label = this.tokens.label.trim()
+    this.tokens.creating = true
+    try {
+      const r = await api('/api/profile/tokens', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label }),
+      })
+      this.tokens.justCreated = r
+      this.tokens.list = [...this.tokens.list, r]
+      this.tokens.label = ''
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not create the token')
+    } finally {
+      this.tokens.creating = false
+    }
+  }
+
+  async revokeToken(id) {
+    const prev = this.tokens.list
+    this.tokens.list = prev.filter((t) => t.id !== id)
+    try {
+      await api('/api/profile/tokens/' + id, { method: 'DELETE' })
+    } catch (e) {
+      this.tokens.list = prev
+      this.toast('error', (await errText(e)) || 'Could not revoke the token')
     }
   }
 

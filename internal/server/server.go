@@ -263,6 +263,9 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/profile/mal", s.auth(s.handleMALProfile))
 		mux.Handle("POST /api/mal/preview", s.auth(s.handleMALPreview))
 		mux.Handle("POST /api/mal/apply", s.auth(s.handleMALApply))
+		mux.Handle("GET /api/profile/tokens", s.auth(s.handleListTokens))
+		mux.Handle("POST /api/profile/tokens", s.auth(s.handleCreateToken))
+		mux.Handle("DELETE /api/profile/tokens/{id}", s.auth(s.handleRevokeToken))
 		mux.Handle("GET /api/categories", s.auth(s.handleListCategories))
 
 		// End-user library, detail, status, and playback.

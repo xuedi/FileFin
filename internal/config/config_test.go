@@ -31,6 +31,32 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNewPersonalToken(t *testing.T) {
+	secretA, recA, err := NewPersonalToken(" laptop script ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretB, recB, err := NewPersonalToken("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secretA == secretB || recA.ID == recB.ID || recA.Hash == recB.Hash {
+		t.Fatalf("expected unique secret/id/hash across calls: %+v %+v", recA, recB)
+	}
+	if recA.Label != "laptop script" {
+		t.Fatalf("label not trimmed: %q", recA.Label)
+	}
+	if recA.CreatedAt == 0 {
+		t.Fatal("expected CreatedAt to be stamped")
+	}
+	if recA.Hash != HashPersonalToken(secretA) {
+		t.Fatalf("stored hash does not verify against its own secret")
+	}
+	if HashPersonalToken(secretA) == HashPersonalToken(secretB) {
+		t.Fatal("expected different secrets to hash differently")
+	}
+}
+
 func TestSaveMode0600(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := Save(&Config{Port: DefaultPort, Users: map[string]User{}}); err != nil {
