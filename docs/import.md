@@ -431,16 +431,33 @@ never fails an import):
    the original is kept rather than lost, and the player's own format sniffing still renders
    it (see `playback.md`).
 2. **Embedded tracks** are then externalised: the importer probes the copied file with ffprobe
-   and, for each **text** subtitle track that carries a **known language** (a real
-   `tags.language` that is not `und`; bitmap codecs like PGS/VobSub/DVB are skipped because
-   they need OCR and the player only renders SRT), extracts it with ffmpeg to a
-   `<base>.<lang>.srt` sidecar. A language already covered by a sidecar (including the ones
-   just placed in step 1) is **skipped**, and the first track of a language wins, so a second
-   same-language track is skipped too. Unknown-language and bitmap tracks are left in the
-   container untouched.
+   and extracts each **text** subtitle track with ffmpeg to a `<base>.<lang>.srt` sidecar.
+   Bitmap codecs (PGS/VobSub/DVB) are skipped - they need OCR, and the player only renders
+   SRT - and are left in the container untouched. A language already covered by a sidecar
+   (including the ones just placed in step 1) is **skipped**, and the first track of a
+   language wins, so a second same-language track is skipped too.
+
+   Naming a track uses the best evidence it carries, in order:
+
+```mermaid
+flowchart TD
+    T[embedded text track] --> L{tags.language set\nand not 'und'?}
+    L -->|yes| USE[name the sidecar after it]
+    L -->|no| TI{tags.title names\na known language?}
+    TI -->|yes| USE
+    TI -->|no| FB[the configured subtitle language]
+    FB --> USE
+```
+
+   The fallback matters: releases routinely ship exactly one unlabelled text track (and
+   sometimes label a track `English` while leaving the language tag empty). Dropping those
+   would lose the only subtitles the file has, so an untagged track is named after the
+   library's **Subtitle language** setting - the same answer a sidecar with no language infix
+   already gets in step 1.
 
 The player only renders external `.srt` sidecars, so this is what makes a muxed-in subtitle
-visible (see `playback.md`).
+visible (see `playback.md`). A folder imported before a track could be named this way is
+repaired by the discovery agent rather than needing a re-import (see `agents/discovery.md`).
 
 ## Posters
 

@@ -21,7 +21,7 @@ A native phone/TV client lives in its own repo: [FileFin-client](https://github.
 | [`agents/thumbnailer.md`](agents/thumbnailer.md) | Thumbnail agent | Sized WebP posters, frame-derived posters for home media, `?size=` |
 | [`agents/optimizer.md`](agents/optimizer.md) | Pre-transcoder | Background `.optimized.mp4` copies, GPU worker + load-driven CPU pool |
 | [`agents/probe.md`](agents/probe.md) | Format-probe agent | Backfills/refreshes the true container + codecs onto the cache and `meta.json` |
-| [`agents/discovery.md`](agents/discovery.md) | Discovery agent | Timer-driven reconcile, queue refill, and `media_health` checks as a rolling sweep |
+| [`agents/discovery.md`](agents/discovery.md) | Discovery agent | Timer-driven reconcile, queue refill, `media_health` checks and subtitle repair as a rolling sweep |
 | [`import.md`](import.md) | Import | Source front stages, recognition (marker cut, entry grouping, confidence), category prediction from markers, the preCheck page, the import poller, the `imports` table |
 | [`playback.md`](playback.md) | Video player | Direct-play (by probed format) vs HLS transcode, subtitles |
 | [`mediaformat.md`](mediaformat.md) | Media format & categories | On-disk layout, the `config.json` discriminator, the category tree and its markers, probed-format truth |

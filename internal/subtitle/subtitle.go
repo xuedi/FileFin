@@ -58,6 +58,22 @@ func NormalizeLang(raw, def string) string {
 	return s
 }
 
+// KnownLang reports whether raw names a language FileFin recognises - a two-letter tag
+// it has a label for, or an alias it can normalise. Used to decide whether a free-text
+// tag (an embedded track's title, say) really names a language rather than a variant
+// like "Full" or "SDH".
+func KnownLang(raw string) bool {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return false
+	}
+	if _, ok := langAliases[s]; ok {
+		return true
+	}
+	_, ok := langLabels[s]
+	return ok
+}
+
 // Label returns a human display name for a language tag, falling back to the tag
 // itself (uppercased) when it is unknown.
 func Label(lang string) string {

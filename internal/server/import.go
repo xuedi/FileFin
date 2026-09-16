@@ -426,7 +426,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 
 	// Then externalise any embedded text subtitle tracks the player can show, skipping
 	// languages already covered by the sidecars just placed. Best-effort like the above.
-	if n := importer.ExtractEmbeddedSubtitles(ctx, target, ffmpeg, ffprobeBin); n > 0 {
+	if n := importer.ExtractEmbeddedSubtitles(ctx, target, ffmpeg, ffprobeBin, subLang); n > 0 {
 		s.logger().For(logging.Import).Info("extracted embedded subtitles for "+row.Filename,
 			logging.Fields{"count": n})
 	}

@@ -16,7 +16,7 @@ its own page under `agents/`, and the import poller is documented with the rest 
 | **thumbnailer** | `thumbnail_tasks` | build sized WebP poster variants; extract a frame poster for other-media | `agents/thumbnailer.md` |
 | **optimizer** | `optimize_tasks` | pre-build a browser-direct-play `.optimized.mp4` copy (GPU + elastic CPU workers) | `agents/optimizer.md` |
 | **probe** | `probe_tasks` | refresh each file's true container/codecs onto the cache + `meta.json` | `agents/probe.md` |
-| **discovery** | (timer, no queue) | reconcile cache vs disk, refill the four queues, run health checks | `agents/discovery.md` |
+| **discovery** | (timer, no queue) | reconcile cache vs disk, refill the four queues, run health checks, repair missing subtitle sidecars | `agents/discovery.md` |
 
 ## The shared task queue
 
@@ -41,6 +41,9 @@ The work an agent does splits cleanly in two, and discovery is what keeps both c
 - **Health (not auto-fixable).** A missing/unparseable `meta.json`, a folder with no video, a
   listed file gone or zero-byte, a referenced poster gone, an orphaned optimizer copy or sized
   poster. These the agent cannot fix; they are recorded and surfaced to the admin.
+- **Repair (fixed in place, no queue).** A video with subtitles only inside its container and
+  no `.srt` sidecar beside it. The fix is one local ffmpeg extraction, too cheap to queue and
+  too fixable to report, so the discovery sweep just does it.
 
 A `meta.json` lacking its technical block is **refill** (the probe agent backfills it); a
 `meta.json` that is missing or corrupt is **health** (surfaced, never fabricated). See

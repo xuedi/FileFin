@@ -49,17 +49,21 @@ type probeOutput struct {
 		Height    int    `json:"height"`
 		Tags      struct {
 			Language string `json:"language"`
+			Title    string `json:"title"`
 		} `json:"tags"`
 	} `json:"streams"`
 }
 
 // SubtitleStream is one embedded subtitle track of a media file. Index is the track's
 // position among the file's subtitle streams (0-based), i.e. the N in ffmpeg's
-// "0:s:N" map specifier. Language is the raw "tags.language" tag ("" when absent).
+// "0:s:N" map specifier. Language is the raw "tags.language" tag ("" when absent) and
+// Title the raw "tags.title" tag, which often names the language when the language tag
+// itself is missing.
 type SubtitleStream struct {
 	Index    int    `json:"index"`
 	Codec    string `json:"codec"`
 	Language string `json:"language"`
+	Title    string `json:"title"`
 }
 
 // decode runs the single shared ffprobe invocation and parses its JSON. bin falls back to
@@ -173,7 +177,9 @@ func subtitlesFrom(po probeOutput) []SubtitleStream {
 		if s.CodecType != "subtitle" {
 			continue
 		}
-		subs = append(subs, SubtitleStream{Index: rel, Codec: s.CodecName, Language: s.Tags.Language})
+		subs = append(subs, SubtitleStream{
+			Index: rel, Codec: s.CodecName, Language: s.Tags.Language, Title: s.Tags.Title,
+		})
 		rel++
 	}
 	return subs

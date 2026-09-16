@@ -348,9 +348,10 @@ func (s *Server) dropMediaFromCache(ctx context.Context, pool *sql.DB, id, why s
 
 // reconcileItem processes one media item in the rolling pass: if its folder fingerprint
 // changed since the last check it re-reads meta.json and the file list into the cache,
-// then runs the health checks and records the result (stamping the check time). It is the
-// per-item body of a discovery tick.
-func (s *Server) reconcileItem(ctx context.Context, pool *sql.DB, dataDir string, id string, ref onDiskRef, now int64) {
+// externalises any embedded subtitle track the folder has no sidecar for, then runs the
+// health checks and records the result (stamping the check time). It is the per-item body
+// of a discovery tick. It returns how many subtitle sidecars the repair wrote.
+func (s *Server) reconcileItem(ctx context.Context, pool *sql.DB, dataDir string, id string, ref onDiskRef, now int64) int {
 	cur := folderFingerprint(ref.dir)
 	stored, _ := db.HealthFingerprint(ctx, pool, id)
 	if cur != stored {
@@ -363,14 +364,23 @@ func (s *Server) reconcileItem(ctx context.Context, pool *sql.DB, dataDir string
 	}
 	m, err := db.GetMedia(ctx, pool, id)
 	if err != nil {
-		return
+		return 0
 	}
 	files, err := db.MediaFiles(ctx, pool, id)
 	if err != nil {
-		return
+		return 0
+	}
+	// Repair before fingerprinting for the record: the sidecars just written are part of
+	// the folder, so re-reading the fingerprint here keeps the next sweep from seeing our
+	// own writes as drift.
+	written := s.repairSubtitles(ctx, files)
+	if written > 0 {
+		s.logSubtitleRepair(m.Title, id, written)
+		cur = folderFingerprint(ref.dir)
 	}
 	report := checkHealth(m, files)
 	s.bestEffort(db.UpsertHealth(ctx, pool, id, cur, report.OK, report.issuesJSON(), now), "upsert health")
+	return written
 }
 
 // checkOrphans reports derived files left behind after their source disappeared.

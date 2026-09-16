@@ -118,8 +118,10 @@ touching the disk; import does the same check when placing the sidecar (see `imp
 
 Only external `.srt` sidecars are rendered - embedded subtitle tracks are not read at play
 time. Instead, **import** externalises a file's embedded text subtitle tracks to `.srt`
-sidecars (one per known language, skipping languages already covered), so they show up here
-like any other sidecar. See `import.md` (Subtitles).
+sidecars (one per language, skipping languages already covered; a track with no usable
+language tag is named after the configured subtitle language), so they show up here like any
+other sidecar. See `import.md` (Subtitles). A file that arrived before its tracks could be
+named is repaired on a later sweep by the discovery agent (see `agents/discovery.md`).
 
 ## Watch progress
 

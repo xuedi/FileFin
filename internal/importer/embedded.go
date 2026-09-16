@@ -31,11 +31,10 @@ type embeddedPick struct {
 }
 
 // chooseEmbeddedSubtitles decides which embedded subtitle tracks to extract: text tracks
-// only (bitmap codecs are skipped), each carrying a real language tag (a missing or
-// "und" tag is skipped - we will not guess), whose language is not already covered. The
-// first track of a given language wins, so a second same-language track is skipped.
-// present holds the languages already on disk as sidecars.
-func chooseEmbeddedSubtitles(streams []ffprobe.SubtitleStream, present map[string]bool) []embeddedPick {
+// only (bitmap codecs are skipped), each named by trackLang, whose language is not already
+// covered. The first track of a given language wins, so a second same-language track is
+// skipped. present holds the languages already on disk as sidecars.
+func chooseEmbeddedSubtitles(streams []ffprobe.SubtitleStream, present map[string]bool, fallback string) []embeddedPick {
 	claimed := map[string]bool{}
 	for k := range present {
 		claimed[k] = true
@@ -45,11 +44,7 @@ func chooseEmbeddedSubtitles(streams []ffprobe.SubtitleStream, present map[strin
 		if bitmapSubCodecs[strings.ToLower(strings.TrimSpace(st.Codec))] {
 			continue
 		}
-		raw := strings.ToLower(strings.TrimSpace(st.Language))
-		if raw == "" || raw == "und" {
-			continue // unknown language: we cannot name it, so skip
-		}
-		lang := subtitle.NormalizeLang(st.Language, "")
+		lang := trackLang(st, fallback)
 		if lang == "" || claimed[lang] {
 			continue
 		}
@@ -59,20 +54,37 @@ func chooseEmbeddedSubtitles(streams []ffprobe.SubtitleStream, present map[strin
 	return out
 }
 
+// trackLang names one embedded track from the best evidence it carries: its language tag,
+// else its title when that names a language (releases routinely label a track "English"
+// and leave the language tag empty), else the fallback - the library's configured subtitle
+// language, which is the same answer sidecars without a language infix get. Untagged
+// tracks used to be dropped, which lost the only subtitles of releases that ship exactly
+// one unlabelled stream.
+func trackLang(st ffprobe.SubtitleStream, fallback string) string {
+	if raw := strings.ToLower(strings.TrimSpace(st.Language)); raw != "" && raw != "und" {
+		return subtitle.NormalizeLang(raw, "")
+	}
+	if subtitle.KnownLang(st.Title) {
+		return subtitle.NormalizeLang(st.Title, "")
+	}
+	return subtitle.NormalizeLang(fallback, "")
+}
+
 // ExtractEmbeddedSubtitles externalises a video's embedded text subtitle tracks as
 // "<base>.<lang>.srt" sidecars so the player (which only renders SRT sidecars) can show
-// them. It skips any language already present as a sidecar and any track without a
-// recognised language. It runs after PlaceSubtitles so the just-placed sidecars are part
-// of the dedup set. Best-effort: a missing ffmpeg/ffprobe or a failed extract is a silent
-// no-op. Returns how many tracks were extracted.
-func ExtractEmbeddedSubtitles(ctx context.Context, videoTarget, ffmpegBin, ffprobeBin string) int {
+// them. It skips any language already present as a sidecar; a track carrying no usable
+// language tag is named after fallback, the library's configured subtitle language. It
+// runs after PlaceSubtitles so the just-placed sidecars are part of the dedup set.
+// Best-effort: a missing ffmpeg/ffprobe or a failed extract is a silent no-op. Returns how
+// many tracks were extracted.
+func ExtractEmbeddedSubtitles(ctx context.Context, videoTarget, ffmpegBin, ffprobeBin, fallback string) int {
 	present := map[string]bool{}
 	for _, s := range FindSidecarSubtitles(videoTarget) {
 		if lang := subtitle.NormalizeLang(s.Language, ""); lang != "" {
 			present[lang] = true
 		}
 	}
-	picks := chooseEmbeddedSubtitles(ffprobe.SubtitleStreams(ctx, ffprobeBin, videoTarget), present)
+	picks := chooseEmbeddedSubtitles(ffprobe.SubtitleStreams(ctx, ffprobeBin, videoTarget), present, fallback)
 	n := 0
 	for _, p := range picks {
 		dst := SubtitleTargetName(videoTarget, p.Lang, ".srt")

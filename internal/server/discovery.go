@@ -115,14 +115,25 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 	}
 }
 
-// discoveryTick is one sweep: reconcile the cache against disk, refill the three work
-// queues, and run the rolling health pass over the least-recently-checked items. It holds
-// the maintenance lock so it never races a rebuild, and a running guard skips the tick when
-// the previous one is still in flight.
-func (s *Server) discoveryTick(ctx context.Context) {
+// discoveryTick is one timed sweep: the rolling health pass covers the least-recently-
+// checked batch, so a large library is processed as a continuous trickle.
+func (s *Server) discoveryTick(ctx context.Context) { s.sweep(ctx, discoveryBatch, nil) }
+
+// sweep reconciles the cache against disk, refills the three work queues, and runs the
+// health pass over the limit least-recently-checked items (all of them when limit is 0).
+// It holds the maintenance lock so it never races a rebuild, and a running guard skips the
+// sweep when the previous one is still in flight. job, when set, carries live progress for
+// the forced full sweep.
+func (s *Server) sweep(ctx context.Context, limit int, job *sweepTracker) {
+	if job != nil {
+		defer job.done()
+	}
 	s.discMu.Lock()
 	if s.discRunning {
 		s.discMu.Unlock()
+		if job != nil {
+			job.fail("a sweep is already running")
+		}
 		return
 	}
 	s.discRunning = true
@@ -176,14 +187,14 @@ func (s *Server) discoveryTick(ctx context.Context) {
 		s.dlog().Error("discovery probe refill failed", logging.Fields{"error": err.Error()})
 	}
 
-	// Rolling pass: fully process the N least-recently-checked items so a large library is
-	// swept as a continuous trickle rather than all at once.
-	ids, err := db.OldestUncheckedMedia(ctx, pool, discoveryBatch)
+	// Health pass: process the least-recently-checked items, a batch at a time on the timer
+	// so a large library is swept as a continuous trickle, or all of them when forced.
+	ids, err := db.OldestUncheckedMedia(ctx, pool, limit)
 	if err != nil {
 		return
 	}
 	now := time.Now().Unix()
-	checked := 0
+	checked, repaired := 0, 0
 	for _, id := range ids {
 		if ctx.Err() != nil {
 			return
@@ -192,15 +203,18 @@ func (s *Server) discoveryTick(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		s.reconcileItem(ctx, pool, dataDir, id, ref, now)
+		repaired += s.reconcileItem(ctx, pool, dataDir, id, ref, now)
 		checked++
+		if job != nil {
+			job.advance(repaired)
+		}
 	}
 	s.discMu.Lock()
 	s.discLastSweep = now
 	s.discMu.Unlock()
 	if added > 0 || removed > 0 || checked > 0 {
 		s.dlog().Info("discovery sweep complete",
-			logging.Fields{"added": added, "removed": removed, "checked": checked})
+			logging.Fields{"added": added, "removed": removed, "checked": checked, "subtitles": repaired})
 	}
 }
 
@@ -211,4 +225,85 @@ func (s *Server) handleRunDiscovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		Started bool `json:"started"`
 	}{true})
+}
+
+// handleFullSweep runs the health pass over the whole library at once instead of waiting
+// out the rolling trickle - the brute-force companion to "force now", and the repair action
+// for folders whose embedded subtitles were never externalised. It returns immediately and
+// the maintenance page polls handleFullSweepProgress for the bar; the folder count on disk
+// is the denominator, so the bar has a total before the sweep starts.
+func (s *Server) handleFullSweep(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.ensureDB(r.Context()); err != nil {
+		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	refs, _ := onDiskMediaRefs(s.dataDir())
+	if !s.sweepJob.begin(len(refs)) {
+		http.Error(w, "sweep already running", http.StatusConflict)
+		return
+	}
+	go s.sweep(context.Background(), 0, &s.sweepJob)
+	writeJSON(w, s.sweepJob.snapshot())
+}
+
+// handleFullSweepProgress returns the live full-sweep progress for the polling page.
+func (s *Server) handleFullSweepProgress(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.sweepJob.snapshot())
+}
+
+// sweepState is a forced full sweep's live progress, polled by the maintenance page.
+// Subtitles counts the sidecars extracted along the way. running is not serialized; it
+// guards against starting a second full sweep while one is in flight.
+type sweepState struct {
+	Total     int    `json:"total"`
+	Done      int    `json:"done"`
+	Subtitles int    `json:"subtitles"`
+	Finished  bool   `json:"finished"`
+	Error     string `json:"error"`
+	running   bool
+}
+
+// sweepTracker owns the full-sweep progress behind its own mutex (the rebuildTracker pattern).
+type sweepTracker struct {
+	mu sync.Mutex
+	st sweepState
+}
+
+// begin marks a fresh sweep running with its item denominator; ok is false when one is
+// already in flight.
+func (t *sweepTracker) begin(total int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.st.running {
+		return false
+	}
+	t.st = sweepState{running: true, Total: total}
+	return true
+}
+
+func (t *sweepTracker) advance(subtitles int) {
+	t.mu.Lock()
+	t.st.Done++
+	t.st.Subtitles = subtitles
+	t.mu.Unlock()
+}
+
+func (t *sweepTracker) fail(msg string) {
+	t.mu.Lock()
+	t.st.Error = msg
+	t.mu.Unlock()
+}
+
+// done closes the sweep however it ended, keeping any error already recorded. Every exit
+// from sweep runs it, so a sweep that returns early never leaves the button stuck.
+func (t *sweepTracker) done() {
+	t.mu.Lock()
+	t.st.Finished, t.st.running = true, false
+	t.mu.Unlock()
+}
+
+func (t *sweepTracker) snapshot() sweepState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.st
 }

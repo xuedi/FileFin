@@ -202,6 +202,16 @@
       <div class="ff-maint-text"><strong>Re-scan formats (probe)</strong><p class="help">Queue files whose true container/codecs need probing.</p></div>
       <button class="button" disabled={app.probeScanning} onclick={() => app.probeScan()}>{app.probeScanning ? 'Scanning...' : 'Run'}</button>
     </div>
+    <div class="ff-maint-row">
+      <div class="ff-maint-text"><strong>Full health sweep</strong><p class="help">Check every media folder at once instead of the rolling trickle, extracting embedded subtitles that have no sidecar.</p></div>
+      <button class="button" disabled={app.sweeping} onclick={() => app.fullSweep()}>{app.sweeping ? 'Sweeping...' : 'Run'}</button>
+    </div>
+    {#if app.sweepProgress}
+      <div class="ff-rebuild-progress">
+        <ProgressBar value={app.sweepProgress.done} max={app.sweepProgress.total || 1} />
+        <p class="help">Sweeping library - {app.sweepProgress.done} / {app.sweepProgress.total || '?'} items</p>
+      </div>
+    {/if}
     <p class="help ff-maint-note">Scan progress shows on the <a href={null} onclick={() => app.go('/admin/progress')}>Progress</a> page.</p>
   </div>
   <div class="box ff-settings-card ff-danger-zone">

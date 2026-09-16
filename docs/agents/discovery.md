@@ -18,6 +18,10 @@ reusable candidacy, reconcile, and health logic it shares with the buttons is th
   referenced poster gone, an orphaned optimizer copy (source gone) or sized poster variant
   (no base). These are recorded and surfaced to the admin; the agent does not try to fix
   them.
+- **Repair (fixable in place).** Missing subtitle sidecars: a video file with no `.srt`
+  beside it but text subtitle tracks inside the container is fixed on the spot rather than
+  reported, because the fix is a local ffmpeg extraction with no queue and no external
+  service (see below).
 
 Folder-level drift (a folder on disk but not in the cache, or vice versa) is neither of the
 above: it is handled by the reconcile itself, which is why this is a *discovery* agent and
@@ -58,9 +62,30 @@ flowchart TD
     DEL --> REFILL
     REFILL --> RETRY[re-queue enrich errors last tried > 14 days ago]
     RETRY --> ROLL[select N least-recently-checked items]
-    ROLL --> ITEM[per item: reconcile if fingerprint changed,\nrun health checks, stamp last_checked_at + record]
+    ROLL --> ITEM[per item: reconcile if fingerprint changed,\nrepair missing subtitle sidecars,\nrun health checks, stamp last_checked_at + record]
     ITEM --> UNLOCK[release lock]
 ```
+
+The batch is the only thing the **full sweep** changes: the same tick body runs over every
+item instead of the N least-recently-checked ones, in the background with a progress bar. It
+is the brute-force companion to "Run discovery now" and the way a library is repaired in one
+go after a fix lands, instead of waiting out a rotation.
+
+## Subtitle repair
+
+The player renders only external `.srt` sidecars, so a file whose subtitles live only inside
+its container shows none (see `../playback.md`). Import externalises those tracks, but a
+folder imported before a track could be named that way keeps its subtitles hidden forever.
+The rolling pass closes that gap: for each video file with **no `.srt` sidecar at all**, it
+probes the container and extracts the missing text tracks exactly as import does (see
+`../import.md`).
+
+The gate is deliberately cheap and stateless - a file that already has a sidecar is skipped on
+a directory read alone, so a swept library costs nothing and no cache column is needed to
+remember which files were examined. The price is that a file with no subtitles anywhere is
+probed once per rotation, which is also what lets a track added to the file later still be
+found. The sidecars are the agent's own writes, so the folder fingerprint is re-read after a
+repair and the next sweep does not mistake them for drift.
 
 ## Reconcile is the incremental sibling of rebuild
 
@@ -94,5 +119,7 @@ manual control.
 | method + path                       | purpose                                            |
 |-------------------------------------|----------------------------------------------------|
 | `POST /api/admin/settings/discovery`| set the sweep interval (off / 1h / 3h / 12h / 24h) |
-| `POST /api/admin/discovery/run`     | trigger an immediate sweep                         |
+| `POST /api/admin/discovery/run`     | trigger an immediate sweep (one rolling batch)     |
+| `POST /api/admin/discovery/sweep`   | sweep the whole library at once, in the background |
+| `GET  /api/admin/discovery/sweep/progress` | live progress of a full sweep               |
 | `GET  /api/admin/health`            | list items currently flagged with issues           |

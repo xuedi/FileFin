@@ -325,6 +325,9 @@ export class AppState {
   enrichScanning = $state(false)
   thumbnailScanning = $state(false)
   probeScanning = $state(false)
+  sweeping = $state(false)
+  sweepProgress = $state(null) // { total, done, subtitles, finished, error } while a full sweep runs
+  sweepTimer = 0
 
   // admin import
   importCategory = $state('')
@@ -1792,6 +1795,48 @@ export class AppState {
         this.rebuildTimer = 0
         this.rebuilding = false
         this.rebuildProgress = null
+      }
+    }, 700)
+  }
+
+  // fullSweep runs the health pass over the whole library at once instead of waiting for
+  // the discovery timer to trickle through it - also the repair action for folders whose
+  // embedded subtitles were never externalised.
+  async fullSweep() {
+    this.sweeping = true
+    this.sweepProgress = { total: 0, done: 0, subtitles: 0, finished: false, error: '' }
+    try {
+      await api('/api/admin/discovery/sweep', { method: 'POST' })
+      this.pollSweepProgress()
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not start a full sweep')
+      this.sweeping = false
+      this.sweepProgress = null
+    }
+  }
+
+  pollSweepProgress() {
+    clearInterval(this.sweepTimer)
+    this.sweepTimer = setInterval(async () => {
+      const stop = () => {
+        clearInterval(this.sweepTimer)
+        this.sweepTimer = 0
+        this.sweeping = false
+        this.sweepProgress = null
+      }
+      try {
+        const p = await api('/api/admin/discovery/sweep/progress')
+        this.sweepProgress = p
+        if (!p.finished) return
+        stop()
+        if (p.error) {
+          this.toast('error', p.error)
+        } else {
+          const subs = p.subtitles ? `; extracted ${p.subtitles} subtitle file${p.subtitles === 1 ? '' : 's'}` : ''
+          this.toast('success', `Swept ${p.done} media item${p.done === 1 ? '' : 's'}${subs}.`)
+        }
+      } catch {
+        stop()
       }
     }, 700)
   }

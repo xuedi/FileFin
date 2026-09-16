@@ -105,6 +105,10 @@ type Server struct {
 	// rebuildJob tracks a single in-flight cache rebuild's progress (one at a time), polled
 	// by the maintenance page so a large rebuild shows a progress bar instead of a hung POST.
 	rebuildJob rebuildTracker
+
+	// sweepJob does the same for a forced full health sweep, which walks the whole library
+	// instead of the rolling batch the discovery timer takes.
+	sweepJob sweepTracker
 }
 
 func New() *Server {
@@ -312,6 +316,8 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/settings/discovery", s.admin(s.handleSetDiscovery))
 		mux.Handle("GET /api/admin/health", s.admin(s.handleHealth))
 		mux.Handle("POST /api/admin/discovery/run", s.admin(s.handleRunDiscovery))
+		mux.Handle("POST /api/admin/discovery/sweep", s.admin(s.handleFullSweep))
+		mux.Handle("GET /api/admin/discovery/sweep/progress", s.admin(s.handleFullSweepProgress))
 		mux.Handle("GET /api/admin/optimize/active", s.admin(s.handleActiveOptimize))
 		mux.Handle("POST /api/admin/optimize/scan", s.admin(s.handleOptimizeScan))
 		mux.Handle("GET /api/admin/enrich/active", s.admin(s.handleActiveEnrich))

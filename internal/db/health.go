@@ -53,8 +53,12 @@ func HealthFingerprint(ctx context.Context, pool *sql.DB, mediaID string) (strin
 
 // OldestUncheckedMedia returns up to limit media ids ordered by least-recently-checked
 // (never-checked items, which have no health row, sort first), so the rolling sweep
-// processes the whole library as a continuous trickle.
+// processes the whole library as a continuous trickle. A limit of 0 or less returns the
+// whole library at once, which is what the forced full sweep asks for.
 func OldestUncheckedMedia(ctx context.Context, pool *sql.DB, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite reads a negative LIMIT as "no limit"
+	}
 	return queryRows(ctx, pool,
 		`SELECT m.id FROM media m
          LEFT JOIN media_health h ON h.media_id = m.id
