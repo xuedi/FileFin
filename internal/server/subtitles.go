@@ -2,11 +2,18 @@ package server
 
 import (
 	"context"
+	"time"
 
 	"filefin/internal/db"
 	"filefin/internal/importer"
 	"filefin/internal/logging"
 )
+
+// subtitleExtractTimeout caps one file's extraction. Demuxing a text track is fast even on
+// a long film, so this is not a budget but a stop: without it a single pathological file
+// would hang ffmpeg forever and, with it, the sweep that holds the guard - leaving the
+// agent wedged and every manual sweep refused until a restart.
+const subtitleExtractTimeout = 5 * time.Minute
 
 // subtitleTools returns the ffmpeg/ffprobe binaries and the configured subtitle language
 // under lock - everything the sidecar repair needs from live settings.
@@ -39,7 +46,9 @@ func (s *Server) repairSubtitles(ctx context.Context, files []db.MediaFile) int 
 		if hasSRTSidecar(f.Path) {
 			continue
 		}
-		written += importer.ExtractEmbeddedSubtitles(ctx, f.Path, ffmpeg, ffprobeBin, lang)
+		fileCtx, cancel := context.WithTimeout(ctx, subtitleExtractTimeout)
+		written += importer.ExtractEmbeddedSubtitles(fileCtx, f.Path, ffmpeg, ffprobeBin, lang)
+		cancel()
 	}
 	return written
 }

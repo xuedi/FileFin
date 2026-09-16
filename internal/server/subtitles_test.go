@@ -99,3 +99,36 @@ func TestRepairSubtitlesSkipsCovered(t *testing.T) {
 		t.Fatalf("want no extraction for a covered file, got %d", n)
 	}
 }
+
+// TestSweepTrackerGuard: one tracker guards the timer and the button alike, so a rolling
+// tick in flight refuses a forced sweep (and says which kind is running) rather than both
+// walking the library at once.
+func TestSweepTrackerGuard(t *testing.T) {
+	var tr sweepTracker
+	if !tr.begin(sweepRolling, 64) {
+		t.Fatal("first claim should win")
+	}
+	if tr.begin(sweepFull, 400) {
+		t.Fatal("a second claim must be refused while one is in flight")
+	}
+	if got := tr.snapshot(); got.Scope != sweepRolling || !got.Running || got.Total != 64 {
+		t.Fatalf("snapshot %+v does not describe the running rolling sweep", got)
+	}
+
+	tr.setTotal(50)
+	tr.advance(3)
+	if got := tr.snapshot(); got.Total != 50 || got.Done != 1 || got.Subtitles != 3 {
+		t.Fatalf("snapshot %+v, want total 50, done 1, subtitles 3", got)
+	}
+
+	tr.done()
+	if got := tr.snapshot(); got.Running || !got.Finished {
+		t.Fatalf("snapshot %+v, want a finished, not-running sweep", got)
+	}
+	if !tr.begin(sweepFull, 400) {
+		t.Fatal("a finished sweep must release the guard")
+	}
+	if got := tr.snapshot(); got.Scope != sweepFull || got.Done != 0 || got.Finished {
+		t.Fatalf("snapshot %+v, want a fresh full sweep", got)
+	}
+}

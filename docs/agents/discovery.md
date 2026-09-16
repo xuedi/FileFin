@@ -52,6 +52,12 @@ a thundering herd. The agent holds a **maintenance lock** shared with the full r
 two never mutate the cache at once, and a running guard skips a tick while the previous one is
 still in flight.
 
+That guard is the same object that carries the sweep's live progress, so **only one sweep of
+either kind runs at a time** and whichever it is can be watched. This matters because a tick
+with subtitles to extract runs for minutes, not seconds: a forced full sweep launched during
+one is refused, and the refusal names the running scope rather than leaving the admin with a
+button that will not start and a Progress page showing nothing.
+
 ```mermaid
 flowchart TD
     TICK[discovery tick] --> LOCK[take maintenance lock]
@@ -79,6 +85,11 @@ folder imported before a track could be named that way keeps its subtitles hidde
 The rolling pass closes that gap: for each video file with **no `.srt` sidecar at all**, it
 probes the container and extracts the missing text tracks exactly as import does (see
 `../import.md`).
+
+Each file's extraction is capped by a timeout. Demuxing a text track is fast even on a long
+film, so the cap is not a budget but a stop: one pathological file would otherwise hang
+ffmpeg, and with it the sweep that holds the guard, leaving the agent wedged and every manual
+sweep refused until a restart.
 
 The gate is deliberately cheap and stateless - a file that already has a sidecar is skipped on
 a directory read alone, so a swept library costs nothing and no cache column is needed to
@@ -114,10 +125,11 @@ last sweep time, the interval label); a dedicated endpoint lists the flagged ite
 issue codes and last-checked time. The three per-queue scan buttons remain for granular
 manual control.
 
-A **full sweep** has no queue to list, so the Progress page reads its live snapshot directly
-alongside the queue-backed agents: the folder count done against the total, plus how many
-subtitle sidecars the repair has written so far. The snapshot lingers after a sweep ends, so
-the page shows the section only while the sweep reports itself running.
+A sweep has no queue to list, so the Progress page reads its live snapshot directly alongside
+the queue-backed agents: its scope (a rolling batch or the whole library), the folder count
+done against the total, and how many subtitle sidecars the repair has written so far. The
+snapshot lingers after a sweep ends, so the page shows the section only while the sweep
+reports itself running.
 
 ## Endpoints
 

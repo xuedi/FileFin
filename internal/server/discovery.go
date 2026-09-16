@@ -116,33 +116,24 @@ func (s *Server) discoveryLoop(ctx context.Context, interval time.Duration, wg *
 }
 
 // discoveryTick is one timed sweep: the rolling health pass covers the least-recently-
-// checked batch, so a large library is processed as a continuous trickle.
-func (s *Server) discoveryTick(ctx context.Context) { s.sweep(ctx, discoveryBatch, nil) }
+// checked batch, so a large library is processed as a continuous trickle. A tick is skipped
+// outright while any sweep is still in flight.
+func (s *Server) discoveryTick(ctx context.Context) {
+	if !s.sweepJob.begin(sweepRolling, discoveryBatch) {
+		return
+	}
+	s.sweep(ctx, discoveryBatch)
+}
 
 // sweep reconciles the cache against disk, refills the three work queues, and runs the
 // health pass over the limit least-recently-checked items (all of them when limit is 0).
-// It holds the maintenance lock so it never races a rebuild, and a running guard skips the
-// sweep when the previous one is still in flight. job, when set, carries live progress for
-// the forced full sweep.
-func (s *Server) sweep(ctx context.Context, limit int, job *sweepTracker) {
-	if job != nil {
-		defer job.done()
-	}
-	s.discMu.Lock()
-	if s.discRunning {
-		s.discMu.Unlock()
-		if job != nil {
-			job.fail("a sweep is already running")
-		}
-		return
-	}
-	s.discRunning = true
-	s.discMu.Unlock()
-	defer func() {
-		s.discMu.Lock()
-		s.discRunning = false
-		s.discMu.Unlock()
-	}()
+// It holds the maintenance lock so it never races a rebuild. The caller must already have
+// claimed s.sweepJob, which both guards against a second sweep and carries the live
+// progress the Progress page polls - a timed tick is reported exactly like a forced one,
+// because a tick doing subtitle repair can run for minutes and an admin needs to see why
+// the "Full health sweep" button is refusing to start.
+func (s *Server) sweep(ctx context.Context, limit int) {
+	defer s.sweepJob.done()
 
 	s.maintMu.Lock()
 	defer s.maintMu.Unlock()
@@ -193,6 +184,7 @@ func (s *Server) sweep(ctx context.Context, limit int, job *sweepTracker) {
 	if err != nil {
 		return
 	}
+	s.sweepJob.setTotal(len(ids)) // the claim's estimate, now that the real count is known
 	now := time.Now().Unix()
 	checked, repaired := 0, 0
 	for _, id := range ids {
@@ -205,9 +197,7 @@ func (s *Server) sweep(ctx context.Context, limit int, job *sweepTracker) {
 		}
 		repaired += s.reconcileItem(ctx, pool, dataDir, id, ref, now)
 		checked++
-		if job != nil {
-			job.advance(repaired)
-		}
+		s.sweepJob.advance(repaired)
 	}
 	s.discMu.Lock()
 	s.discLastSweep = now
@@ -238,11 +228,15 @@ func (s *Server) handleFullSweep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refs, _ := onDiskMediaRefs(s.dataDir())
-	if !s.sweepJob.begin(len(refs)) {
-		http.Error(w, "sweep already running", http.StatusConflict)
+	if !s.sweepJob.begin(sweepFull, len(refs)) {
+		// The timed agent holds the same guard, and its own rolling batch can run for
+		// minutes once it has subtitles to extract, so say what is running rather than
+		// just refusing.
+		http.Error(w, "a "+s.sweepJob.snapshot().Scope+" sweep is already running; watch it on the Progress page",
+			http.StatusConflict)
 		return
 	}
-	go s.sweep(context.Background(), 0, &s.sweepJob)
+	go s.sweep(context.Background(), 0)
 	writeJSON(w, s.sweepJob.snapshot())
 }
 
@@ -251,11 +245,18 @@ func (s *Server) handleFullSweepProgress(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, s.sweepJob.snapshot())
 }
 
-// sweepState is a forced full sweep's live progress. Subtitles counts the sidecars
-// extracted along the way. Running both guards against starting a second full sweep while
-// one is in flight and tells the Progress page, which has no local flag of its own, whether
+// The two scopes a sweep can have, as the Progress page labels them.
+const (
+	sweepRolling = "rolling batch"
+	sweepFull    = "whole library"
+)
+
+// sweepState is the live progress of whichever sweep is running, timed or forced.
+// Subtitles counts the sidecars its repair has written. Running is both the guard against a
+// second sweep and what tells the Progress page, which has no local flag of its own, whether
 // the snapshot describes a live sweep or the last finished one.
 type sweepState struct {
+	Scope     string `json:"scope"`
 	Total     int    `json:"total"`
 	Done      int    `json:"done"`
 	Subtitles int    `json:"subtitles"`
@@ -264,22 +265,30 @@ type sweepState struct {
 	Error     string `json:"error"`
 }
 
-// sweepTracker owns the full-sweep progress behind its own mutex (the rebuildTracker pattern).
+// sweepTracker owns the sweep progress behind its own mutex (the rebuildTracker pattern).
 type sweepTracker struct {
 	mu sync.Mutex
 	st sweepState
 }
 
-// begin marks a fresh sweep running with its item denominator; ok is false when one is
-// already in flight.
-func (t *sweepTracker) begin(total int) bool {
+// begin claims the tracker for a fresh sweep of the given scope, with a first estimate of
+// its item count; ok is false when a sweep is already in flight, which is what makes this
+// one guard for the timer and the button alike.
+func (t *sweepTracker) begin(scope string, total int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.st.Running {
 		return false
 	}
-	t.st = sweepState{Running: true, Total: total}
+	t.st = sweepState{Scope: scope, Running: true, Total: total}
 	return true
+}
+
+// setTotal replaces the estimate begin was given with the real item count.
+func (t *sweepTracker) setTotal(total int) {
+	t.mu.Lock()
+	t.st.Total = total
+	t.mu.Unlock()
 }
 
 func (t *sweepTracker) advance(subtitles int) {
@@ -289,14 +298,8 @@ func (t *sweepTracker) advance(subtitles int) {
 	t.mu.Unlock()
 }
 
-func (t *sweepTracker) fail(msg string) {
-	t.mu.Lock()
-	t.st.Error = msg
-	t.mu.Unlock()
-}
-
-// done closes the sweep however it ended, keeping any error already recorded. Every exit
-// from sweep runs it, so a sweep that returns early never leaves the button stuck.
+// done closes the sweep however it ended. Every exit from sweep runs it, so a sweep that
+// returns early never leaves the guard claimed.
 func (t *sweepTracker) done() {
 	t.mu.Lock()
 	t.st.Finished, t.st.Running = true, false

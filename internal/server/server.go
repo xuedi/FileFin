@@ -85,14 +85,14 @@ type Server struct {
 	// discovery orchestration. The supervisor (optimizer pattern) re-arms its ticker on a
 	// reconfigDisc signal when the interval setting changes. maintMu serializes the cache
 	// mutations of a discovery tick against a full rebuild so the two never overlap;
-	// discRunning skips a tick while the previous one is still going; discLastSweep records
-	// the last completed sweep time (unix seconds) for the dashboard; discNextRun is when the
-	// next scheduled sweep is due (unix seconds, 0 when discovery is off) for the System tab.
+	// sweepJob is the guard that skips a tick while the previous sweep is still going;
+	// discLastSweep records the last completed sweep time (unix seconds) for the dashboard;
+	// discNextRun is when the next scheduled sweep is due (unix seconds, 0 when discovery is
+	// off) for the System tab.
 	discoveryStart sync.Once
 	reconfigDisc   chan struct{}
 	maintMu        sync.Mutex
 	discMu         sync.Mutex
-	discRunning    bool
 	discLastSweep  int64
 	discNextRun    int64
 
@@ -106,8 +106,9 @@ type Server struct {
 	// by the maintenance page so a large rebuild shows a progress bar instead of a hung POST.
 	rebuildJob rebuildTracker
 
-	// sweepJob does the same for a forced full health sweep, which walks the whole library
-	// instead of the rolling batch the discovery timer takes.
+	// sweepJob owns the one health sweep that may run at a time - the timer's rolling batch
+	// or an admin's forced walk of the whole library - both as the guard between them and as
+	// the live progress the Progress page polls.
 	sweepJob sweepTracker
 }
 

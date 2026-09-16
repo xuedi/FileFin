@@ -1827,6 +1827,13 @@ export class AppState {
       }
       try {
         const p = await api('/api/admin/discovery/sweep/progress')
+        // The tracker is shared with the discovery timer, so stop watching the moment it
+        // stops describing our sweep - otherwise a tick starting right after would be
+        // reported as if the admin had launched it.
+        if (p.scope !== 'whole library') {
+          stop()
+          return
+        }
         this.sweepProgress = p
         if (!p.finished) return
         stop()

@@ -97,7 +97,7 @@
 {:else}
   <ProgressBar value={app.sweepRun.done} max={app.sweepRun.total || 1} />
   <p class="has-text-grey is-size-7 ff-prog-waiting">
-    {app.sweepRun.done} / {app.sweepRun.total || '?'} media folders checked{app.sweepRun.subtitles > 0
+    {app.sweepRun.scope} - {app.sweepRun.done} / {app.sweepRun.total || '?'} media folders checked{app.sweepRun.subtitles > 0
       ? `, ${app.sweepRun.subtitles} subtitle file${app.sweepRun.subtitles === 1 ? '' : 's'} extracted`
       : ''}
   </p>
