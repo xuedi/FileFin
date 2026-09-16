@@ -1,104 +1,54 @@
 <script>
   import { getContext } from 'svelte'
-  import { pct } from '../../lib/app.svelte.js'
   import ProgressBar from '../../components/ProgressBar.svelte'
   const app = getContext('app')
 </script>
 
 <h1 class="title is-4">Progress</h1>
 
-<h2 class="title is-6 ff-prog-section">Imports</h2>
-{#if app.importActive.length === 0}
-  <p class="has-text-grey">No imports running.</p>
-{:else}
-  <table class="table is-fullwidth">
-    <thead><tr><th>Category</th><th>Title</th><th>Progress</th></tr></thead>
-    <tbody>
-      {#each app.importActive as row}
-        <tr>
-          <td>{row.category}</td>
-          <td>{row.title || row.filename}</td>
-          <td><ProgressBar value={pct(row)} /></td>
-        </tr>
+<div class="columns">
+  <div class="column is-half">
+    <h2 class="title is-6 ff-prog-section">Runs</h2>
+    {#if app.runs.length === 0}
+      <p class="has-text-grey">Nothing running.</p>
+    {:else}
+      {#each app.runs as run (run.kind)}
+        <div class="ff-run">
+          <p class="ff-run-head">
+            <strong>{run.label}</strong>
+            {#if run.detail}<span class="has-text-grey"> - {run.detail}</span>{/if}
+          </p>
+          <ProgressBar value={run.done} max={run.total || 1} />
+          <p class="has-text-grey is-size-7 ff-prog-waiting">{run.done} / {run.total} done</p>
+        </div>
       {/each}
-    </tbody>
-  </table>
-{/if}
-{#if app.importPending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.importPending} more waiting in line</p>{/if}
+    {/if}
+  </div>
 
-<h2 class="title is-6 ff-prog-section">Optimizing</h2>
-{#if app.optimizeRows.length === 0}
-  <p class="has-text-grey">No encodes running.</p>
-{:else}
-  <table class="table is-fullwidth">
-    <thead><tr><th>Title</th><th>File</th><th>Agent</th><th>Progress</th></tr></thead>
-    <tbody>
-      {#each app.optimizeRows as row}
-        <tr>
-          <td>{row.title}</td>
-          <td>{row.file}</td>
-          <td>{row.agent}</td>
-          <td><ProgressBar value={row.percent} /></td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
-{/if}
-{#if app.optimizePending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.optimizePending} more waiting in line</p>{/if}
-
-<h2 class="title is-6 ff-prog-section">Enriching</h2>
-{#if app.enrichRows.length === 0}
-  <p class="has-text-grey">No enrichment running.</p>
-{:else}
-  <table class="table is-fullwidth">
-    <thead><tr><th>Title</th><th>Agent</th><th>Status</th></tr></thead>
-    <tbody>
-      {#each app.enrichRows as row}
-        <tr><td>{row.title}</td><td>{row.agent}</td><td>looking up...</td></tr>
-      {/each}
-    </tbody>
-  </table>
-{/if}
-{#if app.enrichPending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.enrichPending} more waiting in line</p>{/if}
-
-<h2 class="title is-6 ff-prog-section">Thumbnails</h2>
-{#if app.thumbnailRows.length === 0}
-  <p class="has-text-grey">No thumbnails running.</p>
-{:else}
-  <table class="table is-fullwidth">
-    <thead><tr><th>Title</th><th>Agent</th><th>Status</th></tr></thead>
-    <tbody>
-      {#each app.thumbnailRows as row}
-        <tr><td>{row.title}</td><td>{row.agent}</td><td>generating...</td></tr>
-      {/each}
-    </tbody>
-  </table>
-{/if}
-{#if app.thumbnailPending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.thumbnailPending} more waiting in line</p>{/if}
-
-<h2 class="title is-6 ff-prog-section">Probing</h2>
-{#if app.probeRows.length === 0}
-  <p class="has-text-grey">No probing running.</p>
-{:else}
-  <table class="table is-fullwidth">
-    <thead><tr><th>Title</th><th>Agent</th><th>Status</th></tr></thead>
-    <tbody>
-      {#each app.probeRows as row}
-        <tr><td>{row.title}</td><td>{row.agent}</td><td>probing...</td></tr>
-      {/each}
-    </tbody>
-  </table>
-{/if}
-{#if app.probePending > 0}<p class="has-text-grey is-size-7 ff-prog-waiting">{app.probePending} more waiting in line</p>{/if}
-
-<h2 class="title is-6 ff-prog-section">Health sweep</h2>
-{#if !app.sweepRun}
-  <p class="has-text-grey">No sweep running.</p>
-{:else}
-  <ProgressBar value={app.sweepRun.done} max={app.sweepRun.total || 1} />
-  <p class="has-text-grey is-size-7 ff-prog-waiting">
-    {app.sweepRun.scope} - {app.sweepRun.done} / {app.sweepRun.total || '?'} media folders checked{app.sweepRun.subtitles > 0
-      ? `, ${app.sweepRun.subtitles} subtitle file${app.sweepRun.subtitles === 1 ? '' : 's'} extracted`
-      : ''}
-  </p>
-{/if}
+  <div class="column is-half">
+    <h2 class="title is-6 ff-prog-section">Activity</h2>
+    {#if app.activity.length === 0}
+      <p class="has-text-grey">Nothing running.</p>
+    {:else}
+      <ul class="ff-activity">
+        {#each app.activity as item (item.key)}
+          <li class="ff-activity-item">
+            <div class="ff-activity-head">
+              <span class="tag is-small ff-activity-kind">{item.kind}</span>
+              <span class="ff-activity-title">{item.title}</span>
+              {#if item.percent < 0 && item.state}
+                <span class="has-text-grey is-size-7 ff-activity-pct">{item.state}</span>
+              {/if}
+            </div>
+            {#if item.percent >= 0}
+              <ProgressBar value={item.percent} />
+            {/if}
+            {#if item.detail}
+              <p class="has-text-grey is-size-7 ff-activity-detail">{item.detail}</p>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+</div>

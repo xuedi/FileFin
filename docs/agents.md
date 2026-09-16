@@ -45,6 +45,9 @@ The work an agent does splits cleanly in two, and discovery is what keeps both c
   no `.srt` sidecar beside it. The fix is one local ffmpeg extraction, too cheap to queue and
   too fixable to report, so the discovery sweep just does it.
 
+The admin Progress page is built on the same split: a pass with a beginning and an end on one
+side, the work it produces on the other. See `progress.md`.
+
 A `meta.json` lacking its technical block is **refill** (the probe agent backfills it); a
 `meta.json` that is missing or corrupt is **health** (surfaced, never fabricated). See
 `agents/probe.md` and `agents/discovery.md`.

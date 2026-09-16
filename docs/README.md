@@ -13,6 +13,7 @@ A native phone/TV client lives in its own repo: [FileFin-client](https://github.
 
 | Document | Subsystem | What it covers |
 |----------|-----------|----------------|
+| [`progress.md`](progress.md) | Progress page | The Runs/Activity split, a queue's drain as a run, why a claimed task is not yet work |
 | [`agents.md`](agents.md) | Agents overview | Every background agent, the shared task queue, the refill-vs-health split, discovery as the scheduler |
 | [`agents/enricher.md`](agents/enricher.md) | Media enricher | Background OMDb re-enrichment queue, `meta.json` + ffprobe, additive merge |
 | [`rematch.md`](rematch.md) | Metadata matching | The admin "Needs attention" page and its four problem classes; manual OMDb search and replace-mode re-match for items OMDb missed |

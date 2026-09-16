@@ -33,9 +33,18 @@ flowchart TD
 ```
 
 A **candidate** is a media file the browser cannot direct-play that lacks a *fresh*
-optimized sibling (a sibling older than its source is stale and re-queued). Remux-eligible
-sources - H.264 with AAC/MP3/no audio - are detected only after probing and finish without a
-copy, because live HLS can already serve them by a cheap stream-copy.
+optimized sibling (a sibling older than its source is stale and re-queued), **minus**
+remux-eligible sources - H.264 with AAC/MP3/no audio - which live HLS can already serve by a
+cheap stream-copy and which therefore need no copy at all.
+
+Both judgements read the **probed true format** off the cache row, which the probe agent
+writes there (see `probe.md`), so neither costs an ffprobe at candidacy time. A row the probe
+agent has not reached yet cannot be judged for remux eligibility: it is queued as before, and
+the agent finishes it without a copy after its own probe. That post-probe check remains the
+backstop - it is also what catches a file whose format changed since it was queued.
+
+Filtering up front is what keeps those files off the Progress page. Claimed-then-immediately
+-finished tasks used to strobe through it dozens per second; see `../progress.md`.
 
 ## The .tmp file is the lock
 

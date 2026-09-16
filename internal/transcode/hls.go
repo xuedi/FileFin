@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -121,6 +122,28 @@ func (m *Manager) ActiveSessions() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.sessions)
+}
+
+// SessionInfo describes one live transcode session for the admin activity list. Remux marks
+// the cheap stream-copy path; there is no percentage because the server encodes ahead of a
+// viewer whose position it does not know.
+type SessionInfo struct {
+	Title string
+	Remux bool
+}
+
+// ListSessions describes the live transcode sessions, sorted by title so the activity list
+// does not reorder itself between polls. Only transcoded playback is visible here: a
+// direct-played file is served as byte ranges and has no session at all.
+func (m *Manager) ListSessions() []SessionInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]SessionInfo, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		out = append(out, SessionInfo{Title: s.title, Remux: s.remux})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
+	return out
 }
 
 // Playlist ensures a session for key/inputPath exists and returns its VOD media

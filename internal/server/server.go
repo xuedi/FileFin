@@ -106,6 +106,10 @@ type Server struct {
 	// by the maintenance page so a large rebuild shows a progress bar instead of a hung POST.
 	rebuildJob rebuildTracker
 
+	// drains give each work queue a denominator, turning "23 items pending" into a run with
+	// a beginning and an end for the Progress page (see activity.go).
+	drains *drainTracker
+
 	// sweepJob owns the one health sweep that may run at a time - the timer's rolling batch
 	// or an admin's forced walk of the whole library - both as the guard between them and as
 	// the live progress the Progress page polls.
@@ -121,6 +125,7 @@ func New() *Server {
 		metaMgr:      importer.NewManager(),
 		reconfigOpt:  make(chan struct{}, 1),
 		optPercent:   map[int64]int{},
+		drains:       newDrainTracker(),
 		reconfigDisc: make(chan struct{}, 1),
 	}
 }
@@ -319,6 +324,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/discovery/run", s.admin(s.handleRunDiscovery))
 		mux.Handle("POST /api/admin/discovery/sweep", s.admin(s.handleFullSweep))
 		mux.Handle("GET /api/admin/discovery/sweep/progress", s.admin(s.handleFullSweepProgress))
+		mux.Handle("GET /api/admin/activity", s.admin(s.handleActivity))
 		mux.Handle("GET /api/admin/optimize/active", s.admin(s.handleActiveOptimize))
 		mux.Handle("POST /api/admin/optimize/scan", s.admin(s.handleOptimizeScan))
 		mux.Handle("GET /api/admin/enrich/active", s.admin(s.handleActiveEnrich))

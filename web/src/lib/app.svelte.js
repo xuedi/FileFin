@@ -106,11 +106,6 @@ export function fmtTime(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-export function pct(row) {
-  if (!row.total) return 0
-  return Math.min(100, Math.round((row.copied / row.total) * 100))
-}
-
 // uploadFile streams one file with progress; fetch cannot report upload progress, so this
 // uses XMLHttpRequest. onProgress receives an integer percent 0-100.
 function uploadFile(file, session, onProgress) {
@@ -394,17 +389,10 @@ export class AppState {
   jellyfinBrowse = $state({ path: '', parent: '', entries: [] })
   jellyfinBrowseError = $state('')
 
-  // admin progress
-  progressRows = $state([])
-  optimizeRows = $state([])
-  optimizePending = $state(0)
-  enrichRows = $state([])
-  enrichPending = $state(0)
-  thumbnailRows = $state([])
-  thumbnailPending = $state(0)
-  probeRows = $state([])
-  probePending = $state(0)
-  sweepRun = $state(null) // the live full health sweep, null when none is running
+  // admin progress: one snapshot, runs in flight on the left and work being done on the
+  // right. Both are empty when the server is idle.
+  runs = $state([])
+  activity = $state([])
   progressTimer = 0
 
   // admin dashboard
@@ -475,8 +463,6 @@ export class AppState {
 
   // Like the optimizer/enricher, only the rows actually copying are shown; the queued
   // ones (status 'import', not yet picked up by the poller) collapse into a footnote.
-  importActive = $derived(this.progressRows.filter((r) => r.status === 'importing'))
-  importPending = $derived(this.progressRows.filter((r) => r.status === 'import').length)
 
   newUserReady = $derived(!!this.newUserEmail.trim() && !!this.newUserPassword)
 
@@ -2608,47 +2594,12 @@ export class AppState {
 
   async loadProgress() {
     try {
-      this.progressRows = await api('/api/admin/imports/active')
+      const snap = await api('/api/admin/activity')
+      this.runs = snap.runs
+      this.activity = snap.activity
     } catch {
-      this.progressRows = []
-    }
-    try {
-      const r = await api('/api/admin/optimize/active')
-      this.optimizeRows = r.active
-      this.optimizePending = r.pending
-    } catch {
-      this.optimizeRows = []
-      this.optimizePending = 0
-    }
-    try {
-      const r = await api('/api/admin/enrich/active')
-      this.enrichRows = r.active
-      this.enrichPending = r.pending
-    } catch {
-      this.enrichRows = []
-      this.enrichPending = 0
-    }
-    try {
-      const r = await api('/api/admin/thumbnail/active')
-      this.thumbnailRows = r.active
-      this.thumbnailPending = r.pending
-    } catch {
-      this.thumbnailRows = []
-      this.thumbnailPending = 0
-    }
-    try {
-      const r = await api('/api/admin/probe/active')
-      this.probeRows = r.active
-      this.probePending = r.pending
-    } catch {
-      this.probeRows = []
-      this.probePending = 0
-    }
-    try {
-      const r = await api('/api/admin/discovery/sweep/progress')
-      this.sweepRun = r.running ? r : null // a finished snapshot lingers; only show a live one
-    } catch {
-      this.sweepRun = null
+      this.runs = []
+      this.activity = []
     }
   }
 

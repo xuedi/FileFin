@@ -304,6 +304,21 @@ body { min-height: 100vh; }
 .ff-prog-section { margin-top: 1.4rem; }
 .ff-prog-waiting { margin-top: 0.5rem; }
 
+/* Progress page: runs on the left keep the old section look, one bar each. */
+.ff-run { margin-bottom: 1.1rem; }
+.ff-run-head { margin-bottom: 0.4rem; }
+.ff-run .ff-progress { width: 100%; }
+
+/* ...activity on the right is a process list: compact lines, slim bars, no table. */
+.ff-activity { display: flex; flex-direction: column; gap: 0.7rem; }
+.ff-activity-item { border-left: 2px solid var(--bulma-border); padding-left: 0.6rem; }
+.ff-activity-head { display: flex; align-items: center; gap: 0.45rem; }
+.ff-activity-kind { text-transform: uppercase; letter-spacing: 0.03em; }
+.ff-activity-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-activity-pct { margin-left: auto; white-space: nowrap; }
+.ff-activity-detail { margin-top: 0.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-activity-item .ff-progress { width: 100%; margin-top: 0.3rem; }
+
 /* dashboard cards */
 .ff-dash { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
 .ff-dash-card { display: flex; flex-direction: column; gap: 0.3rem; min-width: 160px; }

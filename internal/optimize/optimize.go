@@ -29,15 +29,14 @@ type Candidate struct {
 }
 
 // Candidates derives the pending work from the cached media files: sources the browser
-// cannot direct-play that lack a fresh optimized copy. The "cannot direct-play" judgement
-// uses the probed true format when the row carries it (so a `.avi`-named H.264/MP4 is not
-// queued), falling back to the filename extension for a row the probe agent has not
-// reached yet. Remux-eligible files are not filtered here (that needs ffprobe) - the agent
-// skips them after probing.
+// cannot direct-play that lack a fresh optimized copy, minus the ones live HLS can already
+// serve by a cheap stream-copy. Both judgements use the probed true format when the row
+// carries it (so a `.avi`-named H.264/MP4 is not queued), falling back to the filename
+// extension for a row the probe agent has not reached yet.
 func Candidates(files []db.MediaFile) []Candidate {
 	var out []Candidate
 	for _, f := range files {
-		if !needsTranscode(f) {
+		if !needsTranscode(f) || remuxEligible(f) {
 			continue
 		}
 		opt, fresh := transcode.OptimizedSibling(f.Path)
@@ -52,11 +51,27 @@ func Candidates(files []db.MediaFile) []Candidate {
 // needsTranscode reports whether a file is not browser-direct-playable, by its probed
 // format when known and by the filename extension otherwise.
 func needsTranscode(f db.MediaFile) bool {
-	if f.Container != "" && f.VideoCodec != "" {
+	if probed(f) {
 		return !transcode.DirectPlayable(f.Container, f.VideoCodec, f.AudioCodec)
 	}
 	return transcode.NeedsTranscode(f.Ext)
 }
+
+// remuxEligible reports whether live HLS can stream-copy this source, which makes an
+// optimized copy pointless. The agent used to discover this only after claiming the task and
+// probing it, so every such file flashed through the Progress page as a task that finished
+// without doing anything; the probe agent stores the codecs it needs on the cache row, so the
+// answer is already here. An unprobed row cannot be judged and is left to the agent's own
+// post-probe check.
+func remuxEligible(f db.MediaFile) bool {
+	if !probed(f) {
+		return false
+	}
+	return transcode.RemuxEligible(transcode.Streams{VideoCodec: f.VideoCodec, AudioCodec: f.AudioCodec})
+}
+
+// probed reports whether the probe agent has written a true format onto the row.
+func probed(f db.MediaFile) bool { return f.Container != "" && f.VideoCodec != "" }
 
 // EncodeOptions configures one optimize encode. Source/Output are the input file and the
 // (temp) output path; Duration is the probed source length in seconds (non-positive

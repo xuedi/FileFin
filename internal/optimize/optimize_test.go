@@ -44,6 +44,57 @@ func TestCandidates(t *testing.T) {
 	}
 }
 
+// TestCandidatesRemuxEligible: a probed H.264+AAC source needs no optimized copy because
+// live HLS stream-copies it, so it never reaches the queue. The same file unprobed cannot be
+// judged and is still queued for the agent to decide after its own probe.
+func TestCandidatesRemuxEligible(t *testing.T) {
+	dir := t.TempDir()
+	mkv := filepath.Join(dir, "serenity.mkv")
+	hevc := filepath.Join(dir, "dune.mkv")
+	for _, p := range []string{mkv, hevc} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	probedRemux := db.MediaFile{
+		MediaID: "m", Idx: 0, Path: mkv, Ext: ".mkv",
+		Container: "matroska,webm", VideoCodec: "h264", AudioCodec: "aac",
+	}
+	if got := Candidates([]db.MediaFile{probedRemux}); len(got) != 0 {
+		t.Fatalf("Candidates = %+v, want none for a probed remux-eligible file", got)
+	}
+
+	unprobed := db.MediaFile{MediaID: "m", Idx: 0, Path: mkv, Ext: ".mkv"}
+	if got := Candidates([]db.MediaFile{unprobed}); len(got) != 1 {
+		t.Fatalf("Candidates = %+v, want the unprobed file queued", got)
+	}
+
+	probedHEVC := db.MediaFile{
+		MediaID: "m", Idx: 1, Path: hevc, Ext: ".mkv",
+		Container: "matroska,webm", VideoCodec: "hevc", AudioCodec: "aac",
+	}
+	if got := Candidates([]db.MediaFile{probedHEVC}); len(got) != 1 {
+		t.Fatalf("Candidates = %+v, want the probed HEVC file queued", got)
+	}
+}
+
+// TestCandidatesRemuxNoAudio: a silent H.264 source is remux-eligible too.
+func TestCandidatesRemuxNoAudio(t *testing.T) {
+	dir := t.TempDir()
+	mkv := filepath.Join(dir, "silent.mkv")
+	if err := os.WriteFile(mkv, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := db.MediaFile{
+		MediaID: "m", Idx: 0, Path: mkv, Ext: ".mkv",
+		Container: "matroska,webm", VideoCodec: "h264",
+	}
+	if got := Candidates([]db.MediaFile{f}); len(got) != 0 {
+		t.Fatalf("Candidates = %+v, want none for a silent H.264 file", got)
+	}
+}
+
 func TestScanProgress(t *testing.T) {
 	block := strings.Join([]string{
 		"frame=10",
