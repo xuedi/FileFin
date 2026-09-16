@@ -184,7 +184,12 @@ replaces it, which is how a single wrong marker is pruned.
 
 The media-folder naming style is chosen once in Settings (the `mediafmt` set of valid formats)
 and is permanent. The on-disk layout is always the category/media-folder structure above; the
-format only dictates how the importer names media folders and their files.
+format dictates how media folders and their files are named.
+
+The importer applies it when an item lands. Because a later metadata edit or re-match can change
+the title or year the name was built from, the format is also applied **after the fact**: names
+that no longer agree with their item's metadata are reported, and renamed on request, by the
+rename engine (see [`rename.md`](rename.md)).
 
 ## Endpoints
 

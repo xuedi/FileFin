@@ -61,3 +61,21 @@ func TestFileNameEpisodeAndPart(t *testing.T) {
 		}
 	}
 }
+
+func TestPartFromName(t *testing.T) {
+	cases := []struct {
+		name string
+		want int
+	}{
+		{"(1999) The Matrix - part2.mkv", 2},
+		{"The Matrix (1999) - part12.mkv", 12},
+		{"(1999) The Matrix.mkv", 0},
+		{"(2002) Firefly - 1x3.mkv", 0},
+		{"(2002) part of me.mkv", 0},
+	}
+	for _, c := range cases {
+		if got := PartFromName(c.name); got != c.want {
+			t.Errorf("PartFromName(%q) = %d, want %d", c.name, got, c.want)
+		}
+	}
+}

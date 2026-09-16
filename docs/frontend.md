@@ -50,7 +50,7 @@ flowchart TD
   App --> Progress["admin/AdminProgress"]
   App --> Dash["admin/AdminDashboard"]
   App --> Stats["admin/AdminStats"]
-  App --> Unhealthy["admin/UnhealthyMedia"]
+  App --> Attention["admin/NeedsAttention"]
   App --> UserSet["settings/UserSettings"]
   App --> ToastC["components/Toast"]
 
@@ -86,7 +86,7 @@ is `library`, `admin`, or `settings`; `/settings` is available to every authenti
 `/admin/*` falls back to the library for non-admins.
 
 An admin sub-view may carry a third path segment, which `applyAdmin()` passes along: it is the
-settings tab, the media id on the Unhealthy page, and on the Library page the **category** whose
+settings tab, the media id on the Needs attention page, and on the Library page the **category** whose
 own page is open (`/admin/library/<name>`). A category name is a relpath, so it is
 percent-encoded into that single segment and decoded again on the way in; an empty segment is
 the read-only list (see [`library.md`](library.md)).
@@ -181,15 +181,21 @@ vocabulary by name with its item counts, an in-place **rename** (which merges wh
 exists) and a confirm-then-**delete** that strips the tag library-wide. Both report how many items
 changed and refresh the sidebar vocabulary (see [`tags.md`](tags.md)).
 
-The **Unhealthy media** page (`admin/UnhealthyMedia.svelte`) is one component with two modes off the
-route sub-segment: a list of items with no OMDb metadata match yet (plus the read-only disk-health
-issues below it), and, at `/admin/unhealthy/<mediaId>`, a detail view that shows the file facts and
-current match, searches OMDb from an editable title/year/IMDb-id form, and applies a chosen candidate.
-Its data and actions live on `AppState.unhealthy`. The metadata editor (`library/MediaEdit.svelte`,
-at `/media/{id}/edit`, on `AppState.edit`) reaches this page through its "Match with the API"
-button; the editor itself is opened from the library detail page's admin-only "Edit" button and
-lets an admin change every `meta.json` field and upload a poster (see [`metaedit.md`](metaedit.md)).
-Applying an OMDb candidate here redirects to the item's detail page (see [`rematch.md`](rematch.md)).
+The **Needs attention** page (`admin/NeedsAttention.svelte`) is one component with two modes off the
+route sub-segment. Without one it merges four reports into a single table, one row per problem,
+each row carrying exactly one action button; the chosen filter chip rides in the query string
+(`?problem=name`) rather than in the path, since it is view state. With a media id
+(`/admin/attention/<mediaId>`) it is the OMDb match view: the file facts and current match, a
+search from an editable title/year/IMDb-id form, and applying a chosen candidate. Its data and
+actions live on `AppState.attention`, whose `attentionRows` getter applies the filter. The route
+`/admin/unhealthy`, the page's first name, is still accepted and resolves here.
+
+The metadata editor (`library/MediaEdit.svelte`, at `/media/{id}/edit`, on `AppState.edit`) reaches
+the match view through its "Match with the API" button, and offers "Rename to match" whenever the
+item's names contradict its metadata (see [`rename.md`](rename.md)); the editor itself is opened
+from the library detail page's admin-only "Edit" button and lets an admin change every `meta.json`
+field and upload a poster (see [`metaedit.md`](metaedit.md)). Applying an OMDb candidate redirects
+to the item's detail page (see [`rematch.md`](rematch.md)).
 
 ## Build
 

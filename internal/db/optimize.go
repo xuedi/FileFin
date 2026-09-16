@@ -135,3 +135,15 @@ func ResetEncodingToPending(ctx context.Context, pool *sql.DB) error {
 func ClearOptimizeTasksAll(ctx context.Context, pool *sql.DB) error {
 	return optimizeQueue.clearAll(ctx, pool)
 }
+
+// HasActiveOptimize reports whether an agent is currently encoding a file of this media
+// item, so a caller that would move the files out from under it can refuse instead.
+func HasActiveOptimize(ctx context.Context, pool *sql.DB, mediaID string) (bool, error) {
+	var n int
+	if err := pool.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM optimize_tasks WHERE media_id = ? AND status = ?`,
+		mediaID, OptimizeStatusEncoding).Scan(&n); err != nil {
+		return false, fmt.Errorf("count active optimize %s: %w", mediaID, err)
+	}
+	return n > 0, nil
+}

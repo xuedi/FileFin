@@ -243,7 +243,7 @@ namespaces and the cap) and can be pruned one at a time from the category page.
 
 Markers also answer the question after the fact. Once the enricher has written a media's
 **language and country**, they are compared with the declared languages and countries of the
-category it sits in; a contradiction is listed on the **Unhealthy media** page
+category it sits in; a contradiction is listed on the **Needs attention** page
 (`rematch.md`) - the same page that already answers "something about this item is wrong".
 A category that declares neither can never be contradicted, and nothing is ever moved
 automatically: the report names the category the facets point at and leaves the decision alone.

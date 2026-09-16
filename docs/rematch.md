@@ -1,49 +1,70 @@
-# Metadata matching (Unhealthy media)
+# Metadata matching (Needs attention)
 
-How an admin fixes media that OMDb could not match, or corrects a wrong match. The automatic
-enricher (see [`agents/enricher.md`](agents/enricher.md)) looks each folder up by its title and
-year and, on a miss, leaves the item flagged for review rather than guessing. This subsystem is
-the admin surface that reads those items and drives a **manual** OMDb match: search by an
-alternative title / year / IMDb id, pick from the candidates the API returns, and apply the
-chosen record. It is admin-only, and it writes through the same enrichment path - in **replace**
-mode - so a re-match corrects the metadata and poster instead of merely filling gaps.
+How an admin fixes media that OMDb could not match, or corrects a wrong match, and the page that
+surface lives on. The automatic enricher (see [`agents/enricher.md`](agents/enricher.md)) looks
+each folder up by its title and year and, on a miss, leaves the item flagged for review rather
+than guessing. This subsystem is the admin surface that reads those items and drives a **manual**
+OMDb match: search by an alternative title / year / IMDb id, pick from the candidates the API
+returns, and apply the chosen record. It is admin-only, and it writes through the same enrichment
+path - in **replace** mode - so a re-match corrects the metadata and poster instead of merely
+filling gaps.
+
+## The Needs attention page
+
+The matching list is one of four things an admin can be asked to look at, so they share one page
+(`/admin/attention`) rather than four. Each is a separate question with a separate report behind
+it, but they are presented as **one list, one row per problem**, because an admin arrives asking
+"what needs doing", not "which of four subsystems is unhappy".
+
+| problem | what it means | report | the fix offered |
+|---------|---------------|--------|-----------------|
+| **Disk** | the folder itself is broken: no `meta.json`, an unparseable one, a missing or zero-byte file, a leftover derived artifact | `media_health`, written by the discovery agent (see [`agents/discovery.md`](agents/discovery.md)) | **Details** - what the issue means and what a human has to do, since the app cannot fix it |
+| **No metadata** | `enriched = 0`: OMDb has not matched it, whether it errored or is still queued | this document, below | **Find match** - the manual OMDb drill-in |
+| **Name** | the folder or its files contradict the item's own metadata | see [`rename.md`](rename.md) | **Rename** - apply the plan |
+| **Category** | the looked-up language and country contradict the markers of the category it sits in | below | **Review** - open the item; nothing is ever moved automatically |
+
+Rows are ordered by severity in that order: what is broken first, what is merely suggested last.
+Filter chips carry each class's count (kept in the query string, so a filtered view survives a
+reload) and are always shown, so "nothing is wrong" reads as a zero rather than as a section that
+quietly vanished. Every row carries exactly one primary action, so no row is a dead end - which is
+why a disk row, which the app cannot fix for you, still gets a button that explains it.
+
+The page fetches the four reports in parallel and merges them client-side. They stay separate
+endpoints because they answer separate questions and are each independently testable; only the
+presentation is unified. The dashboard shows the total as a single tile linking here, and no
+longer keeps its own copy of any of the lists.
 
 ## What counts as unmatched
 
 A media item is "unmatched" when its cache row is still `enriched = 0` - it has no OMDb metadata
-yet. That covers two cases the page shows side by side:
+yet. That covers two cases the list shows side by side:
 
 - **errored** - the enricher tried and OMDb returned nothing (the failure message is kept on the
   item's enrich task and shown on the row, alongside when it was last tried);
 - **queued** - not yet attempted (still waiting its turn in the enrich queue).
 
 An errored item is not stuck: the discovery agent re-queues a failure whose last attempt is older
-than 14 days (see [`agents/enricher.md`](agents/enricher.md)), so the page also shows, for an
+than 14 days (see [`agents/enricher.md`](agents/enricher.md)), so the drill-in shows, for an
 errored item, **when it was last tried** and **when discovery will retry it** - the admin can wait
 for the automatic retry or fix it by hand now.
 
 Items in an **other-media** category are excluded: they are never matched against OMDb by design
 (see [`agents/enricher.md`](agents/enricher.md)), so they never belong on this list.
 
-This is distinct from **disk health** (missing files, unparseable `meta.json`), which the discovery
-agent records in `media_health` (see [`agents/discovery.md`](agents/discovery.md)). The Unhealthy
-media page shows that health list too, read-only, below the matching list, so the admin has one
-"needs attention" surface; the dashboard keeps its own copy.
+## What counts as misfiled
 
-A third read-only list sits between them: **possibly in the wrong category**. Once an item has
-been matched, its language and country are compared with the ones its category declares (see
-[`mediaformat.md`](mediaformat.md)); a contradiction is listed with the category the facets
-would suggest instead. It is the same question this page already answers, asked of the filing
-rather than the metadata, so it belongs here rather than on a page of its own. A category that
-declares no languages or countries has said nothing to be wrong about, an item the lookup
-recorded no origin for cannot contradict anything (that is a metadata gap, which the lists
-above are for), and nothing is ever moved automatically.
+Once an item has been matched, its language and country are compared with the ones its category
+declares (see [`mediaformat.md`](mediaformat.md)); a contradiction is listed with the category the
+facets would suggest instead. It is the same question this page already answers, asked of the
+filing rather than the metadata. A category that declares no languages or countries has said
+nothing to be wrong about, an item the lookup recorded no origin for cannot contradict anything
+(that is a metadata gap, which the other lists are for), and nothing is ever moved automatically.
 
 ## The flow
 
 ```mermaid
 flowchart TD
-    L["admin: Unhealthy media<br/>(list of unmatched items)"] -->|open one| D["match context<br/>GET /api/admin/media/{id}/match"]
+    L["admin: Needs attention<br/>(the no-metadata rows)"] -->|Find match| D["match context<br/>GET /api/admin/media/{id}/match"]
     FM["metadata editor<br/>'Match with the API' (admin)"] -->|any item| D
     D --> E["edit title / year / IMDb id<br/>(seeded from current + folder guess)"]
     E -->|Search OMDb| S{"IMDb id given?"}
@@ -95,6 +116,8 @@ concurrent playback event is never dropped.
 |----------------------------------------------|-------------------------------------------------------------|
 | `GET  /api/admin/unmatched`                  | list every unmatched item (errored or queued), with reason  |
 | `GET  /api/admin/misfiled`                   | list matched items whose language/country contradicts their category, with the category that fits |
+| `GET  /api/admin/health`                     | the disk-health rows, each issue with its human-readable detail |
+| `GET  /api/admin/misnamed`                   | the name-drift rows (see [`rename.md`](rename.md))          |
 | `GET  /api/admin/media/{id}/match`           | one item's match context for the detail view                |
 | `POST /api/admin/media/{id}/omdb-search`     | OMDb candidates by title+year, or a single record by IMDb id |
 | `POST /api/admin/media/{id}/match`           | apply the chosen record (replace-mode write)                |
@@ -107,8 +130,8 @@ concurrent playback event is never dropped.
   the OMDb API key; with no key the page's search and apply are unavailable.
 - **Enrichment write path** - the shared additive/replace helper and the `meta.json` builders (see
   [`agents/enricher.md`](agents/enricher.md)).
-- **Frontend** - the admin `Unhealthy media` view and the metadata editor's "Match with the API"
-  button (see [`frontend.md`](frontend.md)). On the list, clicking a row opens the OMDb match view,
-  while clicking the item's **title** links straight to the metadata editor for that item, for when
-  an admin would rather type the fields by hand than pick a database record. The editor is also
+- **Frontend** - the admin `Needs attention` view and the metadata editor's "Match with the API"
+  button (see [`frontend.md`](frontend.md)). A row's **Find match** button opens the OMDb match
+  view, while the item's **title** links straight to the metadata editor, for when an admin would
+  rather type the fields by hand than pick a database record. The editor is also
   reached from the library detail page's admin "Edit" button (see [`metaedit.md`](metaedit.md)).

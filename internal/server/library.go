@@ -22,6 +22,16 @@ func (s *Server) dataDir() string {
 	return s.cfg.DataDir
 }
 
+// mediaFormat returns the configured media-folder naming format under lock.
+func (s *Server) mediaFormat() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg == nil {
+		return ""
+	}
+	return s.cfg.MediaFormat
+}
+
 // categoryDTO is the wire shape for a category, carrying the tree links (parentId, leaf)
 // the frontend needs to render the nesting. otherMedia is the category's own stored flag.
 type categoryDTO struct {

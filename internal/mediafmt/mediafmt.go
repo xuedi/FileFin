@@ -1,11 +1,15 @@
-// Package mediafmt enumerates the media-folder naming formats the app can enforce.
-// The choice is made once in Settings and is permanent; the actual rename engine is
-// built later. Only the set of valid names lives here - the human-readable examples
-// are shown by the frontend.
+// Package mediafmt enumerates the media-folder naming formats the app can enforce and
+// builds the names themselves. The choice is made once in Settings and is permanent.
+// FolderName and FileName are what the importer writes and what the rename engine
+// compares an existing name against; the human-readable examples are shown by the
+// frontend.
 package mediafmt
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -73,4 +77,19 @@ func FileName(format string, year int, title string, season, episode, part int, 
 		base += fmt.Sprintf(" - part%d", part)
 	}
 	return base + ext
+}
+
+// rePart matches the " - partN" suffix FileName appends to a multi-part media file.
+var rePart = regexp.MustCompile(` - part(\d+)$`)
+
+// PartFromName reads a file's part number back out of its name, returning 0 when it has
+// none. The cache records a file's season and episode but never its part, so re-deriving
+// a multi-part film's names without this would collapse every part onto one name.
+func PartFromName(name string) int {
+	m := rePart.FindStringSubmatch(strings.TrimSuffix(name, filepath.Ext(name)))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
 }

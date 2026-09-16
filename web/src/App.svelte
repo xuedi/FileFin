@@ -17,7 +17,7 @@
   import AdminProgress from './views/admin/AdminProgress.svelte'
   import AdminDashboard from './views/admin/AdminDashboard.svelte'
   import AdminStats from './views/admin/AdminStats.svelte'
-  import UnhealthyMedia from './views/admin/UnhealthyMedia.svelte'
+  import NeedsAttention from './views/admin/NeedsAttention.svelte'
   import UserSettings from './views/settings/UserSettings.svelte'
   import Toast from './components/Toast.svelte'
   import GithubLink from './components/GithubLink.svelte'
@@ -152,7 +152,7 @@
           <li><a href={null} class:is-active={app.adminView === 'tags'} onclick={() => app.go('/admin/tags')}>Tags</a></li>
           <li><a href={null} class:is-active={app.adminView === 'import'} onclick={() => app.openAdminImport()}>Import</a></li>
           <li><a href={null} class:is-active={app.adminView === 'users'} onclick={() => app.go('/admin/users')}>Users</a></li>
-          <li><a href={null} class:is-active={app.adminView === 'unhealthy'} onclick={() => app.go('/admin/unhealthy')}>Unhealthy media</a></li>
+          <li><a href={null} class:is-active={app.adminView === 'attention'} onclick={() => app.go('/admin/attention')}>Needs attention</a></li>
           <li><a href={null} class:is-active={app.adminView === 'settings'} onclick={() => app.openSettings()}>Settings</a></li>
           <li><a href={null} class:is-active={app.adminView === 'progress'} onclick={() => app.go('/admin/progress')}>Progress</a></li>
         {/if}
@@ -186,8 +186,8 @@
         <AdminProgress />
       {:else if app.adminView === 'stats'}
         <AdminStats />
-      {:else if app.adminView === 'unhealthy'}
-        <UnhealthyMedia />
+      {:else if app.adminView === 'attention'}
+        <NeedsAttention />
       {:else}
         <AdminDashboard />
       {/if}

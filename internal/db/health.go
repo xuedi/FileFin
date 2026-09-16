@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 )
 
 // media_health records the discovery agent's per-item integrity check: when it last
@@ -17,6 +18,8 @@ import (
 type UnhealthyMedia struct {
 	MediaID       string `json:"id"`
 	Title         string `json:"title"`
+	Folder        string `json:"folder"`
+	Category      string `json:"category"`
 	Issues        string `json:"issues"`
 	LastCheckedAt int64  `json:"lastCheckedAt"`
 }
@@ -66,14 +69,19 @@ func OldestUncheckedMedia(ctx context.Context, pool *sql.DB, limit int) ([]strin
 // media title, for the admin health panel.
 func ListUnhealthy(ctx context.Context, pool *sql.DB) ([]UnhealthyMedia, error) {
 	return queryRows(ctx, pool,
-		`SELECT h.media_id, COALESCE(m.title, ''), h.issues, h.last_checked_at
+		`SELECT h.media_id, COALESCE(m.title, ''), COALESCE(m.path, ''),
+                COALESCE(NULLIF(c.alias, ''), c.name, ''), h.issues, h.last_checked_at
          FROM media_health h
          LEFT JOIN media m ON m.id = h.media_id
+         LEFT JOIN categories c ON c.id = m.category_id
          WHERE h.ok = 0 AND h.last_checked_at > 0
          ORDER BY m.title`,
 		func(r *sql.Rows) (UnhealthyMedia, error) {
 			var u UnhealthyMedia
-			return u, r.Scan(&u.MediaID, &u.Title, &u.Issues, &u.LastCheckedAt)
+			var path string
+			err := r.Scan(&u.MediaID, &u.Title, &path, &u.Category, &u.Issues, &u.LastCheckedAt)
+			u.Folder = filepath.Base(path)
+			return u, err
 		})
 }
 

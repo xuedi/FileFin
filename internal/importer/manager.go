@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -34,6 +35,23 @@ func (m *Manager) lockFor(folder string) *sync.Mutex {
 		m.locks[folder] = l
 	}
 	return l
+}
+
+// Rename moves a media folder, holding the old folder's lock across the move and re-keying
+// it to the new path. The locks are keyed by folder, so a rename that did not carry the key
+// over would leave the next writer guarding a path that no longer exists.
+func (m *Manager) Rename(oldFolder, newFolder string) error {
+	l := m.lockFor(oldFolder)
+	l.Lock()
+	defer l.Unlock()
+	if err := os.Rename(oldFolder, newFolder); err != nil {
+		return fmt.Errorf("rename %s: %w", oldFolder, err)
+	}
+	m.mu.Lock()
+	delete(m.locks, oldFolder)
+	m.locks[newFolder] = l
+	m.mu.Unlock()
+	return nil
 }
 
 // Update loads folder's meta.json, applies fn, and writes the result atomically under

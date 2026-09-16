@@ -139,7 +139,7 @@ export class AppState {
   version = $state('') // running binary's release version, from /api/state
   me = $state(null) // { user, admin }
   view = $state('library') // 'library' | 'admin' | 'settings'
-  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'import' | 'users' | 'settings' | 'progress' | 'unhealthy'
+  adminView = $state('dashboard') // 'dashboard' | 'stats' | 'library' | 'import' | 'users' | 'settings' | 'progress' | 'attention'
   userMenuOpen = $state(false) // navbar username dropdown
 
   // user settings: MyDramaList / MyAnimeList import (username, optional category scope,
@@ -151,11 +151,14 @@ export class AppState {
   // just-minted secret shown once until dismissed)
   tokens = $state({ list: [], label: '', loading: false, creating: false, justCreated: null })
 
-  // admin: unhealthy media (metadata matching). The list of unmatched items, plus a drill-in
-  // detail with an editable title/year/IMDb-id form and the OMDb candidates it searches up.
-  // misfiled holds the items whose looked-up language/country contradicts their category.
-  unhealthy = $state({
-    items: [], loading: false, detailId: '', detail: null, misfiled: [],
+  // admin: needs attention. rows is the one merged list the page shows - the four problem
+  // classes (no metadata, name, category, disk) folded into a single row shape, one row per
+  // problem, sorted by severity. counts drives the filter chips; filter is the chip in force.
+  // The rest is the OMDb drill-in: an editable title/year/IMDb-id form and its candidates.
+  attention = $state({
+    rows: [], counts: { all: 0, metadata: 0, name: 0, category: 0, disk: 0 },
+    filter: 'all', loading: false, renaming: '', openDetail: '',
+    detailId: '', detail: null,
     form: { title: '', year: '', imdbId: '' }, candidates: null, searching: false, applying: false,
   })
 
@@ -163,7 +166,7 @@ export class AppState {
   // meta.json fields, the folder facts shown alongside, and in-flight flags. posterVersion
   // bumps to bust the poster preview cache after an upload.
   edit = $state({
-    id: '', folder: '', category: '', hasPoster: false, posterVersion: 0,
+    id: '', folder: '', category: '', hasPoster: false, renameTo: '', posterVersion: 0,
     loading: false, saving: false, uploadingPoster: false, form: null,
   })
 
@@ -285,7 +288,6 @@ export class AppState {
   ]
 
   discoveryRunning = $state(false)
-  health = $state(null) // { items: [{id, title, issues:[{code,detail}], lastChecked}] }
 
   // import-folder picker (settings)
   ifBrowseOpen = $state(false)
@@ -793,6 +795,7 @@ export class AppState {
       this.edit.folder = c.folder
       this.edit.category = c.category
       this.edit.hasPoster = c.hasPoster
+      this.edit.renameTo = c.renameTo || ''
       this.edit.posterVersion = 0
       this.edit.form = {
         title: c.title || '', year: c.year || '',
@@ -1187,7 +1190,9 @@ export class AppState {
     const segs = location.pathname.split('/').filter(Boolean)
     if (segs[0] === 'admin' && this.me?.admin) {
       this.view = 'admin'
-      const page = ['dashboard', 'stats', 'library', 'tags', 'import', 'users', 'settings', 'progress', 'unhealthy'].includes(segs[1]) ? segs[1] : 'dashboard'
+      // "unhealthy" was this page's first name; links to it still work.
+      const asked = segs[1] === 'unhealthy' ? 'attention' : segs[1]
+      const page = ['dashboard', 'stats', 'library', 'tags', 'import', 'users', 'settings', 'progress', 'attention'].includes(asked) ? asked : 'dashboard'
       this.applyAdmin(page, segs[2])
       return
     }
@@ -1285,8 +1290,8 @@ export class AppState {
       this.loadStats()
     } else if (page === 'progress') {
       this.startProgressPoll()
-    } else if (page === 'unhealthy') {
-      this.openUnhealthy(sub)
+    } else if (page === 'attention') {
+      this.openAttention(sub)
     }
   }
 
@@ -1485,123 +1490,195 @@ export class AppState {
     }
   }
 
-  async loadHealth() {
-    try {
-      this.health = await api('/api/admin/health')
-    } catch {
-      this.health = null
-    }
-  }
+  // --- admin: needs attention ---
 
-  // --- admin: unhealthy media (metadata matching) ---
-
-  // openUnhealthy loads the page's data: the disk-health section (read-only) always, then
-  // either one item's match context (when a media id is in the URL) or the unmatched list.
-  async openUnhealthy(id) {
-    this.loadHealth()
-    this.unhealthy.detailId = id || ''
+  // openAttention loads the page: either one item's OMDb match context (a media id in the
+  // URL) or the merged problem list, with the filter chip taken from the query string.
+  async openAttention(id) {
+    this.attention.detailId = id || ''
     if (id) {
       await this.openUnmatched(id)
-    } else {
-      this.unhealthy.detail = null
-      await this.loadUnmatched()
-      this.loadMisfiled()
+      return
     }
+    this.attention.detail = null
+    this.attention.filter = new URLSearchParams(location.search).get('problem') || 'all'
+    await this.loadAttention()
   }
 
-  // loadMisfiled reads the items whose metadata disagrees with the category they sit in. It
-  // is a report only: nothing is moved, here or anywhere.
-  async loadMisfiled() {
-    try {
-      const r = await api('/api/admin/misfiled')
-      this.unhealthy.misfiled = r.items || []
-    } catch {
-      this.unhealthy.misfiled = []
+  // loadAttention fetches the four reports at once and folds them into one list. They stay
+  // separate endpoints because they answer separate questions; only the presentation is one.
+  async loadAttention() {
+    this.attention.loading = true
+    const get = async (path) => {
+      try {
+        return (await api(path)).items || []
+      } catch {
+        return []
+      }
     }
-  }
-
-  async loadUnmatched() {
-    this.unhealthy.loading = true
     try {
-      const r = await api('/api/admin/unmatched')
-      this.unhealthy.items = r.items || []
-    } catch {
-      this.unhealthy.items = []
+      const [unmatched, misnamed, misfiled, health] = await Promise.all([
+        get('/api/admin/unmatched'),
+        get('/api/admin/misnamed'),
+        get('/api/admin/misfiled'),
+        get('/api/admin/health'),
+      ])
+      const rows = [
+        ...health.map((it) => ({
+          key: 'disk:' + it.id, problem: 'disk', id: it.id,
+          title: it.title || it.id, folder: it.folder, category: it.category,
+          what: it.issues.map((i) => i.detail).join('; '),
+          then: 'last checked ' + it.lastChecked,
+          issues: it.issues,
+        })),
+        ...unmatched.map((it) => ({
+          key: 'metadata:' + it.id, problem: 'metadata', id: it.id,
+          title: it.title, folder: it.folder, category: it.category,
+          what: it.status === 'error' ? it.error || 'the lookup found nothing' : 'waiting in the enrich queue',
+          then: it.lastAttempt ? 'last tried ' + fmtTime(it.lastAttempt) : '',
+        })),
+        ...misnamed.map((it) => ({
+          key: 'name:' + it.id, problem: 'name', id: it.id,
+          title: it.title, folder: it.plan.folder.from, category: it.category,
+          plan: it.plan,
+          what: '', then: '',
+        })),
+        ...misfiled.map((it) => ({
+          key: 'category:' + it.id, problem: 'category', id: it.id,
+          title: it.title, folder: '', category: it.category,
+          what: [it.language, it.country].filter(Boolean).join(' / ') || 'no origin recorded',
+          then: it.suggest ? 'would suggest ' + it.suggest : 'no category claims it',
+        })),
+      ]
+      this.attention.rows = rows
+      this.attention.counts = {
+        all: rows.length, metadata: unmatched.length, name: misnamed.length,
+        category: misfiled.length, disk: health.length,
+      }
     } finally {
-      this.unhealthy.loading = false
+      this.attention.loading = false
     }
   }
 
-  goUnhealthy(id) {
-    this.go('/admin/unhealthy/' + id)
+  // attentionRows is the list the page renders: everything, or one problem class.
+  get attentionRows() {
+    const f = this.attention.filter
+    return f === 'all' ? this.attention.rows : this.attention.rows.filter((r) => r.problem === f)
+  }
+
+  // setAttentionFilter keeps the chosen chip in the URL, so a filtered view can be shared
+  // and survives a reload.
+  setAttentionFilter(problem) {
+    this.go('/admin/attention' + (problem === 'all' ? '' : '?problem=' + problem))
+  }
+
+  // toggleAttentionDetail opens (or closes) the explanation under a disk-health row.
+  toggleAttentionDetail(key) {
+    this.attention.openDetail = this.attention.openDetail === key ? '' : key
+  }
+
+  // renameMedia applies one item's rename plan. The media id is derived from the folder
+  // path, so a rename mints a new one; the list is reloaded against it.
+  async renameMedia(row) {
+    this.attention.renaming = row.id
+    try {
+      await api('/api/admin/media/' + row.id + '/rename', { method: 'POST' })
+      this.toast('success', 'Renamed to "' + row.plan.folder.to + '".')
+      await this.loadAttention()
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not rename that item')
+    } finally {
+      this.attention.renaming = ''
+    }
+  }
+
+  goAttention(id) {
+    this.go('/admin/attention/' + id)
+  }
+
+  // renameFromEditor applies the rename the editor offers, then follows the item to the id
+  // its new folder path mints.
+  async renameFromEditor() {
+    const to = this.edit.renameTo
+    if (!to) return
+    this.edit.saving = true
+    try {
+      const r = await api('/api/admin/media/' + this.edit.id + '/rename', { method: 'POST' })
+      this.toast('success', 'Renamed to "' + to + '".')
+      this.go('/media/' + r.id + '/edit')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not rename that item')
+    } finally {
+      this.edit.saving = false
+    }
   }
 
   // openUnmatched loads one item's match context and seeds the search form from its current
   // title/year/IMDb id.
   async openUnmatched(id) {
-    this.unhealthy.detail = null
-    this.unhealthy.candidates = null
+    this.attention.detail = null
+    this.attention.candidates = null
     try {
       const c = await api('/api/admin/media/' + id + '/match')
-      this.unhealthy.detail = c
-      this.unhealthy.form = { title: c.title || '', year: c.year || '', imdbId: c.imdbId || '' }
+      this.attention.detail = c
+      this.attention.form = { title: c.title || '', year: c.year || '', imdbId: c.imdbId || '' }
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not load that item')
-      this.go('/admin/unhealthy')
+      this.go('/admin/attention')
     }
   }
 
   // useGuess fills the form from the folder-name guess (title + year).
   useGuess() {
-    const d = this.unhealthy.detail
+    const d = this.attention.detail
     if (!d) return
-    this.unhealthy.form.title = d.guessTitle || ''
-    this.unhealthy.form.year = d.guessYear || ''
+    this.attention.form.title = d.guessTitle || ''
+    this.attention.form.year = d.guessYear || ''
   }
 
   async searchOmdb() {
-    const d = this.unhealthy.detail
+    const d = this.attention.detail
     if (!d) return
-    this.unhealthy.searching = true
-    this.unhealthy.candidates = null
+    this.attention.searching = true
+    this.attention.candidates = null
     try {
       const r = await api('/api/admin/media/' + d.id + '/omdb-search', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          title: this.unhealthy.form.title.trim(),
-          year: Number(this.unhealthy.form.year) || 0,
-          imdbId: this.unhealthy.form.imdbId.trim(),
+          title: this.attention.form.title.trim(),
+          year: Number(this.attention.form.year) || 0,
+          imdbId: this.attention.form.imdbId.trim(),
         }),
       })
-      this.unhealthy.candidates = r.candidates || []
+      this.attention.candidates = r.candidates || []
     } catch (e) {
       this.toast('error', (await errText(e)) || 'OMDb search failed')
-      this.unhealthy.candidates = []
+      this.attention.candidates = []
     } finally {
-      this.unhealthy.searching = false
+      this.attention.searching = false
     }
   }
 
   // applyMatch writes the chosen candidate (classic enrichment, in replace mode) and returns
   // to the list, where the now-matched item no longer appears.
   async applyMatch(cand) {
-    const d = this.unhealthy.detail
+    const d = this.attention.detail
     if (!d) return
-    const title = this.unhealthy.form.title.trim() || cand.title
-    this.unhealthy.applying = true
+    const title = this.attention.form.title.trim() || cand.title
+    this.attention.applying = true
     try {
       await api('/api/admin/media/' + d.id + '/match', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ imdbId: cand.imdbId, title, year: Number(this.unhealthy.form.year) || 0 }),
+        body: JSON.stringify({ imdbId: cand.imdbId, title, year: Number(this.attention.form.year) || 0 }),
       })
       this.toast('success', 'Matched "' + title + '".')
       this.go('/media/' + d.id) // land on the freshly written detail page
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not apply the match')
     } finally {
-      this.unhealthy.applying = false
+      this.attention.applying = false
     }
   }
 
@@ -2537,7 +2614,6 @@ export class AppState {
     } catch {
       this.summary = null
     }
-    this.loadHealth()
   }
 
   // --- admin statistics ---

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -79,6 +81,11 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read health state", http.StatusInternalServerError)
 		return
 	}
+	attention, err := s.attentionCounts(ctx, pool, healthIssues)
+	if err != nil {
+		http.Error(w, "could not read the attention lists", http.StatusInternalServerError)
+		return
+	}
 
 	s.mu.RLock()
 	total, admins := len(s.cfg.Users), 0
@@ -102,8 +109,9 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 			Optimized: optimized, NeedsCopy: optimized + optPendingCopy,
 			Coverage: coveragePercent(optimized, optPendingCopy),
 		},
-		Enrich:  pendingStat{Pending: enrichPending},
-		Imports: activeStat{Active: len(importsActive)},
+		Enrich:    pendingStat{Pending: enrichPending},
+		Imports:   activeStat{Active: len(importsActive)},
+		Attention: attention,
 		Health: healthStats{
 			Issues:    healthIssues,
 			Unchecked: healthUnchecked,
@@ -111,6 +119,28 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 			Discovery: discoveryLabel(interval),
 		},
 	})
+}
+
+// attentionCounts totals the four lists the "Needs attention" page shows, so the dashboard
+// can state the size of the problem in one number without fetching each list.
+func (s *Server) attentionCounts(ctx context.Context, pool *sql.DB, diskIssues int) (attentionStats, error) {
+	unmatched, err := db.ListUnmatchedMedia(ctx, pool)
+	if err != nil {
+		return attentionStats{}, err
+	}
+	misnamed, err := misnamedItems(ctx, pool, s.mediaFormat())
+	if err != nil {
+		return attentionStats{}, err
+	}
+	misfiled, err := misfiledItems(ctx, pool, s.dataDir())
+	if err != nil {
+		return attentionStats{}, err
+	}
+	a := attentionStats{
+		NoMetadata: len(unmatched), Name: len(misnamed), Category: len(misfiled), Disk: diskIssues,
+	}
+	a.Total = a.NoMetadata + a.Name + a.Category + a.Disk
+	return a, nil
 }
 
 // taskBacklog is the per-type count of outstanding background tasks (queued + running) for
@@ -172,7 +202,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			_ = json.Unmarshal([]byte(r.Issues), &issues)
 		}
 		items = append(items, healthItem{
-			ID: r.MediaID, Title: r.Title, Issues: issues, LastChecked: fmtUnix(r.LastCheckedAt),
+			ID: r.MediaID, Title: r.Title, Folder: r.Folder, Category: r.Category,
+			Issues: issues, LastChecked: fmtUnix(r.LastCheckedAt),
 		})
 	}
 	writeJSON(w, healthView{Items: items})
@@ -186,6 +217,16 @@ type dashboardView struct {
 	Enrich    pendingStat    `json:"enrich"`
 	Imports   activeStat     `json:"imports"`
 	Health    healthStats    `json:"health"`
+	Attention attentionStats `json:"attention"`
+}
+
+// attentionStats counts what the "Needs attention" page lists, one field per problem class.
+type attentionStats struct {
+	Total      int `json:"total"`
+	NoMetadata int `json:"noMetadata"`
+	Name       int `json:"name"`
+	Category   int `json:"category"`
+	Disk       int `json:"disk"`
 }
 
 // healthStats is the dashboard's discovery/health overview: how many items carry issues,
@@ -207,6 +248,8 @@ type healthView struct {
 type healthItem struct {
 	ID          string  `json:"id"`
 	Title       string  `json:"title"`
+	Folder      string  `json:"folder"`
+	Category    string  `json:"category"`
 	Issues      []Issue `json:"issues"`
 	LastChecked string  `json:"lastChecked"`
 }

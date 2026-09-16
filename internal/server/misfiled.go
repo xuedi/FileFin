@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"strings"
 
@@ -30,15 +32,25 @@ func (s *Server) handleMisfiled(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	media, err := db.ListEnrichedMedia(r.Context(), pool)
+	items, err := misfiledItems(r.Context(), pool, s.dataDir())
 	if err != nil {
-		http.Error(w, "could not list media", http.StatusInternalServerError)
+		http.Error(w, "could not list misfiled media", http.StatusInternalServerError)
 		return
 	}
-	cats, err := library.List(s.dataDir())
+	writeJSON(w, struct {
+		Items []misfiledMedia `json:"items"`
+	}{items})
+}
+
+// misfiledItems is the report itself, shared by the handler and the dashboard's count.
+func misfiledItems(ctx context.Context, pool *sql.DB, dataDir string) ([]misfiledMedia, error) {
+	media, err := db.ListEnrichedMedia(ctx, pool)
 	if err != nil {
-		http.Error(w, "could not read categories", http.StatusInternalServerError)
-		return
+		return nil, err
+	}
+	cats, err := library.List(dataDir)
+	if err != nil {
+		return nil, err
 	}
 	byID := make(map[int64]library.Category, len(cats))
 	for _, c := range cats {
@@ -57,9 +69,7 @@ func (s *Server) handleMisfiled(w http.ResponseWriter, r *http.Request) {
 			Language: m.Language, Country: m.Country, Suggest: suggestCategory(cats, cat, m),
 		})
 	}
-	writeJSON(w, struct {
-		Items []misfiledMedia `json:"items"`
-	}{items})
+	return items, nil
 }
 
 // declaresOrigin reports whether a category says anything about where its media comes from.

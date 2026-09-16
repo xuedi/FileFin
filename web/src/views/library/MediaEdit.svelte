@@ -41,7 +41,13 @@
       <p class="ff-settings-intro has-text-grey">{e.folder}{#if e.category} &middot; in {e.category}{/if}</p>
     </div>
     <div class="ff-title-actions">
-      <button class="button" onclick={() => app.goUnhealthy(e.id)} title="Search the online database and pick a match">
+      {#if e.renameTo}
+        <button class="button" class:is-loading={e.saving} onclick={() => app.renameFromEditor()}
+                title={'Rename the folder and its files to "' + e.renameTo + '"'}>
+          Rename to match
+        </button>
+      {/if}
+      <button class="button" onclick={() => app.goAttention(e.id)} title="Search the online database and pick a match">
         Match with the API
       </button>
       <button class="button is-primary" class:is-loading={e.saving} onclick={() => app.saveEdit()}>Save</button>

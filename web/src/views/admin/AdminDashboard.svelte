@@ -42,32 +42,11 @@
       <span class="ff-dash-num">{s.imports.active}</span>
       <span class="ff-dash-label">Imports running</span>
     </div>
-    <div class="box ff-dash-card">
-      <span class="ff-dash-num">{s.health.issues}</span>
-      <span class="ff-dash-label">Health issues - {s.health.unchecked} unchecked (discovery {s.health.discovery})</span>
-    </div>
+    <button class="box ff-dash-card ff-dash-link" onclick={() => app.go('/admin/attention')}>
+      <span class="ff-dash-num">{s.attention.total}</span>
+      <span class="ff-dash-label">Needs attention - {s.health.unchecked} unchecked (discovery {s.health.discovery})</span>
+    </button>
   </div>
-  {#if app.health && app.health.items.length}
-    <h2 class="title is-5 ff-health-head">Health issues</h2>
-    <table class="table is-fullwidth">
-      <thead>
-        <tr><th>Title</th><th>Issues</th><th>Last checked</th></tr>
-      </thead>
-      <tbody>
-        {#each app.health.items as it}
-          <tr>
-            <td>{it.title || it.id}</td>
-            <td>
-              {#each it.issues as iss}
-                <span class="tag is-warning ff-health-tag" title={iss.detail}>{iss.code}</span>
-              {/each}
-            </td>
-            <td class="has-text-grey">{it.lastChecked}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  {/if}
 {:else}
   <p class="has-text-grey has-text-centered ff-loading">Loading...</p>
 {/if}

@@ -121,6 +121,12 @@ Because a top-level item's relpath is unchanged by the nesting model, **existing
 per-user resume/watch state keyed off them) are preserved** - introducing sub-categories
 required no data migration.
 
+The one deliberate exception is a **folder rename**: correcting a name that contradicts the
+item's metadata necessarily changes the path, and so mints a new id. Everything durable lives
+inside the folder and travels with it - `meta.json` and its per-user state, the posters, the
+optimized copies - so only the cache rows (which the rename re-keys itself) and outside
+references (a bookmark, an id a client is holding) are affected. See [`rename.md`](rename.md).
+
 ## Authoritative vs. rebuildable
 
 | on disk (authoritative) | in the cache (rebuildable) |

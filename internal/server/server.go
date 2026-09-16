@@ -318,6 +318,8 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/enrich/scan", s.admin(s.handleEnrichScan))
 		mux.Handle("GET /api/admin/unmatched", s.admin(s.handleUnmatched))
 		mux.Handle("GET /api/admin/misfiled", s.admin(s.handleMisfiled))
+		mux.Handle("GET /api/admin/misnamed", s.admin(s.handleMisnamed))
+		mux.Handle("POST /api/admin/media/{id}/rename", s.admin(s.handleRename))
 		mux.Handle("GET /api/admin/media/{id}/meta", s.admin(s.handleMetaEdit))
 		mux.Handle("POST /api/admin/media/{id}/meta", s.admin(s.handleSaveMeta))
 		mux.Handle("POST /api/admin/media/{id}/poster", s.admin(s.handleUploadPoster))

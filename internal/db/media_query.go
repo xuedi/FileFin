@@ -292,3 +292,28 @@ func ListEnrichedMedia(ctx context.Context, pool *sql.DB) ([]EnrichedMedia, erro
 	}
 	return out, rows.Err()
 }
+
+// MediaWithCategory is a full media row plus the display name of the category it sits in,
+// for the reports that judge an item against where it is filed.
+type MediaWithCategory struct {
+	Media
+	Category string
+}
+
+// ListMediaWithCategory returns every media row joined to its category's display name,
+// ordered by title. It backs the misnamed-media report, which compares each item's folder
+// and file names against what its metadata and the configured format say they should be.
+func ListMediaWithCategory(ctx context.Context, pool *sql.DB) ([]MediaWithCategory, error) {
+	return queryRows(ctx, pool,
+		`SELECT m.id, m.category_id, m.path, m.year, m.title, m.description, m.plot, m.poster,
+		        m.enriched, m.language, m.country, m.director, m.writer,
+		        COALESCE(NULLIF(c.alias, ''), c.name)
+		 FROM media m JOIN categories c ON c.id = m.category_id
+		 ORDER BY m.title`,
+		func(r *sql.Rows) (MediaWithCategory, error) {
+			var x MediaWithCategory
+			m := &x.Media
+			return x, r.Scan(&m.ID, &m.CategoryID, &m.Path, &m.Year, &m.Title, &m.Description, &m.Plot,
+				&m.Poster, &m.Enriched, &m.Language, &m.Country, &m.Director, &m.Writer, &x.Category)
+		})
+}

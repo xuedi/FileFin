@@ -36,7 +36,7 @@ untouched on save.
 ```mermaid
 flowchart TD
     D["library detail<br/>(admin) 'Edit'"] -->|GET meta| F["editor form<br/>seeded from meta.json + cache row"]
-    F -->|"Match with the API"| RM["OMDb re-match<br/>/admin/unhealthy/{id}"]
+    F -->|"Match with the API"| RM["OMDb re-match<br/>/admin/attention/{id}"]
     RM -->|apply candidate| DET["media detail /media/{id}"]
     F -->|Replace poster| UP["POST poster<br/>store image, drop sized variants"]
     UP --> F
@@ -50,7 +50,7 @@ flowchart TD
   candidate there now lands on the item's detail page (see [`rematch.md`](rematch.md)).
 - **Save** is a replace-mode write: the admin-entered fields win, the technical and state
   blocks are carried over from the current file, and the item is flagged **enriched** so it
-  drops off the "Unhealthy media" unmatched list. It shares the same cache-write path as the
+  drops off the "Needs attention" no-metadata list. It shares the same cache-write path as the
   enricher and the OMDb re-match, so the media row and its search facets never drift from
   `meta.json`. Any leftover enrich task for the item is cleared, and the admin lands on the
   freshly written detail page.

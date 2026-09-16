@@ -301,15 +301,7 @@ func (s *Server) reconcileDiff(ctx context.Context, pool *sql.DB, dataDir string
 		if cached[id] {
 			continue
 		}
-		if sm, ok := readMediaFolder(dataDir, ref.cat, ref.folder); ok {
-			if err := db.InsertMedia(ctx, pool, sm.media); err != nil {
-				continue
-			}
-			for _, f := range sm.files {
-				_ = db.InsertMediaFile(ctx, pool, f)
-			}
-			_ = db.ReplaceMediaFacets(ctx, pool, id, sm.actors, sm.genres, sm.tags)
-			_ = db.ReplaceUserStateForMedia(ctx, pool, id, sm.userState)
+		if insertMediaFromDisk(ctx, pool, dataDir, ref.cat, ref.folder) {
 			added++
 		}
 	}
@@ -317,15 +309,41 @@ func (s *Server) reconcileDiff(ctx context.Context, pool *sql.DB, dataDir string
 		if _, ok := refs[id]; ok {
 			continue
 		}
-		s.bestEffort(db.DeleteMedia(ctx, pool, id), "delete vanished media")
-		s.bestEffort(db.PruneHealth(ctx, pool, id), "prune vanished health")
-		s.bestEffort(db.PruneEnrich(ctx, pool, id), "prune vanished enrich task")
-		s.bestEffort(db.PruneThumbnail(ctx, pool, id), "prune vanished thumbnail task")
-		s.bestEffort(db.PruneOptimizeForMedia(ctx, pool, id), "prune vanished optimize task")
-		s.bestEffort(db.PruneProbe(ctx, pool, id), "prune vanished probe task")
+		s.dropMediaFromCache(ctx, pool, id, "vanished")
 		removed++
 	}
 	return added, removed
+}
+
+// insertMediaFromDisk reads one media folder and writes its full set of cache rows. It is
+// how a folder that is on disk but not in the cache gets there, whether discovery just found
+// it or a rename just created it under a new id.
+func insertMediaFromDisk(ctx context.Context, pool *sql.DB, dataDir string, cat library.Category, folder string) bool {
+	sm, ok := readMediaFolder(dataDir, cat, folder)
+	if !ok {
+		return false
+	}
+	if err := db.InsertMedia(ctx, pool, sm.media); err != nil {
+		return false
+	}
+	for _, f := range sm.files {
+		_ = db.InsertMediaFile(ctx, pool, f)
+	}
+	_ = db.ReplaceMediaFacets(ctx, pool, sm.media.ID, sm.actors, sm.genres, sm.tags)
+	_ = db.ReplaceUserStateForMedia(ctx, pool, sm.media.ID, sm.userState)
+	return true
+}
+
+// dropMediaFromCache removes every cache row keyed on a media id: the item itself plus its
+// health record and any queued task. why names the cause in the log lines ("vanished" from
+// disk, "renamed" to a new id, which is the same thing as far as the old id is concerned).
+func (s *Server) dropMediaFromCache(ctx context.Context, pool *sql.DB, id, why string) {
+	s.bestEffort(db.DeleteMedia(ctx, pool, id), "delete "+why+" media")
+	s.bestEffort(db.PruneHealth(ctx, pool, id), "prune "+why+" health")
+	s.bestEffort(db.PruneEnrich(ctx, pool, id), "prune "+why+" enrich task")
+	s.bestEffort(db.PruneThumbnail(ctx, pool, id), "prune "+why+" thumbnail task")
+	s.bestEffort(db.PruneOptimizeForMedia(ctx, pool, id), "prune "+why+" optimize task")
+	s.bestEffort(db.PruneProbe(ctx, pool, id), "prune "+why+" probe task")
 }
 
 // reconcileItem processes one media item in the rolling pass: if its folder fingerprint

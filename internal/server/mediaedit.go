@@ -63,6 +63,10 @@ type mediaMetaEdit struct {
 	Folder    string `json:"folder"`
 	Category  string `json:"category"`
 	HasPoster bool   `json:"hasPoster"`
+	// RenameTo is the folder name the item's own metadata calls for, when that is not the
+	// name it already has. This editor is where the drift is created, so it is where the
+	// fix is offered; it is empty whenever nothing needs renaming.
+	RenameTo string `json:"renameTo"`
 	mediaMetaForm
 }
 
@@ -80,8 +84,15 @@ func (s *Server) handleMetaEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	cat, _ := db.CategoryName(r.Context(), pool, m.CategoryID)
 	meta, _ := importer.ReadMeta(m.Path)
+	renameTo := ""
+	if files, err := db.MediaFiles(r.Context(), pool, m.ID); err == nil {
+		if plan, ok := plannedRename(m, files, s.mediaFormat()); ok {
+			renameTo = plan.Folder.To
+		}
+	}
 	out := mediaMetaEdit{
 		ID: m.ID, Folder: filepath.Base(m.Path), Category: cat, HasPoster: m.Poster != "",
+		RenameTo: renameTo,
 		mediaMetaForm: mediaMetaForm{
 			Title: m.Title, Year: m.Year,
 			Description: meta.Description, Plot: meta.Plot,
