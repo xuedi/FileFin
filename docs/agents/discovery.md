@@ -114,6 +114,11 @@ last sweep time, the interval label); a dedicated endpoint lists the flagged ite
 issue codes and last-checked time. The three per-queue scan buttons remain for granular
 manual control.
 
+A **full sweep** has no queue to list, so the Progress page reads its live snapshot directly
+alongside the queue-backed agents: the folder count done against the total, plus how many
+subtitle sidecars the repair has written so far. The snapshot lingers after a sweep ends, so
+the page shows the section only while the sweep reports itself running.
+
 ## Endpoints
 
 | method + path                       | purpose                                            |

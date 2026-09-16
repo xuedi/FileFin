@@ -404,6 +404,7 @@ export class AppState {
   thumbnailPending = $state(0)
   probeRows = $state([])
   probePending = $state(0)
+  sweepRun = $state(null) // the live full health sweep, null when none is running
   progressTimer = 0
 
   // admin dashboard
@@ -2635,6 +2636,12 @@ export class AppState {
     } catch {
       this.probeRows = []
       this.probePending = 0
+    }
+    try {
+      const r = await api('/api/admin/discovery/sweep/progress')
+      this.sweepRun = r.running ? r : null // a finished snapshot lingers; only show a live one
+    } catch {
+      this.sweepRun = null
     }
   }
 

@@ -251,16 +251,17 @@ func (s *Server) handleFullSweepProgress(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, s.sweepJob.snapshot())
 }
 
-// sweepState is a forced full sweep's live progress, polled by the maintenance page.
-// Subtitles counts the sidecars extracted along the way. running is not serialized; it
-// guards against starting a second full sweep while one is in flight.
+// sweepState is a forced full sweep's live progress. Subtitles counts the sidecars
+// extracted along the way. Running both guards against starting a second full sweep while
+// one is in flight and tells the Progress page, which has no local flag of its own, whether
+// the snapshot describes a live sweep or the last finished one.
 type sweepState struct {
 	Total     int    `json:"total"`
 	Done      int    `json:"done"`
 	Subtitles int    `json:"subtitles"`
+	Running   bool   `json:"running"`
 	Finished  bool   `json:"finished"`
 	Error     string `json:"error"`
-	running   bool
 }
 
 // sweepTracker owns the full-sweep progress behind its own mutex (the rebuildTracker pattern).
@@ -274,10 +275,10 @@ type sweepTracker struct {
 func (t *sweepTracker) begin(total int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.st.running {
+	if t.st.Running {
 		return false
 	}
-	t.st = sweepState{running: true, Total: total}
+	t.st = sweepState{Running: true, Total: total}
 	return true
 }
 
@@ -298,7 +299,7 @@ func (t *sweepTracker) fail(msg string) {
 // from sweep runs it, so a sweep that returns early never leaves the button stuck.
 func (t *sweepTracker) done() {
 	t.mu.Lock()
-	t.st.Finished, t.st.running = true, false
+	t.st.Finished, t.st.Running = true, false
 	t.mu.Unlock()
 }
 
