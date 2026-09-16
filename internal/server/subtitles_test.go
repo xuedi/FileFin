@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filefin/internal/config"
@@ -97,5 +98,48 @@ func TestRepairSubtitlesSkipsCovered(t *testing.T) {
 	files := []db.MediaFile{{Path: video}}
 	if n := s.repairSubtitles(context.Background(), files); n != 0 {
 		t.Fatalf("want no extraction for a covered file, got %d", n)
+	}
+}
+
+// TestRepairSubtitlesEndpoint: the per-media action reports what it wrote and refuses an id
+// that is not in the library.
+func TestRepairSubtitlesEndpoint(t *testing.T) {
+	dataDir := t.TempDir()
+	s, h, admin, bob := installedServer(t, dataDir)
+	ctx := context.Background()
+
+	if rr := do(t, h, "POST", "/api/admin/categories", `{"name":"Movies","alias":"Films"}`, admin); rr.Code != 200 {
+		t.Fatalf("create category: %d %s", rr.Code, rr.Body.String())
+	}
+	dir := filepath.Join(dataDir, "Movies", "(1966) Django")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "(1966) Django.mkv")) // not a real container: nothing to extract
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"title":"Django","year":1966}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.discoveryTick(ctx)
+
+	pool, _ := s.ensureDB(ctx)
+	media, _ := db.AllMedia(ctx, pool)
+	if len(media) != 1 {
+		t.Fatalf("want the discovered media, got %+v", media)
+	}
+	id := media[0].ID
+
+	rr := do(t, h, "POST", "/api/admin/media/"+id+"/subtitles", "", admin)
+	if rr.Code != 200 {
+		t.Fatalf("repair: %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"written":0`) {
+		t.Fatalf("want nothing written for a file with no tracks, got %s", rr.Body.String())
+	}
+
+	if rr := do(t, h, "POST", "/api/admin/media/nosuchid/subtitles", "", admin); rr.Code != 404 {
+		t.Fatalf("unknown media: want 404, got %d", rr.Code)
+	}
+	if rr := do(t, h, "POST", "/api/admin/media/"+id+"/subtitles", "", bob); rr.Code == 200 {
+		t.Fatal("a non-admin must not be able to run the repair")
 	}
 }

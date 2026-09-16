@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"filefin/internal/db"
@@ -14,6 +15,10 @@ import (
 // would hang ffmpeg forever and, with it, the sweep that holds the guard - leaving the
 // agent wedged and every manual sweep refused until a restart.
 const subtitleExtractTimeout = 5 * time.Minute
+
+// repairRequestTimeout caps a whole folder's on-demand repair, so a pathological item cannot
+// leave a detached goroutine running for the process's lifetime.
+const repairRequestTimeout = 30 * time.Minute
 
 // subtitleTools returns the ffmpeg/ffprobe binaries and the configured subtitle language
 // under lock - everything the sidecar repair needs from live settings.
@@ -63,6 +68,40 @@ func hasSRTSidecar(videoPath string) bool {
 		}
 	}
 	return false
+}
+
+// handleRepairSubtitles runs the sidecar repair over one media folder on demand. The sweep
+// gets there eventually, but it walks the library least-recently-checked first, so a folder
+// just noticed to be missing its subtitles can be most of a rotation away; this is the
+// "fix this one now" the admin detail page needs.
+//
+// The work is detached from the request: a folder of thirty episodes takes longer than a
+// proxy is willing to hold a connection open, and a disconnect must not kill ffmpeg
+// halfway. The response still waits for it, so the admin gets a real count.
+func (s *Server) handleRepairSubtitles(w http.ResponseWriter, r *http.Request) {
+	pool, err := s.ensureDB(r.Context())
+	if err != nil {
+		http.Error(w, "cache unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	m, err := db.GetMedia(r.Context(), pool, id)
+	if err != nil {
+		http.Error(w, "media not found", http.StatusNotFound)
+		return
+	}
+	files, err := db.MediaFiles(r.Context(), pool, id)
+	if err != nil {
+		http.Error(w, "could not read the media files", http.StatusInternalServerError)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repairRequestTimeout)
+	defer cancel()
+	written := s.repairSubtitles(ctx, files)
+	s.logSubtitleRepair(m.Title, id, written)
+	writeJSON(w, struct {
+		Written int `json:"written"`
+	}{written})
 }
 
 // logSubtitleRepair reports a repaired folder, one line per media item that gained

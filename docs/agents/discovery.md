@@ -91,6 +91,12 @@ film, so the cap is not a budget but a stop: one pathological file would otherwi
 ffmpeg, and with it the sweep that holds the guard, leaving the agent wedged and every manual
 sweep refused until a restart.
 
+Because the sweep walks the library least-recently-checked first, one folder can be most of a
+rotation away from its turn. An admin who has just noticed a film with no subtitles does not
+want to wait for that, so the detail page carries a **Subtitles** action that runs the same
+repair over that one folder immediately. Its work is detached from the request - a folder of
+thirty episodes outlives any proxy's patience, and a disconnect must not kill ffmpeg halfway.
+
 The gate is deliberately cheap and stateless - a file that already has a sidecar is skipped on
 a directory read alone, so a swept library costs nothing and no cache column is needed to
 remember which files were examined. The price is that a file with no subtitles anywhere is
@@ -139,4 +145,5 @@ reports itself running.
 | `POST /api/admin/discovery/run`     | trigger an immediate sweep (one rolling batch)     |
 | `POST /api/admin/discovery/sweep`   | sweep the whole library at once, in the background |
 | `GET  /api/admin/discovery/sweep/progress` | live progress of a full sweep               |
+| `POST /api/admin/media/{id}/subtitles` | repair one folder's subtitle sidecars now       |
 | `GET  /api/admin/health`            | list items currently flagged with issues           |

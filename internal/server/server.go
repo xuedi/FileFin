@@ -333,6 +333,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/admin/misfiled", s.admin(s.handleMisfiled))
 		mux.Handle("GET /api/admin/misnamed", s.admin(s.handleMisnamed))
 		mux.Handle("POST /api/admin/media/{id}/rename", s.admin(s.handleRename))
+		mux.Handle("POST /api/admin/media/{id}/subtitles", s.admin(s.handleRepairSubtitles))
 		mux.Handle("GET /api/admin/media/{id}/meta", s.admin(s.handleMetaEdit))
 		mux.Handle("POST /api/admin/media/{id}/meta", s.admin(s.handleSaveMeta))
 		mux.Handle("POST /api/admin/media/{id}/poster", s.admin(s.handleUploadPoster))

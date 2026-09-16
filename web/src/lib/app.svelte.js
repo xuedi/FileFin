@@ -320,6 +320,7 @@ export class AppState {
   enrichScanning = $state(false)
   thumbnailScanning = $state(false)
   probeScanning = $state(false)
+  repairingSubs = $state(false)
   sweeping = $state(false)
   sweepProgress = $state(null) // { total, done, subtitles, finished, error } while a full sweep runs
   sweepTimer = 0
@@ -1466,6 +1467,27 @@ export class AppState {
 
   dismissToast(id) {
     this.toasts = this.toasts.filter((t) => t.id !== id)
+  }
+
+  // repairSubtitles externalises one item's embedded subtitle tracks now, instead of waiting
+  // for the health sweep to reach it - the sweep walks the library least-recently-checked
+  // first, so a single folder can be most of a rotation away.
+  async repairSubtitles(id) {
+    this.repairingSubs = true
+    try {
+      const r = await api(`/api/admin/media/${encodeURIComponent(id)}/subtitles`, { method: 'POST' })
+      if (r.written > 0) {
+        this.toast('success', `Extracted ${r.written} subtitle file${r.written === 1 ? '' : 's'}.`)
+        this.detail = await api('/api/media/' + id) // the new tracks are read off disk per request
+
+      } else {
+        this.toast('info', 'No embedded subtitles to extract; every file already has a sidecar or carries none.')
+      }
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not extract subtitles')
+    } finally {
+      this.repairingSubs = false
+    }
   }
 
   async runDiscovery() {

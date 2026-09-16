@@ -66,6 +66,13 @@
               <button class="button" title="Edit this item's metadata and poster" onclick={() => app.goEditMeta(detail.id)}>
                 Edit
               </button>
+              <button
+                class="button"
+                disabled={app.repairingSubs}
+                title="Extract subtitles embedded in this item's files into playable sidecars"
+                onclick={() => app.repairSubtitles(detail.id)}>
+                {app.repairingSubs ? 'Extracting...' : 'Subtitles'}
+              </button>
             {/if}
           </div>
         {/if}
