@@ -185,8 +185,8 @@ func (s *Server) handleHLSSegment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// A not-yet-ready or reaped segment is routine (the client re-requests it); a 503
-	// is the whole signal, so it is not logged.
+	// The client retries a 503 and rebuilds the session from the playlist; the manager
+	// logs the first real stall per session, so the handler stays quiet.
 	seg, err := s.hlsManager().Segment(r.Context(), key, r.PathValue("seg"))
 	if err != nil {
 		http.Error(w, "segment unavailable", http.StatusServiceUnavailable)

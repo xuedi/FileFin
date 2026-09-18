@@ -40,3 +40,16 @@ func TestParseSubtitleStreamsNone(t *testing.T) {
 		t.Fatalf("malformed input should yield nil, got %+v", subs)
 	}
 }
+
+func TestParseKeyframes(t *testing.T) {
+	got := parseKeyframes("0.000000,K__\n0.040000,___\nN/A,K__\n10.000000,K_\n4.000000,K__\n\n")
+	want := []float64{0, 4, 10}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

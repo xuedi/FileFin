@@ -28,13 +28,8 @@
       } else {
         import('hls.js').then(({ default: Hls }) => {
           if (cancelled || !el) return
-          if (Hls.isSupported()) {
-            hls = new Hls()
-            hls.loadSource(url)
-            hls.attachMedia(el)
-          } else {
-            el.src = url
-          }
+          if (Hls.isSupported()) startHls(Hls, url, -1)
+          else el.src = url
         })
       }
     }
@@ -51,11 +46,35 @@
       el.appendChild(track)
     }
 
+    // A fatal hls.js error otherwise stops all loading for good: buffered content still
+    // plays but nothing ahead ever arrives. Rebuild from the playlist at the current
+    // position, which also recreates a server session reaped during a long pause. The
+    // budget refills once playback moves again, so a truly broken stream cannot loop.
+    let recoveries = 0
+    const startHls = (Hls, url, startPosition) => {
+      hls = new Hls({ startPosition })
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal || cancelled) return
+        if (recoveries >= 3) return
+        recoveries++
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError()
+          return
+        }
+        const pos = el.currentTime
+        hls.destroy()
+        startHls(Hls, url, pos)
+      })
+      hls.loadSource(url)
+      hls.attachMedia(el)
+    }
+
     const onMeta = () => {
       if (seekTo > 0 && el && el.currentTime < seekTo) el.currentTime = seekTo
     }
     let lastMark = 0
     const onTime = () => {
+      if (!el.paused && !el.seeking) recoveries = 0
       if (el && Math.abs(el.currentTime - lastMark) >= 30) {
         lastMark = el.currentTime
         app.reportProgress(mediaId, file, 'checkpoint')

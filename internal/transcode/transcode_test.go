@@ -63,7 +63,7 @@ func TestRemuxEligible(t *testing.T) {
 }
 
 func TestBuildPlaylist(t *testing.T) {
-	pl := buildPlaylist(13) // 6s segments -> 3 segments (6, 6, 1)
+	pl := buildPlaylist(13, nil) // 6s segments -> 3 segments (6, 6, 1)
 	if want := "seg0.ts"; !contains(pl, want) {
 		t.Errorf("playlist missing %q:\n%s", want, pl)
 	}

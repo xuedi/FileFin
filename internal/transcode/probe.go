@@ -36,3 +36,13 @@ func RemuxEligible(s Streams) bool {
 		return false
 	}
 }
+
+// Keyframes lists the keyframe times of inputPath's first video stream (see
+// ffprobe.VideoKeyframes).
+func Keyframes(ctx context.Context, ffprobePath, inputPath string) ([]float64, error) {
+	kf, err := ffprobe.VideoKeyframes(ctx, ffprobePath, inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("transcode: %w", err)
+	}
+	return kf, nil
+}

@@ -1,7 +1,8 @@
 // Package ffprobe extracts media details by shelling out to ffprobe. Every variant runs
 // the same single `-show_format -show_streams` decode and reads a different slice of the
 // result: Probe for the durable technical block, ProbeStreams for the codec/duration the
-// transcode decision needs, SubtitleStreams for the embedded subtitle tracks.
+// transcode decision needs, SubtitleStreams for the embedded subtitle tracks. The one
+// exception is VideoKeyframes, a separate packet-level pass the HLS remux path needs.
 package ffprobe
 
 import (
@@ -11,7 +12,9 @@ import (
 	"math"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 // Technical is the subset of ffprobe output stored in a media folder's meta.json.
@@ -69,6 +72,19 @@ type SubtitleStream struct {
 // decode runs the single shared ffprobe invocation and parses its JSON. bin falls back to
 // "ffprobe" on PATH when empty.
 func decode(ctx context.Context, bin, path string) (probeOutput, error) {
+	out, err := run(ctx, bin, path, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams")
+	if err != nil {
+		return probeOutput{}, err
+	}
+	var po probeOutput
+	if err := json.Unmarshal(out, &po); err != nil {
+		return probeOutput{}, fmt.Errorf("parse ffprobe output for %s: %w", path, err)
+	}
+	return po, nil
+}
+
+// run invokes ffprobe with args on path. bin falls back to "ffprobe" on PATH when empty.
+func run(ctx context.Context, bin, path string, args ...string) ([]byte, error) {
 	if bin == "" {
 		bin = "ffprobe"
 	}
@@ -79,17 +95,41 @@ func decode(ctx context.Context, bin, path string) (probeOutput, error) {
 	if !filepath.IsAbs(path) {
 		path = "." + string(filepath.Separator) + path
 	}
-	out, err := exec.CommandContext(ctx, bin,
-		"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
-		"-protocol_whitelist", "file,crypto,data", path).Output()
+	args = append(args, "-protocol_whitelist", "file,crypto,data", path)
+	out, err := exec.CommandContext(ctx, bin, args...).Output()
 	if err != nil {
-		return probeOutput{}, fmt.Errorf("ffprobe %s: %w", path, err)
+		return nil, fmt.Errorf("ffprobe %s: %w", path, err)
 	}
-	var po probeOutput
-	if err := json.Unmarshal(out, &po); err != nil {
-		return probeOutput{}, fmt.Errorf("parse ffprobe output for %s: %w", path, err)
+	return out, nil
+}
+
+// VideoKeyframes lists the presentation times, in seconds and ascending, of the keyframes
+// of path's first video stream. It reads packet headers only (no decode), so it costs one
+// demux pass over the file.
+func VideoKeyframes(ctx context.Context, bin, path string) ([]float64, error) {
+	out, err := run(ctx, bin, path, "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "packet=pts_time,flags", "-of", "csv=p=0")
+	if err != nil {
+		return nil, err
 	}
-	return po, nil
+	return parseKeyframes(string(out)), nil
+}
+
+// parseKeyframes reads ffprobe's "pts_time,flags" CSV lines, keeping the keyframe (K) rows
+// with a known timestamp.
+func parseKeyframes(csv string) []float64 {
+	var kf []float64
+	for _, line := range strings.Split(csv, "\n") {
+		pts, flags, ok := strings.Cut(strings.TrimSpace(line), ",")
+		if !ok || !strings.Contains(flags, "K") {
+			continue
+		}
+		if t, err := strconv.ParseFloat(pts, 64); err == nil {
+			kf = append(kf, t)
+		}
+	}
+	sort.Float64s(kf)
+	return kf
 }
 
 // Probe runs ffprobe on path and returns its technical details, using the given binary

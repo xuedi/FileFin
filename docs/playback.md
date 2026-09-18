@@ -64,6 +64,12 @@ Key properties:
   cancelled, so a launch failure leaves the session alive.
 - **Remux fast path.** A remux-eligible source (H.264 + AAC/MP3/no audio) is stream-copied
   into TS instead of re-encoded, and races through the file sequentially (never repositioned).
+  A copy cannot force keyframes, so ffmpeg can only cut where the source already has one and
+  the fixed 6-second grid would not match: a source with a keyframe every 10 seconds yields
+  fewer, longer segments. The session therefore reads the source's keyframe times up front
+  (a packet-header pass, no decode) and builds the playlist from the boundaries ffmpeg's cut
+  rule will produce, so every listed segment exists and holds the time the playlist claims.
+  If the keyframes cannot be read, the session re-encodes instead.
 - **Lazy + reaped.** The manager is built on first playback from the configured ffmpeg paths
   and detected encoder, and discarded when transcoding settings change. Each session owns a
   temp dir of segments; idle sessions are reaped and their temp dirs removed.
@@ -73,6 +79,13 @@ Key properties:
   current encoder run (a `done` channel plus the exit error); a genuine ffmpeg failure (one not
   caused by our own cancel-for-reposition) ends the wait immediately and is logged with the
   last stderr line, instead of stalling for the full timeout.
+- **Stalls are logged once.** The first segment a session fails to deliver (timeout or a
+  dead encoder) is logged with the session's title; the player's retries of it stay quiet.
+- **The player recovers.** A fatal streaming error in the browser would otherwise stop all
+  loading while the already-buffered part keeps playing. The player instead rebuilds its
+  stream from the playlist at the current position (which also recreates a session reaped
+  during a long pause), or asks the media pipeline to recover from a decode error, with a
+  small retry budget that refills once playback moves again.
 
 The HLS manager's `ActiveSessions()` count is what the optimizer reads to yield to live
 viewers (see `agents/optimizer.md`); both halves share the `transcode` package's encoder detection,

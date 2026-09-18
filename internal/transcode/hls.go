@@ -57,12 +57,16 @@ type Manager struct {
 }
 
 type session struct {
-	dir        string
-	inputPath  string
-	title      string // display label for playback log events
-	remux      bool   // copy path: races through the file, never repositioned
-	duration   float64
-	startSeg   int // first segment the current encoder was launched at
+	dir       string
+	inputPath string
+	title     string // display label for playback log events
+	remux     bool   // copy path: races through the file, never repositioned
+	duration  float64
+	// segments holds each segment's length when it is not the fixed grid: a remux cannot
+	// force keyframes, so ffmpeg cuts only where the source has them. nil = fixed grid.
+	segments   []float64
+	stallNoted bool // a stalled segment was already logged for this session
+	startSeg   int  // first segment the current encoder was launched at
 	cancel     context.CancelFunc
 	run        *ffmpegRun // currently active encoder run; replaced on a seek relaunch
 	lastAccess time.Time
@@ -154,7 +158,7 @@ func (m *Manager) Playlist(key, inputPath, title string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []byte(buildPlaylist(s.duration)), nil
+	return []byte(buildPlaylist(s.duration, s.segments)), nil
 }
 
 // Segment returns the on-disk path of a named segment for an existing session,
@@ -203,6 +207,7 @@ func (m *Manager) Segment(ctx context.Context, key, name string) (string, error)
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-deadline:
+			m.noteStall(s, name, "not ready in time")
 			return "", fmt.Errorf("transcode: segment %s not ready", name)
 		case <-ticker.C:
 			if _, err := os.Stat(path); err == nil {
@@ -213,11 +218,27 @@ func (m *Manager) Segment(ctx context.Context, key, name string) (string, error)
 				return path, nil
 			}
 			if run.failed() {
+				m.noteStall(s, name, "encoder exited")
 				return "", fmt.Errorf("transcode: encoder for %s exited: %w", name, run.err)
 			}
 			consumed = run // clean or cancelled exit: stop selecting this run's done
 		}
 	}
+}
+
+// noteStall logs the first segment a session could not deliver. The player retries a
+// failed segment several times, so later stalls in the same session stay quiet.
+func (m *Manager) noteStall(s *session, name, reason string) {
+	m.mu.Lock()
+	noted := s.stallNoted
+	s.stallNoted = true
+	m.mu.Unlock()
+	if noted {
+		return
+	}
+	m.log.Error("playback stalled in "+s.title, logging.Fields{
+		"title": s.title, "segment": name, "reason": reason, "remux": s.remux,
+	})
 }
 
 // segIndex extracts N from a name already validated against segmentName (seg<N>.ts).
@@ -316,12 +337,18 @@ func (m *Manager) ensure(key, inputPath, title string) (*session, error) {
 		return nil, err
 	}
 
+	remux := RemuxEligible(streams)
+	var segments []float64
+	if remux {
+		segments = m.remuxPlan(inputPath, streams.Duration)
+		remux = segments != nil
+	}
+
 	dir, err := os.MkdirTemp("", "filefin-hls-")
 	if err != nil {
 		return nil, err
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	remux := RemuxEligible(streams)
 	run, err := m.startFFmpeg(runCtx, dir, inputPath, title, remux, 0)
 	if err != nil {
 		cancel()
@@ -329,7 +356,7 @@ func (m *Manager) ensure(key, inputPath, title string) (*session, error) {
 		return nil, err
 	}
 
-	s := &session{dir: dir, inputPath: inputPath, title: title, remux: remux, duration: streams.Duration, cancel: cancel, run: run, lastAccess: time.Now()}
+	s := &session{dir: dir, inputPath: inputPath, title: title, remux: remux, duration: streams.Duration, segments: segments, cancel: cancel, run: run, lastAccess: time.Now()}
 
 	m.mu.Lock()
 	// Another request may have created the session while we were probing.
@@ -346,6 +373,39 @@ func (m *Manager) ensure(key, inputPath, title string) (*session, error) {
 		"title": title, "remux": remux, "encoder": m.encoder.Kind,
 	})
 	return s, nil
+}
+
+// remuxPlan returns the segment lengths a stream-copy of inputPath will produce, or nil
+// when the keyframes cannot be read, in which case the caller re-encodes instead.
+func (m *Manager) remuxPlan(inputPath string, duration float64) []float64 {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	kf, err := Keyframes(ctx, m.opts.FFprobePath, inputPath)
+	if err != nil || len(kf) == 0 {
+		return nil
+	}
+	return remuxSegments(kf, duration)
+}
+
+// remuxSegments mirrors ffmpeg's HLS cut rule for a stream copy: segment n (counting
+// from 1) ends at the first keyframe at least n*segmentSeconds past the first one. With
+// a keyframe every 10s that is 10s segments, not 6s, so the fixed grid would promise
+// segments that never exist and misplace every seek.
+func remuxSegments(keyframes []float64, duration float64) []float64 {
+	start := keyframes[0]
+	var segs []float64
+	prev := start
+	for _, k := range keyframes[1:] {
+		if k-start >= float64(segmentSeconds*(len(segs)+1)) {
+			segs = append(segs, k-prev)
+			prev = k
+		}
+	}
+	last := duration - (prev - start)
+	if last <= 0 {
+		last = segmentSeconds
+	}
+	return append(segs, last)
 }
 
 // videoEncodeArgs returns the pre-input global flags and the codec flags for a
@@ -436,26 +496,41 @@ func (m *Manager) reap() {
 	}
 }
 
-func buildPlaylist(duration float64) string {
-	n := int(math.Ceil(duration / segmentSeconds))
-	if n < 1 {
-		n = 1
+// buildPlaylist lists the given segment lengths, or the fixed segmentSeconds grid over
+// duration when segments is nil.
+func buildPlaylist(duration float64, segments []float64) string {
+	if segments == nil {
+		segments = gridSegments(duration)
+	}
+	target := segmentSeconds
+	for _, d := range segments {
+		target = max(target, int(math.Ceil(d)))
 	}
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:3\n")
-	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", segmentSeconds)
+	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", target)
 	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
 	b.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
-	for i := 0; i < n; i++ {
-		secs := float64(segmentSeconds)
-		if i == n-1 {
-			if rem := duration - float64(segmentSeconds*(n-1)); rem > 0 {
-				secs = rem
-			}
-		}
+	for i, secs := range segments {
 		fmt.Fprintf(&b, "#EXTINF:%.3f,\nseg%d.ts\n", secs, i)
 	}
 	b.WriteString("#EXT-X-ENDLIST\n")
 	return b.String()
+}
+
+// gridSegments splits duration into segmentSeconds pieces, the last one taking the rest.
+func gridSegments(duration float64) []float64 {
+	n := int(math.Ceil(duration / segmentSeconds))
+	if n < 1 {
+		n = 1
+	}
+	segs := make([]float64, n)
+	for i := range segs {
+		segs[i] = segmentSeconds
+	}
+	if rem := duration - float64(segmentSeconds*(n-1)); rem > 0 {
+		segs[n-1] = rem
+	}
+	return segs
 }
