@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"filefin/internal/importer"
 	"filefin/internal/library"
 )
 
@@ -64,5 +66,46 @@ func TestReadMediaFolderEpisodeOrder(t *testing.T) {
 		if f.Episode != wantEp[i] {
 			t.Errorf("position %d: Episode = %d, want %d", i, f.Episode, wantEp[i])
 		}
+	}
+}
+
+// TestReadMediaFolderAddedDate covers where the "entered the library" date comes from: the
+// meta.json field when it is there, and the folder's own mtime for a folder that predates the
+// field, so an existing library sorts by something sensible before anything is rewritten.
+func TestReadMediaFolderAddedDate(t *testing.T) {
+	dataDir := t.TempDir()
+	cat := library.Category{ID: 1, Name: "Movies"}
+
+	seed := func(folder string, meta importer.Meta, writeMeta bool) string {
+		dir := filepath.Join(dataDir, cat.Name, folder)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, folder+".mkv"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if writeMeta {
+			if err := importer.WriteMeta(dir, meta); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	seed("(1999) The Matrix", importer.Meta{Title: "The Matrix", Year: 1999, Added: 1234567890}, true)
+	sm, ok := readMediaFolder(dataDir, cat, "(1999) The Matrix")
+	if !ok || sm.media.Added != 1234567890 {
+		t.Fatalf("a recorded added date must win: %d", sm.media.Added)
+	}
+
+	// No meta.json at all: the folder mtime stands in, stamped to a known time.
+	dir := seed("(1994) Leon", importer.Meta{}, false)
+	want := time.Date(2020, 3, 4, 5, 6, 7, 0, time.UTC)
+	if err := os.Chtimes(dir, want, want); err != nil {
+		t.Fatal(err)
+	}
+	sm, ok = readMediaFolder(dataDir, cat, "(1994) Leon")
+	if !ok || sm.media.Added != want.Unix() {
+		t.Fatalf("added = %d, want the folder mtime %d", sm.media.Added, want.Unix())
 	}
 }

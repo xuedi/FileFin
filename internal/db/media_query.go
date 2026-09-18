@@ -158,10 +158,10 @@ func AllMediaIDs(ctx context.Context, pool *sql.DB) ([]string, error) {
 func GetMedia(ctx context.Context, pool *sql.DB, id string) (Media, error) {
 	var m Media
 	err := pool.QueryRowContext(ctx,
-		`SELECT id, category_id, path, year, title, description, plot, poster, enriched, language, country, director, writer
+		`SELECT id, category_id, path, year, title, description, plot, poster, enriched, language, country, director, writer, added
          FROM media WHERE id = ?`, id).
 		Scan(&m.ID, &m.CategoryID, &m.Path, &m.Year, &m.Title, &m.Description, &m.Plot, &m.Poster, &m.Enriched,
-			&m.Language, &m.Country, &m.Director, &m.Writer)
+			&m.Language, &m.Country, &m.Director, &m.Writer, &m.Added)
 	if err == sql.ErrNoRows {
 		return Media{}, err
 	}

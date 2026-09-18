@@ -18,6 +18,10 @@ type Media struct {
 	Plot        string
 	Poster      string
 	Enriched    bool
+	// Added is when the item entered the library, in unix seconds, mirrored from meta.json
+	// (falling back to the folder mtime for a folder that predates the field). It is what
+	// the "recently added" ordering sorts on.
+	Added int64
 	// Denormalized single-value facets for search, derived from meta.json's metadata map.
 	// The multivalued facets (actors, genres) live in media_facets, written separately.
 	Language string
@@ -48,10 +52,10 @@ type MediaFile struct {
 func InsertMedia(ctx context.Context, pool *sql.DB, m Media) error {
 	_, err := pool.ExecContext(ctx,
 		`INSERT OR REPLACE INTO media
-            (id, category_id, path, year, title, description, plot, poster, enriched, language, country, director, writer)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, category_id, path, year, title, description, plot, poster, enriched, language, country, director, writer, added)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.CategoryID, m.Path, m.Year, m.Title, m.Description, m.Plot, m.Poster, m.Enriched,
-		m.Language, m.Country, m.Director, m.Writer)
+		m.Language, m.Country, m.Director, m.Writer, m.Added)
 	if err != nil {
 		return fmt.Errorf("insert media %s: %w", m.ID, err)
 	}

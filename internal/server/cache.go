@@ -18,7 +18,9 @@ import (
 //	   user_state mirror, all re-derived from meta.json
 //	2: the facet kinds split - genres moved from media_facets kind "tag" to "genre", leaving
 //	   "tag" to the curated tags, and every meta.json was normalised to version 2
-const cacheDataVersion = 2
+//	3: media.added, seeded from each folder's mtime and settled into its meta.json, so the
+//	   "recently added" ordering has a stable value on a library that predates the field
+const cacheDataVersion = 3
 
 // ensureDB returns the cache pool, building it on the fly when needed: it opens the
 // SQLite cache once, runs the schema (idempotent), and - when the categories table is
@@ -100,7 +102,7 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 				sm.media.Language, sm.media.Country, sm.media.Director, sm.media.Writer), "backfill media facets")
 			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, sm.media.ID, sm.actors, sm.genres, sm.tags), "backfill media facets")
 			s.bestEffort(db.ReplaceUserStateForMedia(ctx, pool, sm.media.ID, sm.userState), "backfill user state")
-			if s.upgradeMetaFile(sm.media.Path) {
+			if s.settleMetaFile(sm.media.Path, sm.media.Added) {
 				upgraded++
 			}
 			n++
@@ -114,17 +116,27 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 		logging.Fields{"media": n, "metaUpgraded": upgraded, "version": cacheDataVersion})
 }
 
-// upgradeMetaFile rewrites one folder's meta.json in the current shape when it is still
-// stored in a pre-version-2 one (genres under the old "tags" key). ReadMeta folds a legacy
-// file for every reader anyway, so this only settles what is on disk; a failure is harmless
-// and simply leaves the file legacy.
-func (s *Server) upgradeMetaFile(folder string) bool {
-	if !importer.NeedsUpgrade(folder) {
+// settleMetaFile writes one folder's meta.json back in the current shape, in a single pass:
+// a pre-version-2 file (genres under the old "tags" key) is folded by ReadMeta on the way in,
+// and a file with no added date takes the one the scanner derived from the folder mtime, so
+// that value stops drifting with the next write inside the folder. It reports whether the
+// file needed the version fold, which is what the backfill counts. Nothing is written when
+// the file is already current; a failure is harmless and simply leaves the file as it was.
+func (s *Server) settleMetaFile(folder string, added int64) bool {
+	upgrade := importer.NeedsUpgrade(folder)
+	stamp := added != 0 && importer.MetaAdded(folder) == 0
+	if !upgrade && !stamp {
 		return false
 	}
-	if _, err := s.metaMgr.Update(folder, func(m importer.Meta) importer.Meta { return m }); err != nil {
-		s.bestEffort(err, "upgrade meta.json")
+	_, err := s.metaMgr.Update(folder, func(m importer.Meta) importer.Meta {
+		if m.Added == 0 {
+			m.Added = added
+		}
+		return m
+	})
+	if err != nil {
+		s.bestEffort(err, "settle meta.json")
 		return false
 	}
-	return true
+	return upgrade
 }

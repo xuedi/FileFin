@@ -363,7 +363,11 @@ body { min-height: 100vh; }
 .ff-file { margin: 0.5rem 0; }
 
 /* library search section (top of home) */
-.ff-search { max-width: 40rem; margin-bottom: 1.25rem; }
+/* The search line holds the query plus every filter and sort control; it wraps rather than
+   overflowing once the viewport can no longer fit them on one row. */
+.ff-search { margin-bottom: 1.25rem; flex-wrap: wrap; row-gap: 0.5rem; }
+.ff-search .control.is-expanded { min-width: 12rem; }
+.ff-search-toggle { min-width: 2.75rem; }
 
 /* poster grid + tiles */
 .poster-grid {
@@ -492,9 +496,6 @@ body { min-height: 100vh; }
 .ff-row-title { margin: 1.5rem 0 0.75rem; }
 .ff-row-title:first-child { margin-top: 0.5rem; }
 /* home section header: title with an optional "Show less" toggle on the right */
-.ff-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 1.5rem 0 0.75rem; }
-.ff-row-head .ff-row-title { margin: 0; }
-.ff-row-toggle { font-size: 0.85rem; white-space: nowrap; }
 /* "+N more" overflow tile that ends a collapsed single-row section */
 .ff-more-card { align-items: center; justify-content: center; gap: 0.2rem; color: var(--bulma-text); }
 .ff-more-count { font-size: 1.7rem; font-weight: 600; line-height: 1; }

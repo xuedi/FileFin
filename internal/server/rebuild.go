@@ -219,6 +219,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 	enriched := false
 	var language, country, director, writer string
 	var actors, genres, tags []string
+	added := int64(0)
 	userState := map[string]db.UserStateRow{}
 	if m, err := importer.ReadMeta(dir); err == nil {
 		title, year, desc, plot = m.Title, m.Year, m.Description, m.Plot
@@ -228,9 +229,13 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		language, country = m.Metadata["language"], m.Metadata["origin"]
 		director, writer = m.Metadata["directedBy"], m.Metadata["writtenBy"]
 		actors, genres, tags = m.Actors, m.Genres, m.Tags
+		added = m.Added
 		for u, st := range m.State {
 			userState[u] = userStateRow(st)
 		}
+	}
+	if added == 0 {
+		added = folderAdded(dir)
 	}
 	if title == "" {
 		p := recognize.ParseName(folder, false)
@@ -245,6 +250,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		media: db.Media{
 			ID: id, CategoryID: c.ID, Path: dir,
 			Year: year, Title: title, Description: desc, Plot: plot, Poster: poster, Enriched: enriched,
+			Added:    added,
 			Language: language, Country: country, Director: director, Writer: writer,
 		},
 		actors:    actors,
@@ -278,6 +284,17 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		sm.files[i].Idx = i
 	}
 	return sm, true
+}
+
+// folderAdded is the fallback "entered the library" time for a media folder whose meta.json
+// predates the added field: the folder's own mtime. It drifts with writes inside the folder,
+// which is why the cache backfill settles it into meta.json once and never consults it again.
+func folderAdded(dir string) int64 {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return 0
+	}
+	return fi.ModTime().Unix()
 }
 
 // scanFolderFiles returns the sorted video files in a media folder plus the base name

@@ -46,6 +46,10 @@ type Meta struct {
 	// freshly imported folder carries stub metadata with Enriched false; the scan
 	// queues those, and the agent flips it true after a successful lookup.
 	Enriched bool `json:"enriched,omitempty"`
+	// Added is when the item entered the library, in unix seconds. The importer stamps it
+	// when it creates the folder; a folder that predates the field is seeded once from its
+	// mtime, so the value settles on disk instead of drifting with every write inside.
+	Added int64 `json:"added,omitempty"`
 	// State is the per-user playback state, keyed by username. It is written by the
 	// playback-state handlers through the same per-folder lock as the rest of Meta;
 	// a folder nobody has touched carries no state key (omitempty).
@@ -107,6 +111,21 @@ func NeedsUpgrade(folder string) bool {
 		return false
 	}
 	return m.Version < MetaVersion
+}
+
+// MetaAdded returns a folder's recorded added date, or 0 when the file is missing,
+// unparseable or predates the field - the cheap read the cache backfill uses to decide
+// whether it has to write anything at all.
+func MetaAdded(folder string) int64 {
+	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
+	if err != nil {
+		return 0
+	}
+	var m Meta
+	if err := json.Unmarshal(data, &m); err != nil {
+		return 0
+	}
+	return m.Added
 }
 
 // StubMeta is the minimal metadata used when no OMDb enrichment is available.

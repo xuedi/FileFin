@@ -65,11 +65,15 @@ change, so the pure `Apply`/`View`/`Refs` functions stay deterministic and testa
 
 The detail view needs more than the raw entry, so a `View` derivation produces: the folder
 watched flag, the continue file index + seconds, and a per-file watched array (every file
-before the pointer, or all files when the folder is watched). The home buckets come from
-reading every folder's state live and keeping those whose entry matches: a pointer-but-not-
-watched goes to **continue**, `favorite` to **favourites**, `watched` to **completed**, each
-ordered newest-first by the per-user `updated` timestamp (the file's own mtime is useless for
-ordering, because the importer and enricher also touch `meta.json`).
+before the pointer, or all files when the folder is watched).
+
+The home rows and the search's state filters read the **`user_state` cache mirror** of the same
+entries, not the folders: a pointer-but-not-watched is **continue**, `favorite` is
+**favourites**, `watched` is **completed**, and neither-pointer-nor-watched is **unwatched**
+(which is why "unwatched" and "continue" never overlap). The three personal rows are ordered
+newest-first by the per-user `updated` timestamp - the file's own mtime is useless for
+ordering, because the importer and enricher also touch `meta.json`. See
+[`library.md`](library.md) for how those rows and search are one query.
 
 ## One lock, three writers
 

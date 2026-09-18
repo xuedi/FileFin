@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS media (
     language    TEXT NOT NULL DEFAULT '',
     country     TEXT NOT NULL DEFAULT '',
     director    TEXT NOT NULL DEFAULT '',
-    writer      TEXT NOT NULL DEFAULT ''
+    writer      TEXT NOT NULL DEFAULT '',
+    added       INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS media_facets (
     media_id TEXT,
@@ -192,6 +193,10 @@ func migrate(ctx context.Context, pool *sql.DB) error {
 		{"media", "country", `ALTER TABLE media ADD COLUMN country TEXT NOT NULL DEFAULT ''`},
 		{"media", "director", `ALTER TABLE media ADD COLUMN director TEXT NOT NULL DEFAULT ''`},
 		{"media", "writer", `ALTER TABLE media ADD COLUMN writer TEXT NOT NULL DEFAULT ''`},
+		// When the item entered the library, in unix seconds. An existing cache gains it as
+		// 0; the rolling reconcile and the data backfill seed it from meta.json / the folder
+		// mtime, and an item still at 0 simply sorts last in the "recently added" order.
+		{"media", "added", `ALTER TABLE media ADD COLUMN added INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "other_media", `ALTER TABLE categories ADD COLUMN other_media INTEGER NOT NULL DEFAULT 0`},
 		{"categories", "parent_id", `ALTER TABLE categories ADD COLUMN parent_id INTEGER`},
 		{"categories", "position", `ALTER TABLE categories ADD COLUMN position INTEGER NOT NULL DEFAULT 0`},

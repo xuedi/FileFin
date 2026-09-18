@@ -115,17 +115,19 @@ func TestToggleWatchedFromTile(t *testing.T) {
 	if rr := do(t, h, "POST", "/api/media/"+id+"/progress", `{"file":0,"position":300,"duration":1000}`, admin); rr.Code != 204 {
 		t.Fatalf("progress: %d", rr.Code)
 	}
-	if rr := do(t, h, "GET", "/api/home", "", admin); !strings.Contains(rr.Body.String(), `"continue":[{"id":"`+id) {
-		t.Fatalf("expected the item in continue: %s", rr.Body.String())
+	if cont, _ := homeIDs(t, h, admin, "continue"); !hasID(cont, id) {
+		t.Fatalf("expected the item in continue: %v", cont)
 	}
 
 	// Toggle on: it leaves continue for completed, but the pointer stays on disk.
 	if rr := do(t, h, "POST", "/api/media/"+id+"/watched", `{"watched":true}`, admin); rr.Code != 204 {
 		t.Fatalf("set watched: %d %s", rr.Code, rr.Body.String())
 	}
-	rr := do(t, h, "GET", "/api/home", "", admin)
-	if strings.Contains(rr.Body.String(), `"continue":[{`) || !strings.Contains(rr.Body.String(), `"completed":[{"id":"`+id) {
-		t.Fatalf("after watching: %s", rr.Body.String())
+	if cont, _ := homeIDs(t, h, admin, "continue"); hasID(cont, id) {
+		t.Fatalf("a watched item must leave continue: %v", cont)
+	}
+	if done, _ := homeIDs(t, h, admin, "completed"); !hasID(done, id) {
+		t.Fatalf("expected the item under completed: %v", done)
 	}
 	m, err := importer.ReadMeta(dir)
 	if err != nil {
@@ -139,8 +141,8 @@ func TestToggleWatchedFromTile(t *testing.T) {
 	if rr := do(t, h, "POST", "/api/media/"+id+"/watched", `{"watched":false}`, admin); rr.Code != 204 {
 		t.Fatalf("clear watched: %d", rr.Code)
 	}
-	if rr := do(t, h, "GET", "/api/home", "", admin); !strings.Contains(rr.Body.String(), `"continue":[{"id":"`+id) {
-		t.Fatalf("expected the item back in continue: %s", rr.Body.String())
+	if cont, _ := homeIDs(t, h, admin, "continue"); !hasID(cont, id) {
+		t.Fatalf("expected the item back in continue: %v", cont)
 	}
 	if m, _ := importer.ReadMeta(dir); m.State["admin"].Progress == nil || m.State["admin"].Progress.Seconds != 300 {
 		t.Fatalf("resume pointer lost on un-watch: %+v", m.State["admin"])

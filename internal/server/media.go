@@ -222,23 +222,61 @@ func (s *Server) handleCategoryMedia(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, media)
 }
 
-// handleHome returns the user's continue/favorites/completed rows in one call, served from
-// the user_state mirror (three indexed queries) rather than a per-folder meta.json scan.
+// homeSectionLimit caps how many items a home row carries. A row renders one line of tiles
+// and its trailing tile leads into the search, so the page never needs the whole list - and
+// "unwatched" would otherwise be most of the library.
+const homeSectionLimit = 24
+
+// homeSection is one home row: the capped items, how many the row actually has (so the "more"
+// tile can say how many are hidden), and the search query string that reproduces the row in
+// full. Sending the search along means the row and the list its "more" tile opens are defined
+// once, here, instead of once per side of the wire.
+type homeSection struct {
+	Items  []db.MediaSummary `json:"items"`
+	Total  int               `json:"total"`
+	Search string            `json:"search"`
+}
+
+// homeRow names one home row and the listing it is.
+type homeRow struct {
+	key  string
+	opts db.ListOpts
+}
+
+// homeRows defines the home page's rows in one place. The first three are the user's own
+// shelves, ordered by when they last touched the item; the last two are discovery rows over
+// the whole library. "unwatched" means never started and never finished, which keeps it
+// disjoint from "continue".
+func homeRows(user string) []homeRow {
+	return []homeRow{
+		{"continue", db.ListOpts{User: user, Status: db.StatusProgress, Sort: db.SortUpdated, Desc: true}},
+		{"favorites", db.ListOpts{User: user, FavoritesOnly: true, Sort: db.SortUpdated, Desc: true}},
+		{"completed", db.ListOpts{User: user, Status: db.StatusWatched, Sort: db.SortUpdated, Desc: true}},
+		{"unwatched", db.ListOpts{User: user, Status: db.StatusUnwatched, Sort: db.SortYear, Desc: true}},
+		{"recent", db.ListOpts{User: user, Sort: db.SortAdded, Desc: true}},
+	}
+}
+
+// handleHome returns the user's home rows in one call, each served from the media cache
+// joined to the user_state mirror (one indexed query per row) rather than a per-folder
+// meta.json scan.
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	pool, ok := s.userPool(w, r)
 	if !ok {
 		return
 	}
-	cont, favs, done, err := db.HomeBuckets(r.Context(), pool, userFrom(r))
-	if err != nil {
-		http.Error(w, "could not load home", http.StatusInternalServerError)
-		return
+	out := map[string]homeSection{}
+	for _, row := range homeRows(userFrom(r)) {
+		opts := row.opts
+		opts.Limit = homeSectionLimit
+		items, total, err := db.ListMedia(r.Context(), pool, opts)
+		if err != nil {
+			http.Error(w, "could not load home", http.StatusInternalServerError)
+			return
+		}
+		out[row.key] = homeSection{Items: items, Total: total, Search: searchQueryString(row.opts)}
 	}
-	writeJSON(w, struct {
-		Continue  []db.MediaSummary `json:"continue"`
-		Favorites []db.MediaSummary `json:"favorites"`
-		Completed []db.MediaSummary `json:"completed"`
-	}{cont, favs, done})
+	writeJSON(w, out)
 }
 
 // fileKeys builds the ordered state file keys for a media item's files.

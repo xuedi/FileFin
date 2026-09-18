@@ -461,7 +461,8 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		if !tech.Empty() {
 			nm.Technical = &tech
 		}
-		nm.State = cur.State // preserve any state already on disk (defensive)
+		nm.Added = time.Now().Unix() // this import is when the item entered the library
+		nm.State = cur.State         // preserve any state already on disk (defensive)
 		return nm
 	})
 	if err != nil {
@@ -488,7 +489,7 @@ func (s *Server) importOne(ctx context.Context, pool *sql.DB, row db.Import) {
 		if err := db.InsertMedia(ctx, pool, db.Media{
 			ID: id, CategoryID: row.CategoryID, Path: dir,
 			Year: row.Year, Title: row.Title, Description: meta.Description, Plot: meta.Plot,
-			Poster: posterRel, Enriched: meta.Enriched,
+			Poster: posterRel, Enriched: meta.Enriched, Added: meta.Added,
 			Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
 			Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
 		}); err != nil {

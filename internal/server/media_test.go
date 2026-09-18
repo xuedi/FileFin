@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +46,7 @@ func seedMedia(t *testing.T, s *Server, dataDir, category string, catID int64, f
 	if err := db.InsertMedia(ctx, pool, db.Media{
 		ID: id, CategoryID: catID, Path: dir,
 		Year: meta.Year, Title: meta.Title, Description: meta.Description, Plot: meta.Plot, Poster: "poster.jpg",
+		Added:    meta.Added,
 		Language: meta.Metadata["language"], Country: meta.Metadata["origin"],
 		Director: meta.Metadata["directedBy"], Writer: meta.Metadata["writtenBy"],
 	}); err != nil {
@@ -61,6 +63,44 @@ func seedMedia(t *testing.T, s *Server, dataDir, category string, catID int64, f
 		t.Fatal(err)
 	}
 	return id, dir
+}
+
+// homeIDs fetches the home page and returns one row's item ids plus its unclipped total, so
+// a test asserts on the row's contents rather than on the shape of the JSON around it.
+func homeIDs(t *testing.T, h http.Handler, admin *http.Cookie, section string) ([]string, int) {
+	t.Helper()
+	rr := do(t, h, "GET", "/api/home", "", admin)
+	if rr.Code != 200 {
+		t.Fatalf("home: %d %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode home: %v (%s)", err, rr.Body.String())
+	}
+	row, ok := out[section]
+	if !ok {
+		t.Fatalf("home has no %q section: %s", section, rr.Body.String())
+	}
+	ids := []string{}
+	for _, it := range row.Items {
+		ids = append(ids, it.ID)
+	}
+	return ids, row.Total
+}
+
+// hasID reports whether a listing contains a media id.
+func hasID(ids []string, id string) bool {
+	for _, got := range ids {
+		if got == id {
+			return true
+		}
+	}
+	return false
 }
 
 // mediaTestServer builds an installed server, creates a category, and opens the cache.
@@ -135,21 +175,18 @@ func TestFavoriteAndProgressAndHome(t *testing.T) {
 	}
 
 	// Home: appears under favorites and completed (watched), not under continue.
-	rr := do(t, h, "GET", "/api/home", "", admin)
-	body := rr.Body.String()
-	if rr.Code != 200 {
-		t.Fatalf("home: %d %s", rr.Code, body)
+	if favs, _ := homeIDs(t, h, admin, "favorites"); !hasID(favs, id) {
+		t.Fatalf("expected the item under favorites: %v", favs)
 	}
-	// Quick structural checks.
-	if !strings.Contains(body, `"favorites":[`) || !strings.Contains(body, `"completed":[`) {
-		t.Fatalf("home shape: %s", body)
+	if done, _ := homeIDs(t, h, admin, "completed"); !hasID(done, id) {
+		t.Fatalf("expected the item under completed: %v", done)
 	}
-	if strings.Count(body, `"id":"`+id+`"`) < 2 {
-		t.Fatalf("expected item in favorites and completed:\n%s", body)
+	if cont, _ := homeIDs(t, h, admin, "continue"); hasID(cont, id) {
+		t.Fatalf("a watched item must not sit in continue: %v", cont)
 	}
 
 	// Detail reflects watched + favorite.
-	rr = do(t, h, "GET", "/api/media/"+id, "", admin)
+	rr := do(t, h, "GET", "/api/media/"+id, "", admin)
 	if !strings.Contains(rr.Body.String(), `"watched":true`) || !strings.Contains(rr.Body.String(), `"favorite":true`) {
 		t.Fatalf("detail watch state: %s", rr.Body.String())
 	}
@@ -239,5 +276,73 @@ func TestSubtitleVTT(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "00:00:01.000 --> 00:00:02.000") {
 		t.Fatalf("subtitle not converted: %q", rr.Body.String())
+	}
+}
+
+// TestHomeRowsReproduceThemselves is the contract behind the "+N more" tile: every home row
+// ships the search query string that lists it in full, and following that search must return
+// the same items in the same order. It also pins what the two discovery rows mean - unwatched
+// excludes what is already in progress, and "recently added" is ordered by the added date.
+func TestHomeRowsReproduceThemselves(t *testing.T) {
+	s, h, admin, dataDir, catID := mediaTestServer(t)
+
+	matrix, _ := seedMedia(t, s, dataDir, "Movies", catID, "(1999) The Matrix", "(1999) The Matrix.mp4",
+		importer.Meta{Title: "The Matrix", Year: 1999, Added: 300})
+	leon, _ := seedMedia(t, s, dataDir, "Movies", catID, "(1994) Leon", "(1994) Leon.mp4",
+		importer.Meta{Title: "Leon", Year: 1994, Added: 100})
+	oldboy, _ := seedMedia(t, s, dataDir, "Movies", catID, "(2003) Oldboy", "(2003) Oldboy.mp4",
+		importer.Meta{Title: "Oldboy", Year: 2003, Added: 200})
+
+	if rr := do(t, h, "POST", "/api/media/"+leon+"/progress", `{"file":0,"position":300,"duration":1000}`, admin); rr.Code != 204 {
+		t.Fatalf("progress: %d", rr.Code)
+	}
+	if rr := do(t, h, "POST", "/api/media/"+leon+"/favorite", `{"favorite":true}`, admin); rr.Code != 204 {
+		t.Fatalf("favorite: %d", rr.Code)
+	}
+	if rr := do(t, h, "POST", "/api/media/"+oldboy+"/watched", `{"watched":true}`, admin); rr.Code != 204 {
+		t.Fatalf("watched: %d", rr.Code)
+	}
+
+	// The two discovery rows: Leon is in progress, so it is not "unwatched"; the added dates
+	// order "recently added" regardless of year.
+	if ids, _ := homeIDs(t, h, admin, "unwatched"); len(ids) != 1 || ids[0] != matrix {
+		t.Fatalf("unwatched = %v, want just The Matrix (%s)", ids, matrix)
+	}
+	if ids, _ := homeIDs(t, h, admin, "recent"); len(ids) != 3 || ids[0] != matrix || ids[2] != leon {
+		t.Fatalf("recent = %v, want newest added first", ids)
+	}
+
+	// Every row's own search returns that row.
+	rr := do(t, h, "GET", "/api/home", "", admin)
+	var home map[string]struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+		Search string `json:"search"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &home); err != nil {
+		t.Fatalf("decode home: %v", err)
+	}
+	for _, section := range []string{"continue", "favorites", "completed", "unwatched", "recent"} {
+		row, ok := home[section]
+		if !ok || row.Search == "" {
+			t.Fatalf("section %q carries no search: %+v", section, row)
+		}
+		want, _ := homeIDs(t, h, admin, section)
+		sr := do(t, h, "GET", "/api/search?"+row.Search, "", admin)
+		var got []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(sr.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode search %q: %v", row.Search, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("section %q search %q returned %d items, row has %d", section, row.Search, len(got), len(want))
+		}
+		for i := range want {
+			if got[i].ID != want[i] {
+				t.Fatalf("section %q search %q item %d = %s, row has %s", section, row.Search, i, got[i].ID, want[i])
+			}
+		}
 	}
 }

@@ -124,9 +124,13 @@ columns, an `EXISTS` on `media_facets` for the multivalued facets), returning th
 new plumbing. Results keep the library's year-then-title order; the per-user watched flag is
 folded on from the `user_state` mirror.
 
-Search is **submit-driven** (Enter or the button), never per-keystroke. An empty query returns
-nothing rather than the whole library. A query is one text value `q` plus a `field` scope
-(default `all`):
+Search is **submit-driven** (Enter or the button) for the text, never per-keystroke; the
+filter and sort controls beside it apply on change, because picking one is already a complete
+request. A search that asks for **nothing at all** - no text, no filter, no named order -
+returns nothing rather than the whole library, so a bare Enter cannot replace the home page by
+accident.
+
+A query is one text value `q` plus a `field` scope (default `all`):
 
 - `all` - case-insensitive substring across title, description, plot, actors, genres, tags,
   language, country, director, and writer.
@@ -139,14 +143,57 @@ LIKE wildcards in `q` (`%`, `_`) are escaped, so they match literally. Because t
 denormalized mirror, search is only as complete as the last scan: a folder enriched after its
 last reconcile shows its new facets once the enricher updates the cache (which it does inline).
 
+Alongside the text scope sit the controls that make a search a **listing** rather than a
+lookup, all on the one line the query field is on:
+
+- `status` - the requesting user's playback state, three exclusive values (a scope, not
+  toggles): `unwatched` (never started **and** never finished), `progress` (a resume pointer,
+  not finished - the "continue watching" shelf) and `watched`.
+- `fav=1` - favorites only, independent of status because a favorite can be in any of them.
+- `sort` - `year` (the browse order and the default), `title`, `added` (when the item entered
+  the library, see [`mediaformat.md`](mediaformat.md)) or `updated` (when this user last
+  touched it, which is what orders the personal home rows). `dir=desc` reverses it.
+
+The state filters, the ordering and the per-user watched flag all read one `LEFT JOIN` onto the
+`user_state` mirror, so a filtered, sorted search is still a single statement.
+
 ```mermaid
 flowchart LR
-    Q[GET /api/search?q=&field=] --> E{q empty?}
-    E -->|yes| NONE[return no results]
-    E -->|no| SQL[SQL: LIKE on media columns + EXISTS on media_facets]
-    SQL --> ROWS[matching rows, year/title order]
-    ROWS --> WATCH[overlay watched from user_state]
-    WATCH --> OUT[MediaSummary results]
+    Q["GET /api/search?q=&field=&status=&fav=&sort=&dir="] --> E{asks for anything?}
+    E -->|no| NONE[return no results]
+    E -->|yes| SQL["SQL: LIKE on media columns + EXISTS on media_facets<br/>+ state predicate, LEFT JOIN user_state"]
+    SQL --> ROWS[matching rows in the requested order]
+    ROWS --> OUT["MediaSummary results (watched flag joined in)"]
+```
+
+## The home page
+
+The home page is a stack of one-line **rows**, each a listing of the same kind search runs:
+
+| row                | what it lists                                    | order            |
+|--------------------|--------------------------------------------------|------------------|
+| Continue watching  | a resume pointer, not finished                   | recent activity  |
+| Favorites          | favorited, whatever their status                 | recent activity  |
+| Completed          | marked watched                                   | recent activity  |
+| Unwatched          | never started and never finished                 | year, newest first |
+| Recently added     | the whole library                                | added, newest first |
+
+"Unwatched" deliberately excludes what is in progress, so it and "Continue watching" never show
+the same item.
+
+Each row carries at most a page's worth of items plus the **unclipped total**, and its trailing
+**"+N more"** tile does not expand the row: it navigates into the search view with the filters
+and sorting that produce that row in full. The server builds both the row and that search
+query string from **one** set of options, so the list the tile opens is the row, in the same
+order, by construction. Clearing the search returns to the rows.
+
+```mermaid
+flowchart LR
+    DEF["one row definition<br/>(filter + sort)"] --> ROW["GET /api/home: capped items + total"]
+    DEF --> QS["the row's search query string"]
+    ROW --> TILE["the row, with a +N tile"]
+    QS --> TILE
+    TILE -->|click +N| SEARCH["/search?... - the same list, uncapped"]
 ```
 
 The same facets are clickable on a media detail page (cast, genre, tag, director, language,
@@ -199,8 +246,8 @@ rename engine (see [`rename.md`](rename.md)).
 | `GET /api/category/{id}/media`          | list a category's media (+ user watched flag)                                        |
 | `GET /api/media/{id}`                   | full media detail                                                                    |
 | `GET /api/media/{id}/poster`            | base poster image (`?size=detail\|tile` for sized WebP, see `agents/thumbnailer.md`) |
-| `GET /api/home`                         | continue / favorites / completed buckets                                             |
-| `GET /api/search`                       | library-wide facet search (`q`, `field`; live `meta.json` scan)                      |
+| `GET /api/home`                         | the home rows, each capped items + total + the search that reproduces it             |
+| `GET /api/search`                       | library-wide listing (`q`, `field`, `status`, `fav`, `sort`, `dir`)                  |
 | `GET /api/tags`                         | the curated tag vocabulary with counts (see `tags.md`)                              |
 | `POST/DELETE /api/admin/categories`     | create / delete (empty only)                                                         |
 | `GET /api/admin/categories/{name}`      | one category's page: identity, markers, learned markers with their other homes       |

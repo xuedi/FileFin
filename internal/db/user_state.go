@@ -93,48 +93,6 @@ func WatchedSet(ctx context.Context, pool *sql.DB, user string) (map[string]bool
 	return out, rows.Err()
 }
 
-// HomeBuckets returns a user's continue / favorites / completed rows from the mirror, each a
-// join to media for the tile fields and ordered by the per-user updated time (newest first) -
-// the cache-served replacement for the former per-folder meta.json scan.
-func HomeBuckets(ctx context.Context, pool *sql.DB, user string) (cont, fav, done []MediaSummary, err error) {
-	if cont, err = homeBucket(ctx, pool, user, `has_progress = 1 AND watched = 0`); err != nil {
-		return nil, nil, nil, err
-	}
-	if fav, err = homeBucket(ctx, pool, user, `favorite = 1`); err != nil {
-		return nil, nil, nil, err
-	}
-	if done, err = homeBucket(ctx, pool, user, `watched = 1`); err != nil {
-		return nil, nil, nil, err
-	}
-	return cont, fav, done, nil
-}
-
-// homeBucket runs one bucket's query: the user's mirror rows matching pred, joined to media,
-// newest-first.
-func homeBucket(ctx context.Context, pool *sql.DB, user, pred string) ([]MediaSummary, error) {
-	rows, err := pool.QueryContext(ctx,
-		`SELECT m.id, m.title, m.year, (m.poster <> ''), us.watched, m.path
-         FROM user_state us JOIN media m ON m.id = us.media_id
-         WHERE us.user = ? AND us.`+pred+`
-         ORDER BY us.updated DESC`, user)
-	if err != nil {
-		return nil, fmt.Errorf("query home bucket: %w", err)
-	}
-	defer rows.Close()
-	out := []MediaSummary{}
-	for rows.Next() {
-		var ms MediaSummary
-		var hasPoster, watched int
-		if err := rows.Scan(&ms.ID, &ms.Title, &ms.Year, &hasPoster, &watched, &ms.FolderPath); err != nil {
-			return nil, fmt.Errorf("scan home row: %w", err)
-		}
-		ms.HasPoster = hasPoster != 0
-		ms.Watched = watched != 0
-		out = append(out, ms)
-	}
-	return out, rows.Err()
-}
-
 func boolInt(b bool) int {
 	if b {
 		return 1

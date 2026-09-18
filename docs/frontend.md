@@ -60,7 +60,9 @@ flowchart TD
   Lib --> Edit["library/MediaEdit"]
   Detail --> Player["library/Player"]
   Home --> Search["library/SearchBar"]
-  Home --> Tile["components/MediaTile"]
+  Home --> Row["library/HomeRow"]
+  Row --> Tile["components/MediaTile"]
+  Home --> Tile
   Cat --> Tile
 
   ImportWork --> IPlex["import/ImportPlex"]
@@ -96,15 +98,25 @@ category (its own flag or an inherited one from a top-level parent - see
 [`mediaformat.md`](mediaformat.md)); ordinary movie/series categories show no TokTok button.
 
 The library has a fourth `libMode`, `search`, alongside `home` / `category` / `detail`. Library
-search renders **on the home page**: `library/Home.svelte` always shows the `SearchBar` (a text
-input next to a field-scope dropdown) at the top, and `route()` reads `q` + `field` from the
-`/search?...` query string into `AppState`. In default mode Home shows the three lists
-(continue / favorites / completed); once a search is active those lists give way to a single
-results grid (with a result count, or a plain "No matches"). `LibraryView` reuses `Home` for
-both modes, so the search section is shared. Submitting calls `runSearch` (pushes the `/search`
-URL); Clear calls `clearSearch` (returns to `/`). The [media detail page](library.md#search)
-turns its facets - cast, genre, tag, director, language, year - into pivot links that navigate
-into a scoped search.
+search renders **on the home page**: `library/Home.svelte` always shows the `SearchBar` at the
+top, and `route()` reads the whole control set - `q`, `field`, `status`, `fav`, `sort`, `dir` -
+from the `/search?...` query string into `AppState`. The bar is one line: the field-scope
+dropdown, the text input, the status and sort dropdowns, an ascending/descending toggle and a
+favorites toggle, then Search and (in search mode) Clear. The text submits on Enter or the
+button; the dropdowns and toggles re-run the search as they change, because each is a complete
+request on its own.
+
+In default mode Home shows the five `HomeRow`s (continue / favorites / completed / unwatched /
+recently added); once a search is active those rows give way to a single results grid, headed
+by the query or - when a row jump brought the user here with no text - by the filter's name.
+`LibraryView` reuses `Home` for both modes, so the search section is shared.
+
+`searchParams()` renders the active controls into the query string that both the `/search` URL
+and the API call use, and `searchAsks` is the guard that keeps a bare Enter from listing the
+whole library. A `HomeRow`'s "+N more" tile is a jump, not an expansion: it navigates to the
+search query string the **server** sent with that row, so the frontend never has to restate
+what a row means. The [media detail page](library.md#search) turns its facets - cast, genre,
+tag, director, language, year - into pivot links that navigate into a scoped search.
 
 The library sidebar is **Home** plus two accordions: **Categories** (the indented category tree)
 and **Tags** (the whole curated vocabulary with per-tag counts, from `GET /api/tags`). Which are

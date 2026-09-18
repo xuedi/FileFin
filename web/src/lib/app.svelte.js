@@ -55,6 +55,18 @@ function treeOrder(cats) {
   return out
 }
 
+// homeSections are the home page's rows in render order. The server defines what each one
+// lists (and the search that reproduces it); the names below are only how the two sides
+// address the same row.
+export const homeSections = ['continue', 'favorites', 'completed', 'unwatched', 'recent']
+
+// emptyHome is the shape every row arrives in - the capped items, the unclipped total, and
+// the search query string the row's "more" tile leads to - before the first load and after
+// a failed one.
+function emptyHome() {
+  return Object.fromEntries(homeSections.map((k) => [k, { items: [], total: 0, search: '' }]))
+}
+
 // treeMarker is the indentation + box-drawing branch prefix for a sub-category at depth.
 export function treeMarker(depth) {
   if (!depth || depth <= 0) return ''
@@ -202,12 +214,18 @@ export class AppState {
 
   // library views: home grids, category grid, media detail + player
   libMode = $state('home') // 'home' | 'category' | 'detail' | 'search'
-  homeData = $state({ continue: [], favorites: [], completed: [] })
+  homeData = $state(emptyHome())
 
-  // library search: the active query, its field scope, and the result rows. The search
-  // section lives on the home page; 'search' mode hides the three home lists for the grid.
+  // library search: the active query, its field scope, the filter/sort controls and the
+  // result rows. The search section lives on the home page; 'search' mode hides the home
+  // rows for the grid. Every home row's "more" tile is a search URL, so the controls below
+  // are what reproduces a row in full.
   searchQuery = $state('')
   searchField = $state('all')
+  searchStatus = $state('any') // 'any' | 'unwatched' | 'progress' | 'watched'
+  searchFav = $state(false)
+  searchSort = $state('year') // year|title|added|updated; 'year' ascending is the browse order
+  searchDesc = $state(false)
   searchResults = $state([])
   categoryMedia = $state([])
   detail = $state(null)
@@ -560,6 +578,7 @@ export class AppState {
     this.adminView = 'dashboard'
     this.homeCategory = ''
     this.libMode = 'home'
+    this.homeData = emptyHome()
     this.detail = null
     this.playing = false
     history.replaceState({}, '', '/')
@@ -707,32 +726,72 @@ export class AppState {
 
   async loadHome() {
     try {
-      this.homeData = await api('/api/home')
+      this.homeData = { ...emptyHome(), ...(await api('/api/home')) }
     } catch {
-      this.homeData = { continue: [], favorites: [], completed: [] }
+      this.homeData = emptyHome()
     }
   }
 
   async loadSearch() {
     try {
-      this.searchResults = await api(
-        '/api/search?q=' + encodeURIComponent(this.searchQuery) + '&field=' + encodeURIComponent(this.searchField),
-      )
+      this.searchResults = await api('/api/search?' + this.searchParams())
     } catch {
       this.searchResults = []
     }
   }
 
+  // searchParams renders the active controls into the query string both the /search URL and
+  // the API call use. Defaults are left out, so a plain text search keeps the short URL it
+  // has always had and a pivot link stays readable.
+  searchParams() {
+    const p = new URLSearchParams()
+    const q = (this.searchQuery || '').trim()
+    if (q) {
+      p.set('q', q)
+      if (this.searchField && this.searchField !== 'all') p.set('field', this.searchField)
+    }
+    if (this.searchStatus !== 'any') p.set('status', this.searchStatus)
+    if (this.searchFav) p.set('fav', '1')
+    // The sort rides along whenever it is not the plain browse order, including a reversed
+    // one: naming it is what tells the server the request is intentional.
+    if (this.searchSort !== 'year' || this.searchDesc) p.set('sort', this.searchSort)
+    if (this.searchDesc) p.set('dir', 'desc')
+    return p.toString()
+  }
+
+  // searchAsks is whether the controls amount to a request at all. A search that asks for
+  // nothing - no text, no filter, no explicit order - stays a no-op, so a bare Enter never
+  // replaces the home rows with the whole library.
+  get searchAsks() {
+    return (
+      !!(this.searchQuery || '').trim() ||
+      this.searchStatus !== 'any' ||
+      this.searchFav ||
+      this.searchSort !== 'year' ||
+      this.searchDesc
+    )
+  }
+
   // runSearch navigates to the results URL; route() then parses it and loads the rows.
-  // An empty query is a no-op so a bare Enter never replaces the home lists with nothing.
-  runSearch(q = this.searchQuery, field = this.searchField) {
-    const query = (q || '').trim()
-    if (!query) return
-    this.go('/search?field=' + encodeURIComponent(field) + '&q=' + encodeURIComponent(query))
+  runSearch() {
+    if (!this.searchAsks) return
+    this.go('/search?' + this.searchParams())
   }
 
   clearSearch() {
     this.go('/')
+  }
+
+  // resetSearch returns every control to its default, so leaving the search view does not
+  // leave a stale filter behind for the next query.
+  resetSearch() {
+    this.searchQuery = ''
+    this.searchField = 'all'
+    this.searchStatus = 'any'
+    this.searchFav = false
+    this.searchSort = 'year'
+    this.searchDesc = false
+    this.searchResults = []
   }
 
   // toggleWatched flips a grid tile's watched flag. The row object is a deep $state proxy, so
@@ -1047,13 +1106,20 @@ export class AppState {
     }
   }
 
-  // Home tile "x": remove from a row by clearing the matching status.
+  // Home tile "x": remove from a row by clearing the matching status. The total drops with
+  // the item so the row's "more" tile keeps counting what is really behind it.
+  dropFromHome(section, m) {
+    const row = this.homeData[section]
+    if (!row) return
+    const items = row.items.filter((x) => x.id !== m.id)
+    this.homeData = { ...this.homeData, [section]: { ...row, items, total: Math.max(items.length, row.total - 1) } }
+  }
   async removeFromContinue(m) {
-    this.homeData.continue = this.homeData.continue.filter((x) => x.id !== m.id)
+    this.dropFromHome('continue', m)
     await api('/api/media/' + m.id + '/progress', { method: 'DELETE' }).catch(() => {})
   }
   async removeFromFavorites(m) {
-    this.homeData.favorites = this.homeData.favorites.filter((x) => x.id !== m.id)
+    this.dropFromHome('favorites', m)
     await api('/api/media/' + m.id + '/favorite', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1061,7 +1127,7 @@ export class AppState {
     }).catch(() => {})
   }
   async removeFromCompleted(m) {
-    this.homeData.completed = this.homeData.completed.filter((x) => x.id !== m.id)
+    this.dropFromHome('completed', m)
     await api('/api/media/' + m.id + '/watched', { method: 'DELETE' }).catch(() => {})
   }
 
@@ -1215,6 +1281,10 @@ export class AppState {
       const params = new URLSearchParams(location.search)
       this.searchQuery = params.get('q') || ''
       this.searchField = params.get('field') || 'all'
+      this.searchStatus = params.get('status') || 'any'
+      this.searchFav = params.get('fav') === '1'
+      this.searchSort = params.get('sort') || 'year'
+      this.searchDesc = params.get('dir') === 'desc'
       this.homeCategory = ''
       this.libMode = 'search'
       this.detail = null
@@ -1223,9 +1293,7 @@ export class AppState {
       this.homeCategory = ''
       this.libMode = 'home'
       this.detail = null
-      this.searchQuery = ''
-      this.searchField = 'all'
-      this.searchResults = []
+      this.resetSearch()
       await this.loadHome()
     }
   }

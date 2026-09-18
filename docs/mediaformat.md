@@ -13,7 +13,7 @@ dataDir/
       <media-folder>/                 no config.json, has video -> media item
         <video file(s)>
         meta.json                     version, title, year, rich fields, genres, tags,
-                                      technical, per-user state
+                                      technical, added date, per-user state
         poster.*                      base poster (jpg/png/webp)
         poster_280.webp               detail variant (thumbnail agent)
         poster_180.webp               tile variant (thumbnail agent)
@@ -132,7 +132,7 @@ references (a bookmark, an id a client is holding) are affected. See [`rename.md
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
 | `config.json` (id, alias, top-level other-media, position, markers) | `categories` rows (parent_id, effective other_media, position) |
-| `meta.json` (version, title, year, rich fields, genres, tags, technical, per-user state) | `media` / `media_files` / `media_facets` rows |
+| `meta.json` (version, title, year, rich fields, genres, tags, technical, added date, per-user state) | `media` / `media_files` / `media_facets` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
 
 The **filename extension is never trusted** for a playback or optimize decision: a library
@@ -143,6 +143,18 @@ written into the `meta.json` `technical` block and mirrored onto `media_files`
 decisions read those columns. The on-disk filename is left untouched. A rebuild leaves the
 format columns empty and the probe agent backfills them, exactly like enrich/thumbnail work
 (see `agents/probe.md`).
+
+## The added date
+
+`meta.json` records **when the item entered the library** in an `added` key (unix seconds),
+mirrored onto the media cache row. It is what the home page's "Recently added" row and the
+search's date-added ordering sort on (see [`library.md`](library.md)).
+
+The importer stamps it when it creates a folder; a second episode landing in an existing folder
+does not move it, and neither does a replace - the item arrived once. A folder that predates
+the field has no value to read, so the scanner falls back to the **folder's mtime**, and a
+one-time cache backfill settles that fallback into the file. After that the value is on disk
+like every other item fact, and stops drifting with writes inside the folder.
 
 ## meta.json carries a version
 
