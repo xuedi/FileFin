@@ -18,7 +18,7 @@ A native phone/TV client lives in its own repo: [FileFin-client](https://github.
 | [`agents/enricher.md`](agents/enricher.md) | Media enricher | Background OMDb re-enrichment queue, `meta.json` + ffprobe, additive merge |
 | [`rematch.md`](rematch.md) | Metadata matching | The admin "Needs attention" page and its four problem classes; manual OMDb search and replace-mode re-match for items OMDb missed |
 | [`rename.md`](rename.md) | Folder rename | Names that contradict their item's metadata: the drift report, the prefix-swap rule, the id change a rename mints |
-| [`metaedit.md`](metaedit.md) | Metadata editor | Admin detail-page "Edit": edit every `meta.json` field by hand and upload a poster |
+| [`metaedit.md`](metaedit.md) | Metadata editor | Admin detail-page "Edit metadata": edit every `meta.json` field by hand and upload a poster |
 | [`agents/thumbnailer.md`](agents/thumbnailer.md) | Thumbnail agent | Sized WebP posters, frame-derived posters for home media, `?size=` |
 | [`agents/optimizer.md`](agents/optimizer.md) | Pre-transcoder | Background `.optimized.mp4` copies, GPU worker + load-driven CPU pool |
 | [`agents/probe.md`](agents/probe.md) | Format-probe agent | Backfills/refreshes the true container + codecs onto the cache and `meta.json` |

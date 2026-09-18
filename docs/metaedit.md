@@ -4,7 +4,7 @@ How an admin edits a media item's descriptive metadata and poster by hand. This 
 manual counterpart to the automatic OMDb enricher (see [`agents/enricher.md`](agents/enricher.md))
 and the OMDb re-match flow (see [`rematch.md`](rematch.md)): where those pull a record from
 OMDb, the editor lets an admin type any field directly and upload an arbitrary poster image.
-It is reached from the library detail page's admin-only **Edit** button and is admin-only end
+It is reached from the library detail page's admin-only **Edit metadata** button and is admin-only end
 to end.
 
 ## What it edits
@@ -79,5 +79,5 @@ refreshes in place.
   manager's per-folder lock (see [`agents/enricher.md`](agents/enricher.md)).
 - **Thumbnail agent** - rebuilds the sized poster variants after an upload replaces the base
   image (see [`agents/thumbnailer.md`](agents/thumbnailer.md)).
-- **Frontend** - the library detail "Edit" button and the editor view (see
+- **Frontend** - the library detail "Edit metadata" button and the editor view (see
   [`frontend.md`](frontend.md)).

@@ -59,6 +59,7 @@ flowchart TD
   Lib --> Detail["library/MediaDetail"]
   Lib --> Edit["library/MediaEdit"]
   Detail --> Player["library/Player"]
+  Detail --> Info["library/MediaInfo"]
   Home --> Search["library/SearchBar"]
   Home --> Row["library/HomeRow"]
   Row --> Tile["components/MediaTile"]
@@ -137,8 +138,18 @@ window listener) or on item select. The per-user settings page (`settings/UserSe
 distinct from the admin Settings page; it holds the account view and the
 [MyDramaList import](mdl.md) section (save a username, preview the scraped matches, confirm to
 import watched + 1-10 ratings). The detail page carries a matching 1-10 rating control beside the
-favourite/watched actions, all sharing one height, plus an admin-only "Edit" button that opens the
-metadata editor.
+favourite/watched actions, all sharing one height.
+
+The detail page splits into two parts. The top holds only what a viewer acts on: the title bar
+(rating, favourite, play), the player, description, genre and tag chips, and the episode picker.
+Under the episodes, `library/MediaInfo.svelte` renders a **Details** section beside the poster: a
+wide column (About - external scores, facts, plot; Cast) and a narrow one (File - the current file's
+technical data and whether it direct-plays or transcodes; Subtitles - every sidecar of the current
+file with its language, qualifiers, sniffed format and size, the track the remembered language turns
+on, and per-language coverage across a series' files; Admin). The columns stack when the main
+column is narrow. The admin-only **Admin** card holds the maintenance actions - "Edit metadata"
+opens the metadata editor, "Rebuild subtitles" extracts embedded tracks - so they stay out of the
+viewer's controls.
 
 ## Shared components
 
@@ -205,7 +216,7 @@ actions live on `AppState.attention`, whose `attentionRows` getter applies the f
 The metadata editor (`library/MediaEdit.svelte`, at `/media/{id}/edit`, on `AppState.edit`) reaches
 the match view through its "Match with the API" button, and offers "Rename to match" whenever the
 item's names contradict its metadata (see [`rename.md`](rename.md)); the editor itself is opened
-from the library detail page's admin-only "Edit" button and lets an admin change every `meta.json`
+from the library detail page's admin-only "Edit metadata" button and lets an admin change every `meta.json`
 field and upload a poster (see [`metaedit.md`](metaedit.md)). Applying an OMDb candidate redirects
 to the item's detail page (see [`rematch.md`](rematch.md)).
 

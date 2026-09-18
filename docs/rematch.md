@@ -134,4 +134,4 @@ concurrent playback event is never dropped.
   button (see [`frontend.md`](frontend.md)). A row's **Find match** button opens the OMDb match
   view, while the item's **title** links straight to the metadata editor, for when an admin would
   rather type the fields by hand than pick a database record. The editor is also
-  reached from the library detail page's admin "Edit" button (see [`metaedit.md`](metaedit.md)).
+  reached from the library detail page's admin "Edit metadata" button (see [`metaedit.md`](metaedit.md)).

@@ -27,6 +27,14 @@ function seasonOfFile(groups, idx, fallback) {
   return fallback
 }
 
+// Which of a file's subtitles the remembered language turns on: the first full track in that
+// language, else a forced (signs-only) one; -1 when none matches or the choice is off.
+export function preferredSubtitle(subs, lang) {
+  const match = (s) => !!lang && (s.lang || 'und') === lang
+  const full = subs.findIndex((s) => match(s) && !s.flags?.includes('forced'))
+  return full >= 0 ? full : subs.findIndex(match)
+}
+
 // Short chip label for an episode: "E1" when numbered, else the file name.
 export function episodeLabel(f) {
   return f.episode ? 'E' + f.episode : f.name

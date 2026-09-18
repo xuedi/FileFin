@@ -143,7 +143,7 @@ sidecars (one per language, skipping languages already covered; a track with no 
 language tag is named after the configured subtitle language), so they show up here like any
 other sidecar. See `import.md` (Subtitles). A file that arrived before its tracks could be
 named is repaired on a later sweep by the discovery agent, or on the spot from the detail
-page's admin **Subtitles** action (see `agents/discovery.md`).
+page's admin **Rebuild subtitles** action (see `agents/discovery.md`).
 
 ## Watch progress
 

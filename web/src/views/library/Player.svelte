@@ -1,5 +1,6 @@
 <script>
   import { getContext, untrack } from 'svelte'
+  import { preferredSubtitle } from '../../lib/app.svelte.js'
   const app = getContext('app')
 
   // hls is private to one mounted player instance.
@@ -47,14 +48,13 @@
       track.src = base + '/sub/' + sub.index
       el.appendChild(track)
     }
+    // Tracks are appended in f.subtitles order, so a track's position names its sidecar.
     const applySubtitle = () => {
-      let on = false
-      for (const t of el.textTracks) {
-        const want = !on && !!active && (t.language || 'und') === active
-        on ||= want
-        const mode = want ? 'showing' : 'disabled'
+      const want = preferredSubtitle(f?.subtitles ?? [], active)
+      Array.from(el.textTracks).forEach((t, i) => {
+        const mode = i === want ? 'showing' : 'disabled'
         if (t.mode !== mode) t.mode = mode
-      }
+      })
     }
     applySubtitle()
     // The browser runs its own automatic track selection whenever tracks are added or a

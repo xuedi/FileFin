@@ -93,7 +93,7 @@ sweep refused until a restart.
 
 Because the sweep walks the library least-recently-checked first, one folder can be most of a
 rotation away from its turn. An admin who has just noticed a film with no subtitles does not
-want to wait for that, so the detail page carries a **Subtitles** action that runs the same
+want to wait for that, so the detail page's Admin card carries a **Rebuild subtitles** action that runs the same
 repair over that one folder immediately. Its work is detached from the request - a folder of
 thirty episodes outlives any proxy's patience, and a disconnect must not kill ffmpeg halfway.
 

@@ -1,7 +1,8 @@
 <script>
   import { getContext, tick } from 'svelte'
-  import { episodeLabel, humanSize } from '../../lib/app.svelte.js'
+  import { episodeLabel } from '../../lib/app.svelte.js'
   import Player from './Player.svelte'
+  import MediaInfo from './MediaInfo.svelte'
   const app = getContext('app')
 
   // The inline tag editor is local to this page: only the stored list lives on AppState.
@@ -62,18 +63,6 @@
             <button class="button is-primary" onclick={() => app.playFile(app.currentFile)}>
               &#9654; {app.hasResume ? 'Continue' : 'Play'}
             </button>
-            {#if app.me?.admin}
-              <button class="button" title="Edit this item's metadata and poster" onclick={() => app.goEditMeta(detail.id)}>
-                Edit
-              </button>
-              <button
-                class="button"
-                disabled={app.repairingSubs}
-                title="Extract subtitles embedded in this item's files into playable sidecars"
-                onclick={() => app.repairSubtitles(detail.id)}>
-                {app.repairingSubs ? 'Extracting...' : 'Subtitles'}
-              </button>
-            {/if}
           </div>
         {/if}
       </div>
@@ -149,58 +138,7 @@
         </div>
       {/if}
 
-      {#if detail.metadata.length}
-        <table class="table ff-meta-table"><tbody>
-          {#each detail.metadata as m}
-            <tr>
-              <th>{m.key}</th>
-              <td>
-                {#if m.key === 'Directed by'}
-                  <a href={null} class="ff-pivot" onclick={() => app.go('/search?field=director&q=' + encodeURIComponent(m.value))}>{m.value}</a>
-                {:else if m.key === 'Language'}
-                  <a href={null} class="ff-pivot" onclick={() => app.go('/search?field=language&q=' + encodeURIComponent(m.value))}>{m.value}</a>
-                {:else}
-                  {m.value}
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody></table>
-      {/if}
-
-      {#if detail.ratings.length}
-        <h3 class="title is-6">Ratings</h3>
-        <table class="table ff-meta-table"><tbody>
-          {#each detail.ratings as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
-        </tbody></table>
-      {/if}
-
-      {#if detail.technical.length || app.currentFileInfo}
-        <h3 class="title is-6">Technical</h3>
-        <table class="table ff-meta-table"><tbody>
-          {#each detail.technical as m}<tr><th>{m.key}</th><td>{m.value}</td></tr>{/each}
-          {#if app.currentFileInfo}
-            <tr>
-              <th>File</th>
-              <td class="ff-file-path">{app.currentFileInfo.path} ({humanSize(app.currentFileInfo.size)})</td>
-            </tr>
-          {/if}
-          {#if detail.files.length > 1}
-            <tr><th>Total size</th><td>{humanSize(app.detailBytes)} in {detail.files.length} files</td></tr>
-          {/if}
-        </tbody></table>
-      {/if}
-
-      {#if detail.actors.length}
-        <h3 class="title is-6">Cast</h3>
-        <ul class="ff-cast">
-          {#each detail.actors as a}
-            <li><a href={null} class="ff-pivot" onclick={() => app.go('/search?field=cast&q=' + encodeURIComponent(a))}>{a}</a></li>
-          {/each}
-        </ul>
-      {/if}
-
-      {#if detail.plot}<h3 class="title is-6">Plot</h3><p>{detail.plot}</p>{/if}
+      <MediaInfo />
     </div>
 
     {#if detail.hasPoster}

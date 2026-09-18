@@ -1,6 +1,9 @@
 package subtitle
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -151,5 +154,35 @@ func TestLabel(t *testing.T) {
 	}
 	if Label("xx") != "XX" { // unknown falls back to uppercased tag
 		t.Errorf("Label(xx) = %q", Label("xx"))
+	}
+}
+
+func TestQualifiers(t *testing.T) {
+	cases := map[string][]string{
+		"Movie.en.srt":             nil,
+		"Movie.en.forced.srt":      {"forced"},
+		"Movie.eng.SDH.forced.srt": {"sdh", "forced"},
+	}
+	for name, want := range cases {
+		if got := Qualifiers(name); !reflect.DeepEqual(got, want) {
+			t.Errorf("Qualifiers(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestFormat(t *testing.T) {
+	dir := t.TempDir()
+	srt := filepath.Join(dir, "a.en.srt")
+	ass := filepath.Join(dir, "b.en.srt")
+	os.WriteFile(srt, []byte("1\n00:00:01,000 --> 00:00:02,000\nhi\n"), 0o644)
+	os.WriteFile(ass, []byte("[Script Info]\nTitle: x\n\n[Events]\n"), 0o644)
+	if got := Format(srt); got != "SRT" {
+		t.Errorf("srt sniffed as %q", got)
+	}
+	if got := Format(ass); got != "ASS" {
+		t.Errorf("ass-in-.srt sniffed as %q", got)
+	}
+	if got := Format(filepath.Join(dir, "missing.srt")); got != "" {
+		t.Errorf("missing file sniffed as %q", got)
 	}
 }

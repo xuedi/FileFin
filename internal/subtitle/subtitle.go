@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -139,6 +140,35 @@ func Match(videoBase, subName string) (lang string, ok bool) {
 
 // sniffLen is how much of a subtitle file is inspected to tell its real format.
 const sniffLen = 4096
+
+// Qualifiers returns the qualifier infixes of a subtitle file name ("forced", "sdh", ...),
+// in file-name order, e.g. "Movie.en.forced.srt" -> ["forced"].
+func Qualifiers(name string) []string {
+	name = strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	var out []string
+	for _, tok := range strings.Split(name, ".")[1:] {
+		if subQualifiers[strings.ToLower(tok)] {
+			out = append(out, strings.ToLower(tok))
+		}
+	}
+	return out
+}
+
+// Format names the real format of the subtitle file at path, "ASS" or "SRT", judged by
+// content like the renderer does; "" when the file cannot be read.
+func Format(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	head := make([]byte, sniffLen)
+	n, _ := io.ReadFull(f, head)
+	if IsASS(head[:n]) {
+		return "ASS"
+	}
+	return "SRT"
+}
 
 // IsASS reports whether head (the opening bytes of a subtitle file) is an ASS/SSA script
 // rather than SRT. Files holding ASS content under an ".srt" name are common in the wild,

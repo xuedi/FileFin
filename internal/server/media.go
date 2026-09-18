@@ -32,6 +32,12 @@ type subtitleInfo struct {
 	Index int    `json:"index"`
 	Lang  string `json:"lang"`
 	Label string `json:"label"`
+	// File, Size, Format and Flags describe the sidecar on the detail page's subtitle block;
+	// Format is sniffed from content, so an ASS script under an .srt name reads "ASS".
+	File   string   `json:"file"`
+	Size   int64    `json:"size"`
+	Format string   `json:"format"`
+	Flags  []string `json:"flags"`
 }
 
 type fileInfo struct {
@@ -346,7 +352,11 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		base := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
 		for k, sc := range subtitle.Sidecars(folderEntries, base) {
-			fi.Subtitles = append(fi.Subtitles, subtitleInfo{Index: k, Lang: sc.Lang, Label: sc.Label})
+			p := filepath.Join(m.Path, sc.Name)
+			fi.Subtitles = append(fi.Subtitles, subtitleInfo{
+				Index: k, Lang: sc.Lang, Label: sc.Label,
+				File: sc.Name, Size: fileSize(p), Format: subtitle.Format(p), Flags: append([]string{}, subtitle.Qualifiers(sc.Name)...),
+			})
 		}
 		d.Files = append(d.Files, fi)
 	}
