@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,14 +99,43 @@ func TestReadMediaFolderAddedDate(t *testing.T) {
 		t.Fatalf("a recorded added date must win: %d", sm.media.Added)
 	}
 
-	// No meta.json at all: the folder mtime stands in, stamped to a known time.
+	// No meta.json at all: the oldest media file's mtime stands in - that is when the
+	// importer copied it - while the folder's own mtime is deliberately newer, because later
+	// poster and subtitle writes reset it long after the item arrived.
 	dir := seed("(1994) Leon", importer.Meta{}, false)
 	want := time.Date(2020, 3, 4, 5, 6, 7, 0, time.UTC)
-	if err := os.Chtimes(dir, want, want); err != nil {
+	if err := os.Chtimes(filepath.Join(dir, "(1994) Leon.mkv"), want, want); err != nil {
+		t.Fatal(err)
+	}
+	touched := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(dir, touched, touched); err != nil {
 		t.Fatal(err)
 	}
 	sm, ok = readMediaFolder(dataDir, cat, "(1994) Leon")
 	if !ok || sm.media.Added != want.Unix() {
-		t.Fatalf("added = %d, want the folder mtime %d", sm.media.Added, want.Unix())
+		t.Fatalf("added = %d, want the oldest media file mtime %d", sm.media.Added, want.Unix())
+	}
+
+	// The oldest of several files wins: a show whose later episodes arrived afterwards still
+	// entered the library when its first one did.
+	dir = seed("(2001) A Show", importer.Meta{}, false)
+	for i, when := range []time.Time{
+		time.Date(2019, 5, 5, 0, 0, 0, 0, time.UTC),
+		time.Date(2021, 6, 6, 0, 0, 0, 0, time.UTC),
+	} {
+		f := filepath.Join(dir, fmt.Sprintf("(2001) A Show S01E%02d.mkv", i+1))
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(f, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "(2001) A Show.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	sm, ok = readMediaFolder(dataDir, cat, "(2001) A Show")
+	if !ok || sm.media.Added != time.Date(2019, 5, 5, 0, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("added = %d, want the oldest of the two episodes", sm.media.Added)
 	}
 }

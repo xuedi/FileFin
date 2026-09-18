@@ -113,21 +113,6 @@ func NeedsUpgrade(folder string) bool {
 	return m.Version < MetaVersion
 }
 
-// MetaAdded returns a folder's recorded added date, or 0 when the file is missing,
-// unparseable or predates the field - the cheap read the cache backfill uses to decide
-// whether it has to write anything at all.
-func MetaAdded(folder string) int64 {
-	data, err := os.ReadFile(filepath.Join(folder, "meta.json"))
-	if err != nil {
-		return 0
-	}
-	var m Meta
-	if err := json.Unmarshal(data, &m); err != nil {
-		return 0
-	}
-	return m.Added
-}
-
 // StubMeta is the minimal metadata used when no OMDb enrichment is available.
 func StubMeta(title string, year int) Meta {
 	m := Meta{Title: title, Year: year}

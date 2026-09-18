@@ -152,9 +152,16 @@ search's date-added ordering sort on (see [`library.md`](library.md)).
 
 The importer stamps it when it creates a folder; a second episode landing in an existing folder
 does not move it, and neither does a replace - the item arrived once. A folder that predates
-the field has no value to read, so the scanner falls back to the **folder's mtime**, and a
-one-time cache backfill settles that fallback into the file. After that the value is on disk
-like every other item fact, and stops drifting with writes inside the folder.
+the field has no value to read, so the scanner falls back to the **oldest mtime among its media
+files** (when the importer copied the first of them in), and a one-time cache backfill settles
+that into the file. After that the value is on disk like every other item fact.
+
+The folder's own mtime cannot serve as that fallback, even though it looks like the obvious
+choice: the thumbnailer writes sized posters, the subtitle repair writes sidecars and the
+optimizer writes `.optimized.mp4` copies, all **into the media folder** and all long after the
+item arrived. A library that has been running agents therefore has folder mtimes that cluster
+around the last sweep, saying nothing about when anything was added. The media files themselves
+are written once, by the import, and never touched again.
 
 ## meta.json carries a version
 

@@ -235,7 +235,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		}
 	}
 	if added == 0 {
-		added = folderAdded(dir)
+		added = oldestFileTime(videos, dir)
 	}
 	if title == "" {
 		p := recognize.ParseName(folder, false)
@@ -286,15 +286,29 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 	return sm, true
 }
 
-// folderAdded is the fallback "entered the library" time for a media folder whose meta.json
-// predates the added field: the folder's own mtime. It drifts with writes inside the folder,
-// which is why the cache backfill settles it into meta.json once and never consults it again.
-func folderAdded(dir string) int64 {
-	fi, err := os.Stat(dir)
-	if err != nil {
-		return 0
+// oldestFileTime is the fallback "entered the library" time for a media folder whose meta.json
+// predates the added field: the oldest mtime among its media files, which is when the importer
+// copied the first of them in. The folder's own mtime cannot serve - the thumbnailer, the
+// subtitle repair and the optimizer all write into the folder long after the item arrived, so
+// it reports when an agent last ran, not when the item landed. It stands in only until the
+// cache backfill settles the answer into meta.json.
+func oldestFileTime(files []string, dir string) int64 {
+	oldest := int64(0)
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if t := fi.ModTime().Unix(); oldest == 0 || t < oldest {
+			oldest = t
+		}
 	}
-	return fi.ModTime().Unix()
+	if oldest == 0 { // nothing readable: the folder itself is the only clue left
+		if fi, err := os.Stat(dir); err == nil {
+			return fi.ModTime().Unix()
+		}
+	}
+	return oldest
 }
 
 // scanFolderFiles returns the sorted video files in a media folder plus the base name

@@ -20,7 +20,10 @@ import (
 //	   "tag" to the curated tags, and every meta.json was normalised to version 2
 //	3: media.added, seeded from each folder's mtime and settled into its meta.json, so the
 //	   "recently added" ordering has a stable value on a library that predates the field
-const cacheDataVersion = 3
+//	4: media.added re-derived from the oldest media-file mtime. Version 3 seeded it from the
+//	   folder mtime, which the thumbnailer, subtitle repair and optimizer all reset long after
+//	   an item arrived, so nearly every folder claimed the same recent date
+const cacheDataVersion = 4
 
 // ensureDB returns the cache pool, building it on the fly when needed: it opens the
 // SQLite cache once, runs the schema (idempotent), and - when the categories table is
@@ -102,7 +105,7 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 				sm.media.Language, sm.media.Country, sm.media.Director, sm.media.Writer), "backfill media facets")
 			s.bestEffort(db.ReplaceMediaFacets(ctx, pool, sm.media.ID, sm.actors, sm.genres, sm.tags), "backfill media facets")
 			s.bestEffort(db.ReplaceUserStateForMedia(ctx, pool, sm.media.ID, sm.userState), "backfill user state")
-			if s.settleMetaFile(sm.media.Path, sm.media.Added) {
+			if s.settleMetaFile(sm.media.Path, addedFromFiles(sm)) {
 				upgraded++
 			}
 			n++
@@ -116,20 +119,32 @@ func (s *Server) backfillCache(ctx context.Context, pool *sql.DB, dataDir string
 		logging.Fields{"media": n, "metaUpgraded": upgraded, "version": cacheDataVersion})
 }
 
-// settleMetaFile writes one folder's meta.json back in the current shape, in a single pass:
-// a pre-version-2 file (genres under the old "tags" key) is folded by ReadMeta on the way in,
-// and a file with no added date takes the one the scanner derived from the folder mtime, so
-// that value stops drifting with the next write inside the folder. It reports whether the
-// file needed the version fold, which is what the backfill counts. Nothing is written when
-// the file is already current; a failure is harmless and simply leaves the file as it was.
+// addedFromFiles re-derives a folder's "entered the library" time from its media files alone,
+// ignoring what meta.json says. The backfill needs that: the value a version-3 cache wrote is
+// the folder mtime, which later agent writes had already spoiled, so the pass has to replace
+// it rather than preserve it. An item imported by this version carries a real stamp, and the
+// file copy time it is replaced with is the same moment, so nothing is lost either way.
+func addedFromFiles(sm scannedMedia) int64 {
+	paths := make([]string, 0, len(sm.files))
+	for _, f := range sm.files {
+		paths = append(paths, f.Path)
+	}
+	return oldestFileTime(paths, sm.media.Path)
+}
+
+// settleMetaFile writes one folder's meta.json back in the current shape, in a single pass: a
+// pre-version-2 file (genres under the old "tags" key) is folded by ReadMeta on the way in,
+// and the added date is written to what the caller re-derived from disk, so that value stops
+// drifting with the next write inside the folder. It reports whether the file needed the
+// version fold, which is what the backfill counts; a failure is harmless and simply leaves
+// the file as it was.
 func (s *Server) settleMetaFile(folder string, added int64) bool {
 	upgrade := importer.NeedsUpgrade(folder)
-	stamp := added != 0 && importer.MetaAdded(folder) == 0
-	if !upgrade && !stamp {
+	if !upgrade && added == 0 {
 		return false
 	}
 	_, err := s.metaMgr.Update(folder, func(m importer.Meta) importer.Meta {
-		if m.Added == 0 {
+		if added != 0 {
 			m.Added = added
 		}
 		return m
