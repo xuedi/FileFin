@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.26.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.27.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -28,8 +28,8 @@ of those next to the media, as plain JSON and image files.
   `Show (2001)/Season 01/Show S01E01.mkv`; the only renaming happens when *you* import, into one of
   three layouts you choose.
 - **No account, no cloud, no phone-home.** There is nothing to sign in to but your own server, and no
-  third party gets to decide that your IP address is the wrong kind. The single optional outbound call
-  is OMDb metadata, which needs a key you supply and can be left unset.
+  third party gets to decide that your IP address is the wrong kind. The only optional outbound calls
+  are OMDb metadata and TMDb cast photos, each needing a key you supply and each can be left unset.
 - **The index is disposable on purpose.** SQLite is a cache for fast browsing and search, never a record
   of anything. Delete it and one click in Settings rebuilds it from disk; a background agent reconciles
   the two continuously, so drift heals itself instead of accumulating.
@@ -117,6 +117,8 @@ the server to transcode them. It is not yet released - see that repo's own READM
   libraries included), or upload files straight from the browser.
 - **Metadata three ways** - background OMDb enrichment, a manual search-and-match page for what it
   missed, and a hand-editor for every field with poster upload.
+- **Cast with faces** - with a TMDb key, each item's full billed cast and characters, and every
+  actor's photo stored once on your own disk, so the Cast card stays local and offline.
 - **Direct streaming with on-demand transcoding** - byte-range direct play decided by the *probed*
   format, falling back to HLS (VAAPI hardware encoding when available) only when the browser really
   cannot play the file.

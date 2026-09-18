@@ -16,7 +16,8 @@ its own page under `agents/`, and the import poller is documented with the rest 
 | **thumbnailer** | `thumbnail_tasks` | build sized WebP poster variants; extract a frame poster for other-media | `agents/thumbnailer.md` |
 | **optimizer** | `optimize_tasks` | pre-build a browser-direct-play `.optimized.mp4` copy (GPU + elastic CPU workers) | `agents/optimizer.md` |
 | **probe** | `probe_tasks` | refresh each file's true container/codecs onto the cache + `meta.json` | `agents/probe.md` |
-| **discovery** | (timer, no queue) | reconcile cache vs disk, refill the four queues, run health checks, repair missing subtitle sidecars | `agents/discovery.md` |
+| **people** | `people_tasks` | resolve an item's cast on TMDb by its IMDb id, store each person's photo once in `.people/` | `agents/people.md` |
+| **discovery** | (timer, no queue) | reconcile cache vs disk, refill the five queues, run health checks, repair missing subtitle sidecars | `agents/discovery.md` |
 
 ## The shared task queue
 
@@ -27,14 +28,14 @@ needs - race-free **claim** (select-oldest-pending then flip to active in one tr
 made atomic by the single-connection cache), **finish**, **fail** (leave an error row for the
 admin), **prune** (drop pending/error tasks for a now-complete item), **reset-to-pending** (at
 startup, so a task whose agent died mid-run is retried), and **clear-all** (for a rebuild).
-Only the table name and status strings differ per queue. The enrich/thumbnail/probe agents are
+Only the table name and status strings differ per queue. The enrich/thumbnail/probe/people agents are
 near-identical loops over this helper; the optimizer adds its own worker scaling on top.
 
 ## Refill vs. health: two kinds of "needs attention"
 
 The work an agent does splits cleanly in two, and discovery is what keeps both current:
 
-- **Refill (auto-fixable).** Needs enrich / thumbnail / optimize / probe work. The fix is
+- **Refill (auto-fixable).** Needs enrich / thumbnail / optimize / probe / cast work. The fix is
   automatic, so it is never recorded as a health "issue" - the shared scanner just enqueues a
   task and the relevant agent handles it. The same refill logic backs both the manual scan
   buttons and the discovery agent.
@@ -56,8 +57,8 @@ A `meta.json` lacking its technical block is **refill** (the probe agent backfil
 
 Each agent has a manual "scan" button, but pressing buttons is optional: the **discovery
 agent** runs on an admin-chosen interval and, every tick, reconciles the cache against the
-filesystem and then runs the **same** refill logic for the optimize, enrich, thumbnail, and
-probe queues. So discovery is the scheduler that feeds the other queue-draining agents; the
+filesystem and then runs the **same** refill logic for the optimize, enrich, thumbnail,
+probe, and people queues. So discovery is the scheduler that feeds the other queue-draining agents; the
 agents themselves just drain whatever the queue holds, whether a button or discovery filled
 it.
 
@@ -68,12 +69,14 @@ flowchart TD
     DISC -->|refill| QT[(thumbnail_tasks)]
     DISC -->|refill| QO[(optimize_tasks)]
     DISC -->|refill| QP[(probe_tasks)]
+    DISC -->|refill| QC[(people_tasks)]
     DISC -->|health checks| HEALTH[(media_health)]
-    BTN[manual scan buttons] -->|same refill logic| QE & QT & QO & QP
+    BTN[manual scan buttons] -->|same refill logic| QE & QT & QO & QP & QC
     QE --> AE[enricher]
     QT --> AT[thumbnailer]
     QO --> AO[optimizer\nGPU + CPU workers]
     QP --> AP[probe agent]
+    QC --> AC[people agent]
     IMPORT[import poller] -->|writes rows| CACHE
 ```
 

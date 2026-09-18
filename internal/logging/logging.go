@@ -35,6 +35,7 @@ const (
 	Thumbnail = "thumbnail"
 	Discovery = "discovery"
 	Probe     = "probe"
+	People    = "people"
 )
 
 // Fields is structured context attached to an event, rendered only at debug level.

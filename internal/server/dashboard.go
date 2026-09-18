@@ -151,6 +151,7 @@ type taskBacklog struct {
 	Enrich    int `json:"enrich"`
 	Thumbnail int `json:"thumbnail"`
 	Probe     int `json:"probe"`
+	People    int `json:"people"`
 }
 
 // handleTaskBacklog returns how many background tasks are outstanding per agent type. It is
@@ -172,12 +173,15 @@ func (s *Server) handleTaskBacklog(w http.ResponseWriter, r *http.Request) {
 	thA, _ := db.ListActiveThumbnail(ctx, pool)
 	prP, _ := db.CountPendingProbe(ctx, pool)
 	prA, _ := db.ListActiveProbe(ctx, pool)
+	peP, _ := db.CountPendingPeople(ctx, pool)
+	peA, _ := db.ListActivePeople(ctx, pool)
 	writeJSON(w, taskBacklog{
 		Imports:   imports,
 		Optimize:  optP + len(optA),
 		Enrich:    enrP + len(enrA),
 		Thumbnail: thP + len(thA),
 		Probe:     prP + len(prA),
+		People:    peP + len(peA),
 	})
 }
 

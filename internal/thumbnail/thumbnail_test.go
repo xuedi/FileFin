@@ -64,8 +64,12 @@ func TestImagePipelines(t *testing.T) {
 	if err := FramePoster(ctx, ffmpeg, video, frame); err != nil {
 		t.Fatalf("FramePoster: %v", err)
 	}
+	profile := filepath.Join(dir, "profile.webp")
+	if err := Profile(ctx, ffmpeg, src, profile); err != nil {
+		t.Fatalf("Profile: %v", err)
+	}
 
-	for _, p := range []string{detail, tile, frame} {
+	for _, p := range []string{detail, tile, frame, profile} {
 		fi, err := os.Stat(p)
 		if err != nil || fi.Size() == 0 {
 			t.Errorf("expected non-empty output at %s (err=%v)", p, err)

@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS probe_tasks (
     error    TEXT,
     UNIQUE(media_id)
 );
+CREATE TABLE IF NOT EXISTS people_tasks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id TEXT,
+    status   TEXT,
+    agent    TEXT,
+    error    TEXT,
+    UNIQUE(media_id)
+);
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT NOT NULL UNIQUE,

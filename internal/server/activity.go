@@ -24,6 +24,7 @@ const (
 	runEnrich    = "enrich"
 	runThumbnail = "thumbnail"
 	runProbe     = "probe"
+	runPeople    = "people"
 )
 
 // runStatus is one pass in flight. Done/Total describe the whole pass, so the bar fills once
@@ -98,6 +99,7 @@ func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
 	s.addEnrich(ctx, pool, &snap)
 	s.addThumbnails(ctx, pool, &snap)
 	s.addProbes(ctx, pool, &snap)
+	s.addPeople(ctx, pool, &snap)
 	s.addPlayback(&snap)
 	writeJSON(w, snap)
 }
@@ -225,6 +227,24 @@ func (s *Server) addProbes(ctx context.Context, pool *sql.DB, snap *activitySnap
 		return
 	}
 	s.addRun(snap, runProbe, "Probing", pending+len(active))
+}
+
+func (s *Server) addPeople(ctx context.Context, pool *sql.DB, snap *activitySnapshot) {
+	active, err := db.ListActivePeople(ctx, pool)
+	if err != nil {
+		return
+	}
+	for _, t := range active {
+		snap.Activity = append(snap.Activity, activityItem{
+			Key: "people-" + strconv.FormatInt(t.ID, 10), Kind: runPeople,
+			Title: t.Title, Detail: t.Agent, State: "fetching cast", Percent: -1,
+		})
+	}
+	pending, err := db.CountPendingPeople(ctx, pool)
+	if err != nil {
+		return
+	}
+	s.addRun(snap, runPeople, "Cast photos", pending+len(active))
 }
 
 // addPlayback lists live transcode sessions. It reads the manager field directly rather than

@@ -107,6 +107,10 @@
       <span class="ff-dash-num">{s.coverage.totalFiles}</span>
       <span class="ff-dash-label">Media files</span>
     </div>
+    <div class="box ff-dash-card">
+      <span class="ff-dash-num">{s.people.stored}</span>
+      <span class="ff-dash-label">People with cast data{s.people.waiting ? ' - ' + s.people.waiting + ' items waiting' : ''}</span>
+    </div>
     <div class="box ff-dash-card ff-stats-coverage">
       <span class="ff-dash-label">Optimize coverage - {s.coverage.optimized}/{s.coverage.optimized + s.coverage.pending} files that need a copy</span>
       <ProgressBar value={s.coverage.optimized} max={s.coverage.optimized + s.coverage.pending || 1} />

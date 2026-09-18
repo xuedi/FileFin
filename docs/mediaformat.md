@@ -13,13 +13,23 @@ dataDir/
       <media-folder>/                 no config.json, has video -> media item
         <video file(s)>
         meta.json                     version, title, year, rich fields, genres, tags,
-                                      technical, added date, per-user state
+                                      technical, added date, per-user state, TMDb cast
         poster.*                      base poster (jpg/png/webp)
         poster_280.webp               detail variant (thumbnail agent)
         poster_180.webp               tile variant (thumbnail agent)
     <media-folder>/                   a category holds media folders + sub-categories
       ...
+  .people/                            shared people store (people agent), not a category
+    <tmdb-person-id>/
+      person.json                     name, department, birth/death, TMDb profile path
+      profile.webp                    the person's photo, 185 px wide
 ```
+
+Only folders directly under the data dir that carry a `config.json` are categories, and
+**dot-folders never are**: the people store and foreign ones such as a desktop's
+`.Trash-1000` sit beside the categories and are passed by. For the same reason a category
+name may not start with a dot. The people store and the `cast` block in `meta.json` are
+described in `agents/people.md`.
 
 ## The discriminator: config.json present?
 
@@ -132,8 +142,9 @@ references (a bookmark, an id a client is holding) are affected. See [`rename.md
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
 | `config.json` (id, alias, top-level other-media, position, markers) | `categories` rows (parent_id, effective other_media, position) |
-| `meta.json` (version, title, year, rich fields, genres, tags, technical, added date, per-user state) | `media` / `media_files` / `media_facets` rows |
+| `meta.json` (version, title, year, rich fields, genres, tags, technical, added date, per-user state, TMDb cast) | `media` / `media_files` / `media_facets` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
+| `.people/<id>/` (`person.json` + photo) | nothing: read straight from disk when a Cast card is shown |
 
 The **filename extension is never trusted** for a playback or optimize decision: a library
 where every file is named `.avi` regardless of its real format is judged by the **probed

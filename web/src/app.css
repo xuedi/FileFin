@@ -559,8 +559,23 @@ body { min-height: 100vh; }
 .ff-score-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
 .ff-score-value small { font-size: 0.8rem; font-weight: 400; color: var(--bulma-text-weak); margin-left: 0.1rem; }
 .ff-score-label { font-size: 0.75rem; color: var(--bulma-text-weak); }
-.ff-cast-chip { cursor: pointer; }
-.ff-cast-chip:hover { color: var(--bulma-link); }
+/* the Cast card: a grid of portraits, each a pivot into a cast search */
+.ff-cast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 0.9rem 0.75rem; }
+.ff-person { display: flex; flex-direction: column; min-width: 0; color: inherit; cursor: pointer; }
+.ff-person:hover .ff-person-name { color: var(--bulma-link); }
+.ff-person-photo {
+  width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: var(--bulma-radius);
+  background: var(--bulma-scheme-main-ter); margin-bottom: 0.35rem;
+}
+.ff-person-initials {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.6rem; font-weight: 600; color: var(--bulma-text-weak);
+}
+.ff-person-name, .ff-person-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-person-name { font-size: 0.85rem; font-weight: 600; line-height: 1.3; }
+.ff-person-role { font-size: 0.78rem; color: var(--bulma-text-weak); line-height: 1.3; }
+.ff-cast-foot { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.8rem; }
+.ff-cast-credit { margin-left: auto; font-size: 0.75rem; color: var(--bulma-text-weak); }
 .ff-subs { display: flex; flex-direction: column; gap: 0.6rem; }
 .ff-sub-head { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
 .ff-sub-head .tag { font-size: 0.7rem; height: 1.6em; }

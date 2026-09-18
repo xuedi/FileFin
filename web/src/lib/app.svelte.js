@@ -279,6 +279,7 @@ export class AppState {
   mediaFormat = $state('')
   importFolder = $state('')
   omdbKey = $state('')
+  tmdbKey = $state('')
   logLevel = $state('info')
   logOutput = $state('STDOUT')
   transcodeEnabled = $state(true)
@@ -346,6 +347,7 @@ export class AppState {
   enrichScanning = $state(false)
   thumbnailScanning = $state(false)
   probeScanning = $state(false)
+  peopleScanning = $state(false)
   repairingSubs = $state(false)
   sweeping = $state(false)
   sweepProgress = $state(null) // { total, done, subtitles, finished, error } while a full sweep runs
@@ -1431,6 +1433,7 @@ export class AppState {
     this.mediaFormat = r.mediaFormat
     this.importFolder = r.importFolder
     this.omdbKey = r.omdbKey
+    this.tmdbKey = r.tmdbKey
     this.logLevel = r.logLevel
     this.logOutput = r.logOutput
     this.transcodeEnabled = r.transcodeEnabled
@@ -1443,6 +1446,7 @@ export class AppState {
     this.settingsBaseline = {
       importFolder: r.importFolder,
       omdbKey: r.omdbKey,
+      tmdbKey: r.tmdbKey,
       logLevel: r.logLevel,
       logOutput: r.logOutput,
       transcodeEnabled: r.transcodeEnabled,
@@ -1458,6 +1462,7 @@ export class AppState {
   // its sub-groups are. Reading $state here keeps these reactive in the template.
   get importFolderDirty() { return this.importFolder !== this.settingsBaseline.importFolder }
   get omdbDirty() { return this.omdbKey !== this.settingsBaseline.omdbKey }
+  get tmdbDirty() { return this.tmdbKey !== this.settingsBaseline.tmdbKey }
   get transcodingDirty() {
     const b = this.settingsBaseline
     return this.transcodeEnabled !== b.transcodeEnabled || this.ffmpegPath !== b.ffmpegPath || this.ffprobePath !== b.ffprobePath
@@ -1468,7 +1473,7 @@ export class AppState {
   get loggingDirty() {
     return this.logLevel !== this.settingsBaseline.logLevel || this.logOutput !== this.settingsBaseline.logOutput
   }
-  get libraryDirty() { return this.importFolderDirty || this.omdbDirty }
+  get libraryDirty() { return this.importFolderDirty || this.omdbDirty || this.tmdbDirty }
   get playbackDirty() { return this.transcodingDirty || this.subtitleDirty }
   get automationDirty() { return this.optimizerDirty || this.discoveryDirty }
 
@@ -1478,6 +1483,7 @@ export class AppState {
     if (tab === 'library') {
       this.importFolder = b.importFolder
       this.omdbKey = b.omdbKey
+      this.tmdbKey = b.tmdbKey
     } else if (tab === 'playback') {
       this.transcodeEnabled = b.transcodeEnabled
       this.ffmpegPath = b.ffmpegPath
@@ -1507,6 +1513,7 @@ export class AppState {
     try {
       if (this.importFolderDirty) await this._postSetting('/api/admin/settings/import-folder', { path: this.importFolder })
       if (this.omdbDirty) await this._postSetting('/api/admin/settings/omdb-key', { key: this.omdbKey.trim() })
+      if (this.tmdbDirty) await this._postSetting('/api/admin/settings/tmdb-key', { key: this.tmdbKey.trim() })
       this.toast('success', 'Library settings saved.')
     } catch (e) {
       this.toast('error', (await errText(e)) || 'Could not save library settings')
@@ -1992,6 +1999,18 @@ export class AppState {
       this.toast('error', (await errText(e)) || 'Probe scan failed')
     } finally {
       this.probeScanning = false
+    }
+  }
+
+  async peopleScan() {
+    this.peopleScanning = true
+    try {
+      const r = await api('/api/admin/people/scan', { method: 'POST' })
+      this.toast('success', `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for cast photos; ${r.pending} waiting in line.`)
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Cast photo scan failed')
+    } finally {
+      this.peopleScanning = false
     }
   }
 

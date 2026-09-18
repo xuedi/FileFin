@@ -23,6 +23,7 @@ type settingsView struct {
 	MediaFormat       string `json:"mediaFormat"`
 	ImportFolder      string `json:"importFolder"`
 	OMDBKey           string `json:"omdbKey"`
+	TMDBKey           string `json:"tmdbKey"`
 	LogLevel          string `json:"logLevel"`
 	LogOutput         string `json:"logOutput"`
 	TranscodeEnabled  bool   `json:"transcodeEnabled"`
@@ -92,6 +93,7 @@ func (s *Server) settingsPayload(cfg *config.Config) settingsView {
 		MediaFormat:       cfg.MediaFormat,
 		ImportFolder:      cfg.ImportFolder,
 		OMDBKey:           cfg.OMDBKey,
+		TMDBKey:           cfg.TMDBKey,
 		LogLevel:          logLevel,
 		LogOutput:         logOutput,
 		TranscodeEnabled:  cfg.TranscodeOn(),
@@ -177,6 +179,23 @@ func (s *Server) handleSetOMDBKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.OMDBKey = strings.TrimSpace(req.Key) })
+	if !ok {
+		return
+	}
+	writeJSON(w, s.settingsPayload(cfg))
+}
+
+// handleSetTMDBKey records the TMDb credential (a v3 API key or a v4 read token) behind the
+// people agent. An empty key is allowed and turns cast photos off.
+func (s *Server) handleSetTMDBKey(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Key string `json:"key"`
+	}](w, r)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.mutateConfig(w, func(c *config.Config) { c.TMDBKey = strings.TrimSpace(req.Key) })
 	if !ok {
 		return
 	}

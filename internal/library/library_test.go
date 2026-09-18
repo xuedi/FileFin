@@ -14,11 +14,36 @@ func TestValidName(t *testing.T) {
 			t.Errorf("ValidName(%q) = %v, want nil", n, err)
 		}
 	}
-	bad := []string{"", ".", "..", "a/b", "with\x00nul", "ctrl\tchar"}
+	bad := []string{"", ".", "..", ".people", "a/b", "with\x00nul", "ctrl\tchar"}
 	for _, n := range bad {
 		if err := ValidName(n); err == nil {
 			t.Errorf("ValidName(%q) = nil, want error", n)
 		}
+	}
+}
+
+// TestListSkipsDotFolders: the data dir root also holds dot-folders that are not the
+// library's (the people store, a desktop trash). Even one carrying a config.json is never
+// taken for a category.
+func TestListSkipsDotFolders(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Create(dir, "", "Movies", "", 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{".people/6384", ".Trash-1000"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".Trash-1000", "config.json"), []byte(`{"id":9}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cats, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cats) != 1 || cats[0].Name != "Movies" {
+		t.Fatalf("categories = %+v, want only Movies", cats)
 	}
 }
 

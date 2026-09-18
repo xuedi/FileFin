@@ -19,6 +19,7 @@
     { key: 'enrich', label: 'Metadata' },
     { key: 'thumbnail', label: 'Thumbnails' },
     { key: 'probe', label: 'Probe' },
+    { key: 'people', label: 'Cast photos' },
   ]
 </script>
 
@@ -96,6 +97,16 @@
         <input id="ff-omdb" class="input" bind:value={app.omdbKey} placeholder="(not set - enrichment disabled)" />
       </div>
       <p class="help">Key for metadata lookups. Leave empty to disable OMDb enrichment.</p>
+    </div>
+    <div class="field">
+      <label class="label" for="ff-tmdb">TMDb API key</label>
+      <div class="control">
+        <input id="ff-tmdb" class="input" bind:value={app.tmdbKey} placeholder="(not set - cast photos disabled)" />
+      </div>
+      <p class="help">
+        API key or read access token for cast and actor photos. Leave empty to disable.
+        This product uses the TMDB API but is not endorsed or certified by TMDB.
+      </p>
     </div>
     <div class="ff-settings-actions">
       <button class="button is-ghost" disabled={!app.libraryDirty} onclick={() => app.resetTab('library')}>Reset</button>
@@ -201,6 +212,10 @@
     <div class="ff-maint-row">
       <div class="ff-maint-text"><strong>Re-scan formats (probe)</strong><p class="help">Queue files whose true container/codecs need probing.</p></div>
       <button class="button" disabled={app.probeScanning} onclick={() => app.probeScan()}>{app.probeScanning ? 'Scanning...' : 'Run'}</button>
+    </div>
+    <div class="ff-maint-row">
+      <div class="ff-maint-text"><strong>Re-scan cast photos (TMDb)</strong><p class="help">Queue media whose cast or actor photos are missing.</p></div>
+      <button class="button" disabled={app.peopleScanning || !app.settingsBaseline.tmdbKey} onclick={() => app.peopleScan()}>{app.peopleScanning ? 'Scanning...' : 'Run'}</button>
     </div>
     <div class="ff-maint-row">
       <div class="ff-maint-text"><strong>Full health sweep</strong><p class="help">Check every media folder at once instead of the rolling trickle, extracting embedded subtitles that have no sidecar.</p></div>

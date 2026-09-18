@@ -141,6 +141,10 @@ func (s *Server) runRebuild(ctx context.Context, pool *sql.DB, dataDir string) {
 		s.rebuildJob.fail("could not clear probe tasks")
 		return
 	}
+	if err := db.ClearPeopleTasksAll(ctx, pool); err != nil {
+		s.rebuildJob.fail("could not clear people tasks")
+		return
+	}
 	if err := db.ClearHealthAll(ctx, pool); err != nil {
 		s.rebuildJob.fail("could not clear media health")
 		return
@@ -228,7 +232,7 @@ func readMediaFolder(dataDir string, c library.Category, folder string) (scanned
 		enriched = m.Enriched || m.Metadata["imdbID"] != ""
 		language, country = m.Metadata["language"], m.Metadata["origin"]
 		director, writer = m.Metadata["directedBy"], m.Metadata["writtenBy"]
-		actors, genres, tags = m.Actors, m.Genres, m.Tags
+		actors, genres, tags = m.FacetActors(), m.Genres, m.Tags
 		added = m.Added
 		for u, st := range m.State {
 			userState[u] = userStateRow(st)

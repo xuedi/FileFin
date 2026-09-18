@@ -24,7 +24,7 @@ built entirely from a filesystem scan and exists only to make listing and lookup
 | `categories`      | id / name (relpath) / parent_id / alias / effective other_media / position                                                     | rebuild, category admin                      |
 | `media`           | one row per media folder (title, year, description, poster, enriched, + denormalized facets: language/country/director/writer) | importer, rebuild, enricher, thumbnail agent |
 | `media_files`     | one row per video file (index, season/episode, ext, path)                                                                      | importer, rebuild                            |
-| `media_facets`    | the multivalued search facets (one row per actor/genre/tag, tagged by kind)                                                    | importer, rebuild, reconcile, enricher       |
+| `media_facets`    | the multivalued search facets (one row per actor/genre/tag, tagged by kind; actors include TMDb cast names, see `agents/people.md`) | importer, rebuild, reconcile, enricher, people agent |
 | `user_state`      | per-user playback-state mirror (watched/favorite/rating/has_progress/updated) for cache-served home + watched overlays         | playback-state writers, rebuild, reconcile   |
 | `imports`         | the transient import interface                                                                                                 | producers + importer (see `import.md`)       |
 | `optimize_tasks`  | transient pre-transcode queue (see `agents/optimizer.md`)                                                                      | optimizer                                    |

@@ -118,6 +118,7 @@ type Config struct {
 	MediaFormat  string          `json:"mediaFormat"`  // "" until permanently chosen in Settings
 	ImportFolder string          `json:"importFolder"` // server path media is imported from
 	OMDBKey      string          `json:"omdbKey"`      // OMDb API key; "" skips metadata enrichment
+	TMDBKey      string          `json:"tmdbKey"`      // TMDb API key or read token; "" skips cast photos
 	LogLevel     string          `json:"logLevel"`     // error|info|debug; "" => info
 	LogOutput    string          `json:"logOutput"`    // STDOUT|STDERR|file path; "" => STDOUT
 

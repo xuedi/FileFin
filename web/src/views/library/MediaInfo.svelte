@@ -29,6 +29,20 @@
     return m ? { big: m[1], small: m[2] ?? '' } : { big: v, small: '' }
   }
 
+  // The first rows of a long series cast; the rest wait behind "Show all".
+  const castPreview = 12
+  let showAllCast = $state(false)
+  $effect(() => {
+    detail.id
+    showAllCast = false
+  })
+  let shownPeople = $derived(showAllCast ? detail.people : detail.people.slice(0, castPreview))
+
+  function initials(name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase()
+  }
+
   function pivot(key) {
     return { 'Directed by': 'director', Language: 'language' }[key]
   }
@@ -73,14 +87,32 @@
         </div>
       {/if}
 
-      {#if detail.actors.length}
+      {#if detail.people.length}
         <div class="box ff-info-card">
           <h4 class="ff-card-title">Cast</h4>
-          <div class="tags">
-            {#each detail.actors as a}
-              <a href={null} class="tag is-medium ff-cast-chip" onclick={() => app.go('/search?field=cast&q=' + encodeURIComponent(a))}>{a}</a>
+          <div class="ff-cast-grid">
+            {#each shownPeople as p (p.id || p.name)}
+              <a href={null} class="ff-person" title={p.character ? p.name + ' as ' + p.character : p.name} onclick={() => app.go('/search?field=cast&q=' + encodeURIComponent(p.name))}>
+                {#if p.photo}
+                  <img class="ff-person-photo" src={p.photo} alt={p.name} loading="lazy" />
+                {:else}
+                  <span class="ff-person-photo ff-person-initials">{initials(p.name)}</span>
+                {/if}
+                <span class="ff-person-name">{p.name}</span>
+                {#if p.character}<span class="ff-person-role">{p.character}</span>{/if}
+              </a>
             {/each}
           </div>
+          {#if detail.people.length > castPreview || detail.castFromTMDb}
+            <div class="ff-cast-foot">
+              {#if detail.people.length > castPreview}
+                <button class="button is-small is-ghost" onclick={() => (showAllCast = !showAllCast)}>
+                  {showAllCast ? 'Show fewer' : 'Show all ' + detail.people.length}
+                </button>
+              {/if}
+              {#if detail.castFromTMDb}<span class="ff-cast-credit">Cast data: TMDb</span>{/if}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>

@@ -160,8 +160,8 @@ func ValidName(name string) error {
 		return fmt.Errorf("a folder name is required")
 	case len(name) > 255:
 		return fmt.Errorf("folder name must be 255 bytes or fewer")
-	case name == "." || name == "..":
-		return fmt.Errorf("folder name must not be %q", name)
+	case strings.HasPrefix(name, "."):
+		return fmt.Errorf("folder name must not start with a dot")
 	case strings.ContainsRune(name, '/'):
 		return fmt.Errorf("folder name must not contain a slash")
 	}
@@ -225,7 +225,9 @@ func walkCategories(dataDir, parentRel string, cats *[]Category) error {
 		return err
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
+		// Dot-folders are never categories: the people store and foreign ones such as a
+		// desktop's .Trash-1000 live beside the categories at the data dir root.
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		childDir := filepath.Join(dir, e.Name())

@@ -177,6 +177,9 @@ func (s *Server) sweep(ctx context.Context, limit int) {
 	if _, err := s.refillProbe(ctx, pool); err != nil {
 		s.dlog().Error("discovery probe refill failed", logging.Fields{"error": err.Error()})
 	}
+	if _, err := s.refillPeople(ctx, pool); err != nil {
+		s.dlog().Error("discovery people refill failed", logging.Fields{"error": err.Error()})
+	}
 
 	// Health pass: process the least-recently-checked items, a batch at a time on the timer
 	// so a large library is swept as a continuous trickle, or all of them when forced.

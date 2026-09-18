@@ -157,6 +157,7 @@ func (s *Server) applyOmdbResult(ctx context.Context, pool *sql.DB, m db.Media, 
 			out = fresh
 			out.Technical = cur.Technical
 			out.State = cur.State
+			out.Cast = cur.Cast // the people agent sees the new IMDb id and refreshes it
 		}
 		out.Title, out.Year = title, year
 		out.Enriched = true
@@ -188,7 +189,7 @@ func (s *Server) writeMediaCacheRow(ctx context.Context, pool *sql.DB, id, title
 	_ = db.SetMediaEnriched(ctx, pool, id, meta.Description, meta.Plot, posterRel)
 	_ = db.SetMediaFacets(ctx, pool, id,
 		meta.Metadata["language"], meta.Metadata["origin"], meta.Metadata["directedBy"], meta.Metadata["writtenBy"])
-	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags)
+	_ = db.ReplaceMediaFacets(ctx, pool, id, meta.FacetActors(), meta.Genres, meta.Tags)
 	return nil
 }
 

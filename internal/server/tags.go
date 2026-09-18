@@ -104,7 +104,7 @@ func (s *Server) setMediaTags(ctx context.Context, pool *sql.DB, folder, id stri
 	if err != nil {
 		return err
 	}
-	s.bestEffort(db.ReplaceMediaFacets(ctx, pool, id, meta.Actors, meta.Genres, meta.Tags), "mirror media tags")
+	s.bestEffort(db.ReplaceMediaFacets(ctx, pool, id, meta.FacetActors(), meta.Genres, meta.Tags), "mirror media tags")
 	return nil
 }
 

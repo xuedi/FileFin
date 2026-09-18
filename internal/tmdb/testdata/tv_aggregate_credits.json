@@ -1,0 +1,65 @@
+{
+  "id": 66732,
+  "cast": [
+    {
+      "id": 1920,
+      "name": "Winona Ryder",
+      "known_for_department": "Acting",
+      "profile_path": "/8RVrlgtua8b53wmK7oZAAkm0N5O.jpg",
+      "roles": [
+        {
+          "character": "Joyce Byers",
+          "episode_count": 42
+        }
+      ],
+      "total_episode_count": 42,
+      "order": 0
+    },
+    {
+      "id": 35029,
+      "name": "David Harbour",
+      "known_for_department": "Acting",
+      "profile_path": "/qMFtMWlYVtFVyBoBhX5IoA5sN5a.jpg",
+      "roles": [
+        {
+          "character": "Jim Hopper",
+          "episode_count": 42
+        }
+      ],
+      "total_episode_count": 42,
+      "order": 1
+    },
+    {
+      "id": 1356210,
+      "name": "Millie Bobby Brown",
+      "known_for_department": "Acting",
+      "profile_path": "/kHO7hdNEVuTnQ0OjjrxP1RcAa0e.jpg",
+      "roles": [
+        {
+          "character": "Eleven",
+          "episode_count": 17
+        },
+        {
+          "character": "Eleven / Jane Hopper",
+          "episode_count": 25
+        }
+      ],
+      "total_episode_count": 42,
+      "order": 3
+    },
+    {
+      "id": 1442069,
+      "name": "Finn Wolfhard",
+      "known_for_department": "Acting",
+      "profile_path": "/vgjd34eWfVL6GsLHwiwcAsjWLmo.jpg",
+      "roles": [
+        {
+          "character": "Mike Wheeler",
+          "episode_count": 42
+        }
+      ],
+      "total_episode_count": 42,
+      "order": 3
+    }
+  ]
+}

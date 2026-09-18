@@ -22,6 +22,7 @@ import (
 	"filefin/internal/config"
 	"filefin/internal/importer"
 	"filefin/internal/logging"
+	"filefin/internal/tmdb"
 	"filefin/internal/transcode"
 	"filefin/web"
 )
@@ -77,6 +78,11 @@ type Server struct {
 	// probeStart guards the single format-probe agent goroutine.
 	probeStart sync.Once
 
+	// peopleStart guards the single TMDb people agent goroutine; newTMDb builds its client
+	// from the configured key (a test points it at a fake TMDb).
+	peopleStart sync.Once
+	newTMDb     func(key string) *tmdb.Client
+
 	// backfillMu serializes the version-gated cache backfill. ensureDB runs on every request,
 	// so without it a burst of concurrent first requests each start the whole pass before any
 	// of them stamps the new version - on a large library, the same walk several times over.
@@ -127,6 +133,7 @@ func New() *Server {
 		optPercent:   map[int64]int{},
 		drains:       newDrainTracker(),
 		reconfigDisc: make(chan struct{}, 1),
+		newTMDb:      tmdb.New,
 	}
 }
 
@@ -200,6 +207,7 @@ func Run() error {
 		s.startEnrichAgent()
 		s.startThumbnailAgent()
 		s.startProbeAgent()
+		s.startPeopleAgent()
 		s.startDiscovery()
 		s.signalReconfigOpt()
 		s.signalReconfigDisc()
@@ -285,6 +293,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/category/{id}/media", s.auth(s.handleCategoryMedia))
 		mux.Handle("GET /api/media/{id}", s.auth(s.handleMediaDetail))
 		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
+		mux.Handle("GET /api/people/{id}/photo", s.auth(s.handlePersonPhoto))
 		mux.Handle("POST /api/media/{id}/favorite", s.auth(s.handleFavorite))
 		mux.Handle("POST /api/media/{id}/rating", s.auth(s.handleRating))
 		mux.Handle("POST /api/media/{id}/subtitle", s.auth(s.handleSubtitlePref))
@@ -316,6 +325,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/settings/format", s.admin(s.handleSetFormat))
 		mux.Handle("POST /api/admin/settings/import-folder", s.admin(s.handleSetImportFolder))
 		mux.Handle("POST /api/admin/settings/omdb-key", s.admin(s.handleSetOMDBKey))
+		mux.Handle("POST /api/admin/settings/tmdb-key", s.admin(s.handleSetTMDBKey))
 		mux.Handle("POST /api/admin/settings/logging", s.admin(s.handleSetLogging))
 		mux.Handle("POST /api/admin/settings/transcoding", s.admin(s.handleSetTranscoding))
 		mux.Handle("POST /api/admin/settings/subtitle-language", s.admin(s.handleSetSubtitleLanguage))
@@ -350,6 +360,8 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/thumbnail/scan", s.admin(s.handleThumbnailScan))
 		mux.Handle("GET /api/admin/probe/active", s.admin(s.handleActiveProbe))
 		mux.Handle("POST /api/admin/probe/scan", s.admin(s.handleProbeScan))
+		mux.Handle("GET /api/admin/people/active", s.admin(s.handleActivePeople))
+		mux.Handle("POST /api/admin/people/scan", s.admin(s.handlePeopleScan))
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
 		mux.Handle("GET /api/admin/rebuild/progress", s.admin(s.handleRebuildProgress))
 		mux.Handle("GET /api/admin/import/folder", s.admin(s.handleImportFolder))

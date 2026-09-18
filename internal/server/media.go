@@ -15,6 +15,7 @@ import (
 	"filefin/internal/ffprobe"
 	"filefin/internal/importer"
 	"filefin/internal/logging"
+	"filefin/internal/people"
 	"filefin/internal/state"
 	"filefin/internal/subtitle"
 	"filefin/internal/thumbnail"
@@ -72,6 +73,8 @@ type mediaDetail struct {
 	Ratings         []pair     `json:"ratings"`
 	Technical       []pair     `json:"technical"`
 	Actors          []string   `json:"actors"`
+	People          []castCard `json:"people"`
+	CastFromTMDb    bool       `json:"castFromTMDb"`
 	Genres          []string   `json:"genres"`
 	Tags            []string   `json:"tags"`
 	Watched         bool       `json:"watched"`
@@ -80,6 +83,42 @@ type mediaDetail struct {
 	Subtitle        string     `json:"subtitle"`
 	ContinueIndex   int        `json:"continueIndex"`
 	ContinueSeconds int        `json:"continueSeconds"`
+}
+
+// castCard is one person on the detail page's Cast card. Photo is the same-origin photo URL,
+// empty when the people store holds none.
+type castCard struct {
+	ID        int    `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Character string `json:"character,omitempty"`
+	Photo     string `json:"photo,omitempty"`
+}
+
+// castCards lists the Cast card: the TMDb cast in billing order, then every actor another
+// source named that the cast does not already cover under another spelling. An item with no
+// current TMDb cast shows its actors alone, as before. fromTMDb says whether the TMDb credit
+// belongs under the card.
+func castCards(meta importer.Meta, store people.Store) ([]castCard, bool) {
+	out := []castCard{}
+	seen := map[string]bool{}
+	for _, c := range meta.CurrentCast() {
+		card := castCard{ID: c.ID, Name: c.Name, Character: c.Character}
+		if store.PhotoPath(c.ID) != "" {
+			card.Photo = "/api/people/" + strconv.Itoa(c.ID) + "/photo"
+		}
+		out = append(out, card)
+		seen[people.NameKey(c.Name)] = true
+	}
+	fromTMDb := len(out) > 0
+	for _, a := range meta.Actors {
+		k := people.NameKey(a)
+		if a == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, castCard{Name: a})
+	}
+	return out, fromTMDb
 }
 
 // metaOrder fixes the display order of the camelCase meta.json keys (the order the
@@ -332,6 +371,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	if meta.Actors != nil {
 		d.Actors = meta.Actors
 	}
+	d.People, d.CastFromTMDb = castCards(meta, s.peopleStore())
 	if meta.Genres != nil {
 		d.Genres = meta.Genres
 	}

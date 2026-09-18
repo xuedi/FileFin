@@ -96,6 +96,14 @@ type statsView struct {
 	Playability []labelCount `json:"playability"`
 	Tags        []labelCount `json:"tags"`
 	Coverage    coverageStat `json:"coverage"`
+	People      peopleStat   `json:"people"`
+}
+
+// peopleStat is how far cast photos have come: people in the shared store, and items still
+// queued for their cast.
+type peopleStat struct {
+	Stored  int `json:"stored"`
+	Waiting int `json:"waiting"`
 }
 
 // statsTagLimit caps the tag breakdown to the head of the distribution: a long tail of
@@ -158,6 +166,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		topTags = append(topTags, labelCount{Label: t.Tag, Count: t.Count})
 	}
 
+	peP, _ := db.CountPendingPeople(ctx, pool)
+	peA, _ := db.ListActivePeople(ctx, pool)
+
 	writeJSON(w, statsView{
 		Containers:  sortedCounts(containers),
 		VideoCodecs: sortedCounts(video),
@@ -171,6 +182,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			TotalFiles: len(files),
 			TotalMedia: media,
 		},
+		People: peopleStat{Stored: s.peopleStore().Count(), Waiting: peP + len(peA)},
 	})
 }
 

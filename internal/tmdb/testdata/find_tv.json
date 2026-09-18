@@ -1,0 +1,15 @@
+{
+  "movie_results": [],
+  "tv_results": [
+    {
+      "id": 66732,
+      "name": "Stranger Things",
+      "original_name": "Stranger Things",
+      "first_air_date": "2016-07-15",
+      "media_type": "tv"
+    }
+  ],
+  "person_results": [],
+  "tv_episode_results": [],
+  "tv_season_results": []
+}

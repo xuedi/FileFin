@@ -143,7 +143,9 @@ favourite/watched actions, all sharing one height.
 The detail page splits into two parts. The top holds only what a viewer acts on: the title bar
 (rating, favourite, play), the player, description, genre and tag chips, and the episode picker.
 Under the episodes, `library/MediaInfo.svelte` renders a **Details** section beside the poster: a
-wide column (About - external scores, facts, plot; Cast) and a narrow one (File - the current file's
+wide column (About - external scores, facts, plot; Cast - a grid of portraits with each actor's
+character, an initials avatar where no photo is stored, the first twelve with a "Show all" toggle and
+a TMDb credit when the cast came from there, see `agents/people.md`) and a narrow one (File - the current file's
 technical data and whether it direct-plays or transcodes; Subtitles - every sidecar of the current
 file with its language, qualifiers, sniffed format and size, the track the remembered language turns
 on, and per-language coverage across a series' files; Admin). The columns stack when the main

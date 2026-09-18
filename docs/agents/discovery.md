@@ -8,11 +8,11 @@ reusable candidacy, reconcile, and health logic it shares with the buttons is th
 
 ## Two jobs, kept distinct
 
-- **Refill (actionable).** "Needs attention" is exactly what the three buttons do: enqueue an
-  optimize / enrich / thumbnail task, and the relevant agent handles it. The fix is
-  automatic, so it is never recorded as a health "issue". The shared refill logic lives in
-  the scanner and is used verbatim by the buttons and the agent (see `optimizer.md`,
-  `enricher.md`, `thumbnailer.md`).
+- **Refill (actionable).** "Needs attention" is exactly what the scan buttons do: enqueue an
+  optimize / enrich / thumbnail / probe / people task, and the relevant agent handles it. The
+  fix is automatic, so it is never recorded as a health "issue". The shared refill logic lives
+  in the scanner and is used verbatim by the buttons and the agent (see `optimizer.md`,
+  `enricher.md`, `thumbnailer.md`, `probe.md`, `people.md`).
 - **Health (not auto-fixable).** Conditions the agent cannot fix: a missing or unparseable
   `meta.json`, a media folder with no video file, a listed video file gone or zero-byte, a
   referenced poster gone, an orphaned optimizer copy (source gone) or sized poster variant
@@ -64,7 +64,7 @@ flowchart TD
     LOCK --> DIFF[cheap name diff: on-disk media ids vs cached ids]
     DIFF --> ADD[new on disk: insert media rows]
     DIFF --> DEL[vanished: delete media + files + health + queued tasks]
-    ADD --> REFILL[refill optimize / enrich / thumbnail queues]
+    ADD --> REFILL[refill optimize / enrich / thumbnail / probe / people queues]
     DEL --> REFILL
     REFILL --> RETRY[re-queue enrich errors last tried > 14 days ago]
     RETRY --> ROLL[select N least-recently-checked items]

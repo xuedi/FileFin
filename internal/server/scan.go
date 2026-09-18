@@ -121,6 +121,37 @@ func (s *Server) refillProbe(ctx context.Context, pool *sql.DB) (int, error) {
 	return queued, nil
 }
 
+// refillPeople queues a people task for every item with cast work left (see needsPeople)
+// and prunes tasks for items now complete. Without a TMDb key there is nothing the agent
+// could do, so nothing is queued. It returns the candidate count.
+func (s *Server) refillPeople(ctx context.Context, pool *sql.DB) (int, error) {
+	if s.tmdbClient() == nil {
+		return 0, nil
+	}
+	media, err := db.AllMedia(ctx, pool)
+	if err != nil {
+		return 0, err
+	}
+	store := s.peopleStore()
+	queued, failed := 0, 0
+	for _, m := range media {
+		meta, err := importer.ReadMeta(m.FolderPath)
+		if err == nil && needsPeople(meta, store) {
+			if err := db.UpsertPendingPeople(ctx, pool, m.ID); err != nil {
+				failed++
+				continue
+			}
+			queued++
+		} else {
+			s.bestEffort(db.PrunePeople(ctx, pool, m.ID), "prune people task")
+		}
+	}
+	if failed > 0 {
+		s.pplog().Error("some people tasks could not be queued", logging.Fields{"failed": failed})
+	}
+	return queued, nil
+}
+
 // technicalIncomplete reports whether a folder's meta.json is present but lacks a complete
 // technical block (no block, or no container/video codec), so the probe agent should
 // backfill it. A missing or unparseable meta.json is the health agent's concern, not the
@@ -344,6 +375,7 @@ func (s *Server) dropMediaFromCache(ctx context.Context, pool *sql.DB, id, why s
 	s.bestEffort(db.PruneThumbnail(ctx, pool, id), "prune "+why+" thumbnail task")
 	s.bestEffort(db.PruneOptimizeForMedia(ctx, pool, id), "prune "+why+" optimize task")
 	s.bestEffort(db.PruneProbe(ctx, pool, id), "prune "+why+" probe task")
+	s.bestEffort(db.PrunePeople(ctx, pool, id), "prune "+why+" people task")
 }
 
 // reconcileItem processes one media item in the rolling pass: if its folder fingerprint

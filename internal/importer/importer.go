@@ -15,6 +15,7 @@ import (
 
 	"filefin/internal/ffprobe"
 	"filefin/internal/omdb"
+	"filefin/internal/people"
 	"filefin/internal/plex"
 	"filefin/internal/state"
 )
@@ -54,6 +55,61 @@ type Meta struct {
 	// playback-state handlers through the same per-folder lock as the rest of Meta;
 	// a folder nobody has touched carries no state key (omitempty).
 	State map[string]state.UserState `json:"state,omitempty"`
+	// Cast is the credited cast resolved on TMDb, written only by the people agent. Actors
+	// stays what the other sources wrote; Cast is what the Cast card shows when present.
+	Cast *Cast `json:"cast,omitempty"`
+}
+
+// Cast is the TMDb cast of one item, resolved through the IMDb id it records, so a re-match
+// to another IMDb id is seen as stale. Error explains an empty Members (the title is not on
+// TMDb), so the agent does not ask again every sweep.
+type Cast struct {
+	ImdbID  string       `json:"imdbID"`
+	TMDbID  int          `json:"tmdbID,omitempty"`
+	Kind    string       `json:"kind,omitempty"`
+	Fetched int64        `json:"fetched"`
+	Error   string       `json:"error,omitempty"`
+	Members []CastMember `json:"members,omitempty"`
+}
+
+// CastMember is one credited person, keyed by TMDb person id into the shared people store.
+type CastMember struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Character string `json:"character,omitempty"`
+	Order     int    `json:"order"`
+}
+
+// CurrentCast is the TMDb cast when it still belongs to the item's IMDb id. After a re-match
+// the old cast describes another title, so it is ignored until the people agent refreshes it.
+func (m Meta) CurrentCast() []CastMember {
+	if m.Cast == nil || m.Cast.ImdbID == "" || m.Cast.ImdbID != m.Metadata["imdbID"] {
+		return nil
+	}
+	return m.Cast.Members
+}
+
+// FacetActors is the searchable cast of an item: the actors every source wrote, plus each
+// TMDb cast name none of them already covers under another spelling.
+func (m Meta) FacetActors() []string {
+	out := append([]string(nil), m.Actors...)
+	cast := m.CurrentCast()
+	if len(cast) == 0 {
+		return out
+	}
+	seen := map[string]bool{}
+	for _, a := range m.Actors {
+		seen[people.NameKey(a)] = true
+	}
+	for _, c := range cast {
+		k := people.NameKey(c.Name)
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, c.Name)
+	}
+	return out
 }
 
 // WriteMeta writes meta.json into folder, overwriting any existing file.

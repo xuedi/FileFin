@@ -18,9 +18,10 @@ import (
 // the tile is cropped to exactly TileWidth x TileHeight (2:3). The filenames embed the
 // width so the on-disk name and the pixel target can never drift.
 const (
-	DetailWidth = 280
-	TileWidth   = 180
-	TileHeight  = 270
+	DetailWidth  = 280
+	TileWidth    = 180
+	TileHeight   = 270
+	ProfileWidth = 185
 
 	// frameSeek skips a likely-black frame 0 when extracting an other-media poster.
 	frameSeek = "3"
@@ -44,6 +45,13 @@ func Detail(ctx context.Context, ffmpeg, src, dst string) error {
 func Tile(ctx context.Context, ffmpeg, src, dst string) error {
 	vf := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d",
 		TileWidth, TileHeight, TileWidth, TileHeight)
+	return encode(ctx, ffmpeg, nil, src, vf, dst)
+}
+
+// Profile scales a person's photo src to ProfileWidth, preserving aspect, and writes dst as
+// WebP.
+func Profile(ctx context.Context, ffmpeg, src, dst string) error {
+	vf := fmt.Sprintf("scale=%d:-2", ProfileWidth)
 	return encode(ctx, ffmpeg, nil, src, vf, dst)
 }
 

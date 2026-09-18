@@ -1,0 +1,15 @@
+{
+  "movie_results": [
+    {
+      "id": 603,
+      "title": "The Matrix",
+      "original_title": "The Matrix",
+      "release_date": "1999-03-31",
+      "media_type": "movie"
+    }
+  ],
+  "tv_results": [],
+  "person_results": [],
+  "tv_episode_results": [],
+  "tv_season_results": []
+}
