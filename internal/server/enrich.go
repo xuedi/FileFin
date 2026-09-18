@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"filefin/internal/db"
 	"filefin/internal/importer"
 	"filefin/internal/logging"
 	"filefin/internal/omdb"
+	"filefin/internal/sources"
 	"filefin/internal/thumbnail"
 )
 
@@ -127,7 +129,18 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 		_ = db.FinishEnrich(ctx, pool, task.ID)
 		return
 	}
-	mv, err := client.Lookup(ctx, m.Title, m.Year)
+	if m.Enriched {
+		s.snapshotOMDb(ctx, pool, client, task, m)
+		return
+	}
+	// An IMDb id another source already found (TMDb) is a sharper lookup than the title.
+	var mv *omdb.Movie
+	known, _ := importer.ReadMeta(m.Path)
+	if imdb := known.Metadata["imdbID"]; imdb != "" {
+		mv, err = client.LookupByID(ctx, imdb)
+	} else {
+		mv, err = client.Lookup(ctx, m.Title, m.Year)
+	}
 	if err != nil {
 		_ = db.FailEnrich(ctx, pool, task.ID, err.Error(), time.Now().Unix())
 		s.elog().Info("omdb lookup failed for "+m.Title,
@@ -150,17 +163,26 @@ func (s *Server) enrichOne(ctx context.Context, pool *sql.DB, client *omdb.Clien
 // (ffprobe) and per-user state blocks, and the poster is refreshed. The write goes through
 // the shared per-folder lock so a concurrent playback event is never dropped.
 func (s *Server) applyOmdbResult(ctx context.Context, pool *sql.DB, m db.Media, client *omdb.Client, mv *omdb.Movie, title string, year int, replace bool) error {
+	snap := sources.FromOMDb(mv, time.Now().Unix())
 	meta, err := s.metaMgr.Update(m.Path, func(cur importer.Meta) importer.Meta {
 		fresh := importer.MetaFromOMDb(mv, title, year)
 		out := importer.MergeMeta(cur, fresh)
 		if replace {
 			out = fresh
-			out.Technical = cur.Technical
-			out.State = cur.State
+			out.Technical, out.State, out.Tags, out.Added = cur.Technical, cur.State, cur.Tags, cur.Added
 			out.Cast = cur.Cast // the people agent sees the new IMDb id and refreshes it
+			out.Sources = cur.Sources
+			// A re-match is a fresh start: only what was typed by hand stays pinned, and another
+			// source's record of the old match is dropped until it is looked up again.
+			out.Choices = manualChoices(cur.Choices)
+			if t := out.Sources[sources.TMDb]; t != nil && t.ImdbID != snap.ImdbID {
+				delete(out.Sources, sources.TMDb)
+			}
 		}
 		out.Title, out.Year = title, year
 		out.Enriched = true
+		out.Sources = withSnapshot(out.Sources, sources.OMDb, snap)
+		out, _ = s.resolveMeta(out)
 		return out
 	})
 	if err != nil {
@@ -175,6 +197,43 @@ func (s *Server) applyOmdbResult(ctx context.Context, pool *sql.DB, m db.Media, 
 	}
 
 	return s.writeMediaCacheRow(ctx, pool, m.ID, title, year, meta, posterRel)
+}
+
+// snapshotOMDb records OMDb's own record of an item that is already matched, so the merge has
+// it to compare with another source; the item's merged fields change only where the merge says
+// so. A record OMDb no longer has is kept as a failed snapshot, so it is not asked again soon.
+func (s *Server) snapshotOMDb(ctx context.Context, pool *sql.DB, client *omdb.Client, task db.EnrichTask, m db.Media) {
+	meta, err := importer.ReadMeta(m.Path)
+	imdb := meta.Metadata["imdbID"]
+	if err != nil || imdb == "" {
+		_ = db.FinishEnrich(ctx, pool, task.ID)
+		return
+	}
+	s.spendOMDbBackfill()
+	now := time.Now().Unix()
+	mv, err := client.LookupByID(ctx, imdb)
+	var snap *importer.Snapshot
+	switch {
+	case err == nil:
+		snap = sources.FromOMDb(mv, now)
+	case strings.HasPrefix(err.Error(), "omdb: "): // OMDb answered: it has no such record
+		snap = &importer.Snapshot{ImdbID: imdb, Fetched: now, Error: strings.TrimPrefix(err.Error(), "omdb: ")}
+	default:
+		_ = db.FailEnrich(ctx, pool, task.ID, err.Error(), now)
+		return
+	}
+	written, err := s.metaMgr.Update(m.Path, func(cur importer.Meta) importer.Meta {
+		cur.Sources = withSnapshot(cur.Sources, sources.OMDb, snap)
+		out, _ := s.resolveMeta(cur)
+		return out
+	})
+	if err != nil {
+		_ = db.FailEnrich(ctx, pool, task.ID, "write meta: "+err.Error(), now)
+		return
+	}
+	s.bestEffort(s.writeMediaCacheRow(ctx, pool, m.ID, written.Title, written.Year, written, folderPoster(m.Path)), "mirror omdb snapshot")
+	_ = db.FinishEnrich(ctx, pool, task.ID)
+	s.elog().Info("recorded OMDb snapshot for "+m.Title, logging.Fields{"id": m.ID, "imdbID": imdb, "error": snap.Error})
 }
 
 // writeMediaCacheRow projects a written meta.json onto its media cache row - the title/year,

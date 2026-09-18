@@ -155,6 +155,7 @@ handler pushes the change into the relevant live component:
 | transcoding on/off, ffmpeg/ffprobe, hardware accel | discard the HLS manager so the next playback re-detects paths/encoder (see `playback.md`) |
 | optimizer mode | signal the optimizer supervisor to cancel and relaunch its agents (see `agents/optimizer.md`) |
 | discovery interval | signal the discovery supervisor to re-arm its ticker, or idle when off (see `agents/discovery.md`) |
+| metadata source rules | re-merge every item with source snapshots in the background (see `sources.md`) |
 | import folder, OMDb key, TMDb key, media format, subtitle language | stored in config; read on next use by import / enrichment / the people agent (see `agents/people.md`) / library |
 
 The admin **Settings** page groups these into tabs (System, Library, Playback, Automation,

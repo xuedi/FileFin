@@ -1,5 +1,6 @@
 <script>
   import { getContext } from 'svelte'
+  import MergeView from './MergeView.svelte'
   const app = getContext('app')
   const a = $derived(app.attention)
   const rows = $derived(app.attentionRows)
@@ -11,6 +12,7 @@
     { key: 'all', label: 'All' },
     { key: 'disk', label: 'Disk' },
     { key: 'metadata', label: 'No metadata' },
+    { key: 'conflict', label: 'Conflict' },
     { key: 'name', label: 'Name' },
     { key: 'category', label: 'Category' },
   ]
@@ -18,6 +20,7 @@
   const problemLabel = {
     disk: 'Disk',
     metadata: 'No metadata',
+    conflict: 'Conflict',
     name: 'Name',
     category: 'Category',
   }
@@ -36,7 +39,9 @@
   }
 </script>
 
-{#if a.detailId}
+{#if app.merge.id}
+  <MergeView />
+{:else if a.detailId}
   <!-- Detail: fix one item's metadata match. -->
   <button class="button is-ghost is-small ff-back" onclick={() => app.go('/admin/attention')}>&larr; Needs attention</button>
   {#if a.detail}
@@ -61,8 +66,13 @@
             <table class="table ff-meta-table"><tbody>
               <tr><th>Title</th><td>{d.title} {#if d.year}({d.year}){/if}</td></tr>
               {#if d.imdbId}<tr><th>IMDb ID</th><td>{d.imdbId}</td></tr>{/if}
+              {#if d.tmdbId}<tr><th>TMDb</th><td>{d.tmdbTitle} {#if d.tmdbYear}({d.tmdbYear}){/if} <span class="has-text-grey">{d.tmdbKind} {d.tmdbId}</span></td></tr>{/if}
+              {#if d.tmdbError}<tr><th>TMDb</th><td class="has-text-grey">{d.tmdbError}</td></tr>{/if}
               {#if d.plot}<tr><th>Plot</th><td>{d.plot}</td></tr>{/if}
             </tbody></table>
+            {#if d.sources}
+              <button class="button is-small" onclick={() => app.goMerge(d.id)}>Compare sources</button>
+            {/if}
           </div>
         {/if}
 
@@ -85,6 +95,12 @@
 
         <div class="box ff-settings-card">
           <h2 class="title is-6">Find the right title</h2>
+          <div class="tabs is-small ff-source-tabs">
+            <ul>
+              <li class:is-active={a.source === 'omdb'}><a href={null} onclick={() => (a.source = 'omdb')}>OMDb</a></li>
+              <li class:is-active={a.source === 'tmdb'}><a href={null} onclick={() => (a.source = 'tmdb')}>TMDb</a></li>
+            </ul>
+          </div>
           <div class="field is-grouped ff-match-form">
             <div class="control is-expanded">
               <label class="label is-small" for="ff-match-title">Title</label>
@@ -94,20 +110,52 @@
               <label class="label is-small" for="ff-match-year">Year</label>
               <input id="ff-match-year" class="input ff-match-year" type="number" bind:value={a.form.year} />
             </div>
-            <div class="control">
-              <label class="label is-small" for="ff-match-imdb">IMDb ID</label>
-              <input id="ff-match-imdb" class="input" type="text" placeholder="tt..." bind:value={a.form.imdbId} />
-            </div>
+            {#if a.source === 'omdb'}
+              <div class="control">
+                <label class="label is-small" for="ff-match-imdb">IMDb ID</label>
+                <input id="ff-match-imdb" class="input" type="text" placeholder="tt..." bind:value={a.form.imdbId} />
+              </div>
+            {/if}
           </div>
           <div class="ff-settings-actions">
             {#if d.guessTitle}
               <button class="button is-small" onclick={() => app.useGuess()}>Use folder guess: {d.guessTitle}{d.guessYear ? ' (' + d.guessYear + ')' : ''}</button>
             {/if}
-            <button class="button is-link" class:is-loading={a.searching} onclick={() => app.searchOmdb()}>Search OMDb</button>
+            {#if a.source === 'tmdb'}
+              <button class="button is-link" class:is-loading={a.searching} onclick={() => app.searchTMDb()}>Search TMDb</button>
+            {:else}
+              <button class="button is-link" class:is-loading={a.searching} onclick={() => app.searchOmdb()}>Search OMDb</button>
+            {/if}
           </div>
         </div>
 
-        {#if a.candidates !== null}
+        {#if a.source === 'tmdb' && a.tmdbCandidates !== null}
+          {#if a.tmdbCandidates.length}
+            <div class="ff-candidates">
+              {#each a.tmdbCandidates as c (c.kind + c.id)}
+                <div class="box ff-candidate">
+                  {#if c.poster}
+                    <img class="ff-candidate-poster" src={c.poster} alt={c.title} />
+                  {:else}
+                    <div class="ff-candidate-poster ff-candidate-noposter">no poster</div>
+                  {/if}
+                  <div class="ff-candidate-body">
+                    <p class="has-text-weight-semibold">{c.title} {#if c.year}<span class="has-text-grey">({c.year})</span>{/if}</p>
+                    <p class="is-size-7 has-text-grey">
+                      {c.kind} &middot; TMDb {c.id}{#if c.originalTitle && c.originalTitle !== c.title} &middot; {c.originalTitle}{/if}
+                    </p>
+                    {#if c.overview}<p class="is-size-7 ff-candidate-overview">{c.overview}</p>{/if}
+                    <button class="button is-small is-primary" class:is-loading={a.applying} onclick={() => app.applyTMDbMatch(c)}>Use this match</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="help">No candidates found. Try a different title or drop the year.</p>
+          {/if}
+        {/if}
+
+        {#if a.source === 'omdb' && a.candidates !== null}
           {#if a.candidates.length}
             <div class="ff-candidates">
               {#each a.candidates as c}
@@ -207,6 +255,8 @@
             <td class="ff-attention-fix">
               {#if row.problem === 'metadata'}
                 <button class="button is-small is-link" onclick={() => app.goAttention(row.id)}>Find match</button>
+              {:else if row.problem === 'conflict'}
+                <button class="button is-small is-link" onclick={() => app.goMerge(row.id)}>Merge</button>
               {:else if row.problem === 'name'}
                 <button class="button is-small is-link" class:is-loading={a.renaming === row.id} onclick={() => app.renameMedia(row)}>Rename</button>
               {:else if row.problem === 'category'}

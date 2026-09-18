@@ -1,0 +1,213 @@
+{
+  "id": 603,
+  "imdb_id": "tt0133093",
+  "title": "The Matrix",
+  "original_title": "The Matrix",
+  "release_date": "1999-03-31",
+  "runtime": 136,
+  "overview": "Set in the 22nd century, The Matrix tells the story of a computer hacker who joins a group of underground insurgents fighting the vast and powerful computers who now rule the earth.",
+  "tagline": "Believe the unbelievable.",
+  "genres": [
+    {
+      "id": 28,
+      "name": "Action"
+    },
+    {
+      "id": 878,
+      "name": "Science Fiction"
+    }
+  ],
+  "spoken_languages": [
+    {
+      "english_name": "English",
+      "iso_639_1": "en",
+      "name": "English"
+    }
+  ],
+  "production_countries": [
+    {
+      "iso_3166_1": "US",
+      "name": "United States of America"
+    }
+  ],
+  "origin_country": [
+    "US"
+  ],
+  "vote_average": 8.259,
+  "vote_count": 28730,
+  "poster_path": "/aOIuZAjPaRIE6CMzbazvcHuHXDc.jpg",
+  "external_ids": {
+    "imdb_id": "tt0133093"
+  },
+  "alternative_titles": {
+    "titles": [
+      {
+        "iso_3166_1": "TH",
+        "title": "เพาะพันธุ์มนุษย์เหนือโลก",
+        "type": ""
+      },
+      {
+        "iso_3166_1": "GR",
+        "title": "Μάτριξ",
+        "type": ""
+      },
+      {
+        "iso_3166_1": "KR",
+        "title": "매트릭스",
+        "type": ""
+      }
+    ]
+  },
+  "release_dates": {
+    "results": [
+      {
+        "iso_3166_1": "DE",
+        "release_dates": [
+          {
+            "certification": "16",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "",
+            "release_date": "1999-06-17T00:00:00.000Z",
+            "type": 3
+          },
+          {
+            "certification": "",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "Re-Release",
+            "release_date": "2003-05-29T00:00:00.000Z",
+            "type": 3
+          },
+          {
+            "certification": "16",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "",
+            "release_date": "1999-11-25T00:00:00.000Z",
+            "type": 5
+          }
+        ]
+      },
+      {
+        "iso_3166_1": "US",
+        "release_dates": [
+          {
+            "certification": "R",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "Westwood, California",
+            "release_date": "1999-03-24T00:00:00.000Z",
+            "type": 1
+          },
+          {
+            "certification": "R",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "",
+            "release_date": "1999-03-31T00:00:00.000Z",
+            "type": 3
+          },
+          {
+            "certification": "R",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "Dolby Cinema Re-Release",
+            "release_date": "2024-03-20T00:00:00.000Z",
+            "type": 3
+          },
+          {
+            "certification": "R",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "Peacock",
+            "release_date": "2020-07-15T00:00:00.000Z",
+            "type": 4
+          },
+          {
+            "certification": "R",
+            "descriptors": [],
+            "iso_639_1": "",
+            "note": "4K UHD",
+            "release_date": "2018-05-22T00:00:00.000Z",
+            "type": 5
+          }
+        ]
+      }
+    ]
+  },
+  "credits": {
+    "cast": [
+      {
+        "id": 6384,
+        "name": "Keanu Reeves",
+        "character": "Neo",
+        "order": 0
+      },
+      {
+        "id": 2975,
+        "name": "Laurence Fishburne",
+        "character": "Morpheus",
+        "order": 1
+      },
+      {
+        "id": 530,
+        "name": "Carrie-Anne Moss",
+        "character": "Trinity",
+        "order": 2
+      },
+      {
+        "id": 1331,
+        "name": "Hugo Weaving",
+        "character": "Agent Smith",
+        "order": 3
+      },
+      {
+        "id": 9364,
+        "name": "Gloria Foster",
+        "character": "Oracle",
+        "order": 4
+      },
+      {
+        "id": 532,
+        "name": "Joe Pantoliano",
+        "character": "Cypher",
+        "order": 5
+      },
+      {
+        "id": 9372,
+        "name": "Marcus Chong",
+        "character": "Tank",
+        "order": 6
+      },
+      {
+        "id": 7244,
+        "name": "Julian Arahanga",
+        "character": "Apoc",
+        "order": 7
+      }
+    ],
+    "crew": [
+      {
+        "name": "Lana Wachowski",
+        "job": "Director",
+        "department": "Directing"
+      },
+      {
+        "name": "Lana Wachowski",
+        "job": "Writer",
+        "department": "Writing"
+      },
+      {
+        "name": "Lilly Wachowski",
+        "job": "Writer",
+        "department": "Writing"
+      },
+      {
+        "name": "Lilly Wachowski",
+        "job": "Director",
+        "department": "Directing"
+      }
+    ]
+  }
+}

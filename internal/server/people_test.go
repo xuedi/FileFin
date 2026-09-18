@@ -25,6 +25,10 @@ func fakeTMDb(t *testing.T) *httptest.Server {
 		"/find/tt0133093":    "find_movie.json",
 		"/movie/603/credits": "movie_credits.json",
 		"/person/6384":       "person.json",
+		"/movie/603":         "movie_details.json",
+		"/tv/94796":          "tv_details.json",
+		"/search/tv":         "search_tv.json",
+		"/search/movie":      "search_movie.json",
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/img/") {

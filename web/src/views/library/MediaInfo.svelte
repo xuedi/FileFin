@@ -184,6 +184,12 @@
             <button class="button" onclick={() => app.goEditMeta(detail.id)}>Edit metadata</button>
             <p class="help">Hand-edit every metadata field and replace the poster.</p>
           </div>
+          {#if detail.sources}
+            <div class="ff-admin-action">
+              <button class="button" onclick={() => app.goMerge(detail.id)}>Compare sources</button>
+              <p class="help">See what OMDb and TMDb each say, and pick per field.</p>
+            </div>
+          {/if}
           <div class="ff-admin-action">
             <button class="button" disabled={app.repairingSubs} onclick={() => app.repairSubtitles(detail.id)}>
               {app.repairingSubs ? 'Rebuilding...' : 'Rebuild subtitles'}

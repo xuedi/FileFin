@@ -11,15 +11,16 @@ filling gaps.
 
 ## The Needs attention page
 
-The matching list is one of four things an admin can be asked to look at, so they share one page
-(`/admin/attention`) rather than four. Each is a separate question with a separate report behind
+The matching list is one of five things an admin can be asked to look at, so they share one page
+(`/admin/attention`) rather than five. Each is a separate question with a separate report behind
 it, but they are presented as **one list, one row per problem**, because an admin arrives asking
-"what needs doing", not "which of four subsystems is unhappy".
+"what needs doing", not "which of five subsystems is unhappy".
 
 | problem | what it means | report | the fix offered |
 |---------|---------------|--------|-----------------|
 | **Disk** | the folder itself is broken: no `meta.json`, an unparseable one, a missing or zero-byte file, a leftover derived artifact | `media_health`, written by the discovery agent (see [`agents/discovery.md`](agents/discovery.md)) | **Details** - what the issue means and what a human has to do, since the app cannot fix it |
-| **No metadata** | `enriched = 0`: OMDb has not matched it, whether it errored or is still queued | this document, below | **Find match** - the manual OMDb drill-in |
+| **No metadata** | `enriched = 0`: no source has matched it, whether it errored or is still queued | this document, below | **Find match** - the manual OMDb / TMDb drill-in |
+| **Conflict** | the metadata sources disagree on a field no pick or rule has settled | see [`sources.md`](sources.md) | **Merge** - the side-by-side merge view |
 | **Name** | the folder or its files contradict the item's own metadata | see [`rename.md`](rename.md) | **Rename** - apply the plan |
 | **Category** | the looked-up language and country contradict the markers of the category it sits in | below | **Review** - open the item; nothing is ever moved automatically |
 
@@ -29,7 +30,7 @@ reload) and are always shown, so "nothing is wrong" reads as a zero rather than 
 quietly vanished. Every row carries exactly one primary action, so no row is a dead end - which is
 why a disk row, which the app cannot fix for you, still gets a button that explains it.
 
-The page fetches the four reports in parallel and merges them client-side. They stay separate
+The page fetches the five reports in parallel and merges them client-side. They stay separate
 endpoints because they answer separate questions and are each independently testable; only the
 presentation is unified. The dashboard shows the total as a single tile linking here, and no
 longer keeps its own copy of any of the lists.
@@ -93,6 +94,20 @@ flowchart TD
   leftover enrich task. The item drops off the unmatched list, and the admin is redirected to the
   freshly written media detail page.
 
+## Matching with TMDb
+
+The match view has a source switch: **OMDb** (as above) or **TMDb**, searched by title and an
+optional year, its candidates shown with their original title and TMDb id. Applying a TMDb
+candidate stores it as the item's TMDb snapshot, marks the item matched, and re-merges (see
+[`sources.md`](sources.md)). When TMDb links the title to an IMDb id the item's OMDb record
+does not share, OMDb is re-matched to that id in the same action, so both sources describe
+the same work; then the merge view opens. The current TMDb match (or why the last lookup
+found none) is shown beside the OMDb one, with a **Compare sources** button.
+
+A re-match of either source is a fresh start for the merge: another source's record of the
+old match is dropped until it is looked up again, and only the fields pinned by hand stay
+pinned.
+
 ## The write: additive vs replace
 
 Both the automatic enricher and this manual match go through one shared write path. The only
@@ -122,6 +137,9 @@ concurrent playback event is never dropped.
 | `POST /api/admin/media/{id}/omdb-search`     | OMDb candidates by title+year, or a single record by IMDb id |
 | `POST /api/admin/media/{id}/match`           | apply the chosen record (replace-mode write)                |
 | `GET  /api/admin/omdb/poster/{imdbId}`       | proxy a candidate's small poster thumbnail (same-origin)    |
+| `GET  /api/admin/conflicts`                  | the Conflict rows (see [`sources.md`](sources.md))          |
+| `POST /api/admin/media/{id}/tmdb-search`     | TMDb candidates by title and optional year                  |
+| `POST /api/admin/media/{id}/tmdb-match`      | apply a chosen TMDb title (see below)                       |
 
 ## Dependencies
 

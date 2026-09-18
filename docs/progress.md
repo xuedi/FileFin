@@ -56,7 +56,7 @@ Two rules fix it, and they are independent:
    percent. That covers the unprobed rows rule 1 has to let through.
 
 The other queues need no such rule: their agents are single (or rate-limited), so a claimed
-enrich/thumbnail/probe/people task really is being worked on.
+enrich/thumbnail/probe/TMDb/people task really is being worked on.
 
 ## One snapshot, not six polls
 
@@ -80,5 +80,5 @@ reports instead (see `playback-state.md`) - a different source with a different 
 |-----------------------------|----------------------------------------------------|
 | `GET /api/admin/activity`   | the whole page: runs in flight and work being done |
 
-The per-queue `/api/admin/{optimize,enrich,thumbnail,probe,people}/active` endpoints remain for the
+The per-queue `/api/admin/{optimize,enrich,thumbnail,probe,tmdb,people}/active` endpoints remain for the
 scan buttons' own reporting.

@@ -140,6 +140,11 @@ distinct from the admin Settings page; it holds the account view and the
 import watched + 1-10 ratings). The detail page carries a matching 1-10 rating control beside the
 favourite/watched actions, all sharing one height.
 
+The admin **Needs attention** page (`admin/NeedsAttention.svelte`) hosts the match view (with an
+OMDb / TMDb source switch) and, at `/admin/attention/merge/{id}`, `admin/MergeView.svelte`: one
+column per metadata source, a radio per field value, "Take all" buttons, a per-row rule box, a
+poster row, and a footer that counts the changes (see `sources.md`).
+
 The detail page splits into two parts. The top holds only what a viewer acts on: the title bar
 (rating, favourite, play), the player, description, genre and tag chips, and the episode picker.
 Under the episodes, `library/MediaInfo.svelte` renders a **Details** section beside the poster: a

@@ -36,7 +36,8 @@ untouched on save.
 ```mermaid
 flowchart TD
     D["library detail<br/>(admin) 'Edit'"] -->|GET meta| F["editor form<br/>seeded from meta.json + cache row"]
-    F -->|"Match with the API"| RM["OMDb re-match<br/>/admin/attention/{id}"]
+    F -->|"Match with the API"| RM["OMDb / TMDb re-match<br/>/admin/attention/{id}"]
+    F -->|"Compare sources"| MV["merge view<br/>/admin/attention/merge/{id}"]
     RM -->|apply candidate| DET["media detail /media/{id}"]
     F -->|Replace poster| UP["POST poster<br/>store image, drop sized variants"]
     UP --> F
@@ -54,6 +55,12 @@ flowchart TD
   enricher and the OMDb re-match, so the media row and its search facets never drift from
   `meta.json`. Any leftover enrich task for the item is cleared, and the admin lands on the
   freshly written detail page.
+- **Every field the save changes is pinned** as kept by hand, so the merge of the metadata
+  sources never overwrites it, even where OMDb or TMDb says otherwise (see
+  [`sources.md`](sources.md)). The pins, the source snapshots and the cast block are carried
+  over like the technical and state blocks.
+- **Compare sources** opens the merge view for the item: what each metadata source says,
+  field by field, with a pick per field (see [`sources.md`](sources.md)).
 
 ## Poster upload
 

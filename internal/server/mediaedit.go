@@ -10,6 +10,7 @@ import (
 	"filefin/internal/db"
 	"filefin/internal/importer"
 	"filefin/internal/logging"
+	"filefin/internal/sources"
 	"filefin/internal/thumbnail"
 )
 
@@ -145,6 +146,7 @@ func (s *Server) handleSaveMeta(w http.ResponseWriter, r *http.Request) {
 		out.Genres = lowerList(req.Genres)
 		out.Tags = normalizeTags(req.Tags)
 		out.Enriched = true
+		out.Choices = sources.PinEdits(cur, out)
 		return out
 	})
 	if err != nil {

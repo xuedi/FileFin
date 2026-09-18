@@ -16,12 +16,14 @@ A native phone/TV client lives in its own repo: [FileFin-client](https://github.
 | [`progress.md`](progress.md) | Progress page | The Runs/Activity split, a queue's drain as a run, why a claimed task is not yet work |
 | [`agents.md`](agents.md) | Agents overview | Every background agent, the shared task queue, the refill-vs-health split, discovery as the scheduler |
 | [`agents/enricher.md`](agents/enricher.md) | Media enricher | Background OMDb re-enrichment queue, `meta.json` + ffprobe, additive merge |
-| [`rematch.md`](rematch.md) | Metadata matching | The admin "Needs attention" page and its four problem classes; manual OMDb search and replace-mode re-match for items OMDb missed |
+| [`rematch.md`](rematch.md) | Metadata matching | The admin "Needs attention" page and its five problem classes; manual OMDb / TMDb search and replace-mode re-match |
 | [`rename.md`](rename.md) | Folder rename | Names that contradict their item's metadata: the drift report, the prefix-swap rule, the id change a rename mints |
 | [`metaedit.md`](metaedit.md) | Metadata editor | Admin detail-page "Edit metadata": edit every `meta.json` field by hand and upload a poster |
 | [`agents/thumbnailer.md`](agents/thumbnailer.md) | Thumbnail agent | Sized WebP posters, frame-derived posters for home media, `?size=` |
 | [`agents/optimizer.md`](agents/optimizer.md) | Pre-transcoder | Background `.optimized.mp4` copies, GPU worker + load-driven CPU pool |
 | [`agents/probe.md`](agents/probe.md) | Format-probe agent | Backfills/refreshes the true container + codecs onto the cache and `meta.json` |
+| [`sources.md`](sources.md) | Metadata sources & merge | Per-source snapshots in `meta.json`, field policies, conflicts, the merge view, library rules |
+| [`agents/tmdb.md`](agents/tmdb.md) | TMDb matcher | TMDb snapshot by IMDb id or a year-strict title search, the second metadata source |
 | [`agents/people.md`](agents/people.md) | People agent | Cast from TMDb by IMDb id, each person's photo stored once in `.people/`, the Cast card's merged list |
 | [`agents/discovery.md`](agents/discovery.md) | Discovery agent | Timer-driven reconcile, queue refill, `media_health` checks and subtitle repair as a rolling sweep |
 | [`import.md`](import.md) | Import | Source front stages, recognition (marker cut, entry grouping, confidence), category prediction from markers, the preCheck page, the import poller, the `imports` table |

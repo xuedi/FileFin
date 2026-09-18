@@ -16,23 +16,24 @@ import (
 // endpoint. Port/DataDir/CachePath/Users are read-only install facts shown in the System
 // tab; the rest are the editable fields the per-section forms bind to.
 type settingsView struct {
-	Port              int    `json:"port"`
-	DataDir           string `json:"dataDir"`
-	CachePath         string `json:"cachePath"`
-	Users             int    `json:"users"`
-	MediaFormat       string `json:"mediaFormat"`
-	ImportFolder      string `json:"importFolder"`
-	OMDBKey           string `json:"omdbKey"`
-	TMDBKey           string `json:"tmdbKey"`
-	LogLevel          string `json:"logLevel"`
-	LogOutput         string `json:"logOutput"`
-	TranscodeEnabled  bool   `json:"transcodeEnabled"`
-	FFmpegPath        string `json:"ffmpegPath"`
-	FFprobePath       string `json:"ffprobePath"`
-	SubtitleLanguage  string `json:"subtitleLanguage"`
-	OptimizeMode      string `json:"optimizeMode"`
-	DiscoveryInterval int    `json:"discoveryInterval"`
-	DiscoveryNextRun  int64  `json:"discoveryNextRun"` // unix seconds of the next scheduled sweep; 0 when off
+	Port              int        `json:"port"`
+	DataDir           string     `json:"dataDir"`
+	CachePath         string     `json:"cachePath"`
+	Users             int        `json:"users"`
+	MediaFormat       string     `json:"mediaFormat"`
+	ImportFolder      string     `json:"importFolder"`
+	OMDBKey           string     `json:"omdbKey"`
+	TMDBKey           string     `json:"tmdbKey"`
+	MetadataRules     []ruleView `json:"metadataRules"`
+	LogLevel          string     `json:"logLevel"`
+	LogOutput         string     `json:"logOutput"`
+	TranscodeEnabled  bool       `json:"transcodeEnabled"`
+	FFmpegPath        string     `json:"ffmpegPath"`
+	FFprobePath       string     `json:"ffprobePath"`
+	SubtitleLanguage  string     `json:"subtitleLanguage"`
+	OptimizeMode      string     `json:"optimizeMode"`
+	DiscoveryInterval int        `json:"discoveryInterval"`
+	DiscoveryNextRun  int64      `json:"discoveryNextRun"` // unix seconds of the next scheduled sweep; 0 when off
 }
 
 // discoveryLabel renders a discovery interval (seconds) as the human label shown in
@@ -94,6 +95,7 @@ func (s *Server) settingsPayload(cfg *config.Config) settingsView {
 		ImportFolder:      cfg.ImportFolder,
 		OMDBKey:           cfg.OMDBKey,
 		TMDBKey:           cfg.TMDBKey,
+		MetadataRules:     ruleViews(cfg),
 		LogLevel:          logLevel,
 		LogOutput:         logOutput,
 		TranscodeEnabled:  cfg.TranscodeOn(),

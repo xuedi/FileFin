@@ -16,6 +16,7 @@ import (
 	"filefin/internal/importer"
 	"filefin/internal/logging"
 	"filefin/internal/people"
+	"filefin/internal/sources"
 	"filefin/internal/state"
 	"filefin/internal/subtitle"
 	"filefin/internal/thumbnail"
@@ -75,6 +76,7 @@ type mediaDetail struct {
 	Actors          []string   `json:"actors"`
 	People          []castCard `json:"people"`
 	CastFromTMDb    bool       `json:"castFromTMDb"`
+	Sources         int        `json:"sources"` // how many metadata sources have a record of it
 	Genres          []string   `json:"genres"`
 	Tags            []string   `json:"tags"`
 	Watched         bool       `json:"watched"`
@@ -135,12 +137,16 @@ var metadataLabels = []struct{ key, label string }{
 	{"awards", "Awards"},
 	{"boxOffice", "Box office"},
 	{"imdbID", "IMDb ID"},
+	{"originalTitle", "Original title"},
+	{"tagline", "Tagline"},
+	{"tmdbID", "TMDb ID"},
 }
 
 var ratingLabels = []struct{ key, label string }{
 	{"imdb", "IMDb"},
 	{"rottenTomatoes", "Rotten Tomatoes"},
 	{"metacritic", "Metacritic"},
+	{"tmdb", "TMDb"},
 }
 
 // orderedPairs renders a meta map as ordered key/value pairs: the known keys first (in
@@ -372,6 +378,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 		d.Actors = meta.Actors
 	}
 	d.People, d.CastFromTMDb = castCards(meta, s.peopleStore())
+	d.Sources = len(sources.Present(meta))
 	if meta.Genres != nil {
 		d.Genres = meta.Genres
 	}

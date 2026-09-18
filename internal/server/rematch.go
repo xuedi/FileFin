@@ -13,6 +13,7 @@ import (
 	"filefin/internal/logging"
 	"filefin/internal/omdb"
 	"filefin/internal/recognize"
+	"filefin/internal/sources"
 )
 
 // The manual-match surface behind the admin "Unhealthy media" page: list the media OMDb
@@ -45,6 +46,13 @@ type matchContext struct {
 	Files       []matchFile `json:"files"`
 	GuessTitle  string      `json:"guessTitle"`
 	GuessYear   int         `json:"guessYear"`
+	// The item's TMDb match, when it has one (or why the last lookup found none).
+	TMDbID    string `json:"tmdbId"`
+	TMDbTitle string `json:"tmdbTitle"`
+	TMDbYear  int    `json:"tmdbYear"`
+	TMDbKind  string `json:"tmdbKind"`
+	TMDbError string `json:"tmdbError"`
+	Sources   int    `json:"sources"`
 }
 
 // omdbCandidate is one OMDb search hit offered for selection.
@@ -117,6 +125,10 @@ func (s *Server) buildMatchContext(ctx context.Context, pool *sql.DB, id string)
 	for _, f := range files {
 		mc.Files = append(mc.Files, matchFile{Name: f.Name, Season: f.Season, Episode: f.Episode, Ext: f.Ext})
 	}
+	if t := meta.Sources[sources.TMDb]; t != nil {
+		mc.TMDbID, mc.TMDbTitle, mc.TMDbYear, mc.TMDbKind, mc.TMDbError = t.ID, t.Title, t.Year, t.Kind, t.Error
+	}
+	mc.Sources = len(sources.Present(meta))
 	return mc, true
 }
 

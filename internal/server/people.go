@@ -13,6 +13,7 @@ import (
 	"filefin/internal/importer"
 	"filefin/internal/logging"
 	"filefin/internal/people"
+	"filefin/internal/sources"
 	"filefin/internal/tmdb"
 )
 
@@ -50,14 +51,14 @@ func (s *Server) tmdbClient() *tmdb.Client {
 // peopleStore returns the shared people store of the configured data dir.
 func (s *Server) peopleStore() people.Store { return people.New(s.dataDir()) }
 
-// needsPeople reports whether an item has cast work left: it has an IMDb id to resolve, and
-// either no TMDb cast for that id yet or a cast member the people store does not hold.
+// needsPeople reports whether an item has cast work left: it has something to resolve the
+// cast by (an IMDb id, or a TMDb match), and either no current cast yet or a cast member the
+// people store does not hold.
 func needsPeople(meta importer.Meta, store people.Store) bool {
-	imdb := meta.Metadata["imdbID"]
-	if imdb == "" {
+	if meta.Metadata["imdbID"] == "" && !meta.Sources[sources.TMDb].Usable() {
 		return false
 	}
-	if meta.Cast == nil || meta.Cast.ImdbID != imdb {
+	if !meta.CastCurrent() {
 		return true
 	}
 	for _, c := range meta.Cast.Members {
@@ -188,14 +189,14 @@ func (s *Server) peopleOne(ctx context.Context, pool *sql.DB, client *tmdb.Clien
 		return
 	}
 	imdb := meta.Metadata["imdbID"]
-	if imdb == "" {
+	if !needsPeople(meta, s.peopleStore()) {
 		_ = db.FinishPeople(ctx, pool, task.ID)
 		return
 	}
 
 	cast := meta.Cast
-	if cast == nil || cast.ImdbID != imdb {
-		cast, err = resolveCast(ctx, client, imdb)
+	if !meta.CastCurrent() {
+		cast, err = resolveCast(ctx, client, imdb, meta.Sources[sources.TMDb])
 		if err != nil {
 			_ = db.FailPeople(ctx, pool, task.ID, err.Error())
 			s.pplog().Info("cast lookup failed for "+m.Title, logging.Fields{"id": m.ID, "imdbID": imdb, "error": err.Error()})
@@ -234,17 +235,22 @@ func (s *Server) peopleOne(ctx context.Context, pool *sql.DB, client *tmdb.Clien
 	s.pplog().Info("resolved cast for "+m.Title, fields)
 }
 
-// resolveCast looks an IMDb id up on TMDb and returns its top billed cast. A title TMDb does
-// not know yields a cast block carrying the reason rather than an error.
-func resolveCast(ctx context.Context, client *tmdb.Client, imdb string) (*importer.Cast, error) {
+// resolveCast returns an item's top billed cast on TMDb. The item's TMDb match is used when
+// it describes the same IMDb id (or the item has none); otherwise the IMDb id is looked up.
+// A title TMDb does not know yields a cast block carrying the reason rather than an error.
+func resolveCast(ctx context.Context, client *tmdb.Client, imdb string, match *importer.Snapshot) (*importer.Cast, error) {
 	cast := &importer.Cast{ImdbID: imdb, Fetched: time.Now().Unix()}
-	title, err := client.FindByIMDb(ctx, imdb)
-	if errors.Is(err, tmdb.ErrNotFound) {
-		cast.Error = "not on TMDb"
-		return cast, nil
-	}
-	if err != nil {
-		return nil, err
+	title, ok := matchedTitle(imdb, match)
+	if !ok {
+		var err error
+		title, err = client.FindByIMDb(ctx, imdb)
+		if errors.Is(err, tmdb.ErrNotFound) {
+			cast.Error = "not on TMDb"
+			return cast, nil
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	credits, err := client.Credits(ctx, title)
 	if err != nil && !errors.Is(err, tmdb.ErrNotFound) {
@@ -272,6 +278,19 @@ func resolveCast(ctx context.Context, client *tmdb.Client, imdb string) (*import
 		cast.Error = "no cast on TMDb"
 	}
 	return cast, nil
+}
+
+// matchedTitle is the TMDb title an item's TMDb snapshot names, when it describes the item's
+// IMDb id (or the item has none).
+func matchedTitle(imdb string, match *importer.Snapshot) (tmdb.Title, bool) {
+	if !match.Usable() || (imdb != "" && match.ImdbID != imdb) {
+		return tmdb.Title{}, false
+	}
+	id, err := strconv.Atoi(match.ID)
+	if err != nil || id <= 0 {
+		return tmdb.Title{}, false
+	}
+	return tmdb.Title{Kind: importer.TMDbKind(match.Kind), ID: id}, true
 }
 
 // storePerson fetches one person's details and photo into the people store. The record is

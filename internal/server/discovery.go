@@ -177,6 +177,9 @@ func (s *Server) sweep(ctx context.Context, limit int) {
 	if _, err := s.refillProbe(ctx, pool); err != nil {
 		s.dlog().Error("discovery probe refill failed", logging.Fields{"error": err.Error()})
 	}
+	if _, err := s.refillTMDb(ctx, pool); err != nil {
+		s.dlog().Error("discovery TMDb refill failed", logging.Fields{"error": err.Error()})
+	}
 	if _, err := s.refillPeople(ctx, pool); err != nil {
 		s.dlog().Error("discovery people refill failed", logging.Fields{"error": err.Error()})
 	}

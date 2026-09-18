@@ -2,9 +2,10 @@
 
 How an item's Cast card gets faces. OMDb gives an item only a short comma-separated actor
 list: usually three names, no ids, no pictures. The people agent adds TMDb as a second,
-optional source for the cast. It resolves each item's full billed cast through the IMDb id the
-enricher already stored (see `enricher.md`), and it downloads each person's photo **once** into
-a store shared by the whole library. Everything is fetched server side and kept in the data
+optional source for the cast. It resolves each item's full billed cast through the item's TMDb
+match (see `tmdb.md`) or, before there is one, the IMDb id the enricher stored (see
+`enricher.md`), and it downloads each person's photo **once** into a store shared by the whole
+library. Everything is fetched server side and kept in the data
 dir, so the browser only ever loads photos from FileFin and the app still works offline.
 
 Without a TMDb key the agent idles, and nothing about the library changes.
@@ -47,8 +48,8 @@ flowchart LR
 The same merged list feeds the searchable cast facet, so clicking a portrait finds that
 person's other items even when only TMDb knows them. A rebuild re-derives it from `meta.json`.
 
-A cast block records the IMDb id it came from. After a re-match to another IMDb id, the old
-cast describes a different title: it is ignored (the card falls back to the actors list, the
+A cast block records the IMDb id it came from (an item without one: the TMDb title). After a
+re-match to another IMDb id or TMDb title, the old cast describes a different title: it is ignored (the card falls back to the actors list, the
 facet drops its names) until the agent refreshes it.
 
 ## One agent, a transient queue
@@ -64,7 +65,9 @@ flowchart TD
     Q -->|claim one| A[people agent]
     A --> HAS{cast block for the current IMDb id?}
     HAS -->|yes| PEOPLE
-    HAS -->|no| FIND[TMDb find by IMDb id]
+    HAS -->|no| TM{TMDb snapshot for that id?}
+    TM -->|yes| MC & TC
+    TM -->|no| FIND[TMDb find by IMDb id]
     FIND -->|not on TMDb| EMPTY[write empty cast block with the reason]
     FIND -->|movie| MC[movie credits]
     FIND -->|series| TC[aggregate credits across all seasons]
@@ -90,8 +93,8 @@ flowchart TD
 
 ## Candidacy
 
-An item has cast work left when it has an IMDb id and either it has no cast block for that id
-yet, or one of the block's members is missing from the people store. Without a TMDb key
+An item has cast work left when it has an IMDb id or a TMDb match, and either it has no
+current cast block yet, or one of the block's members is missing from the people store. Without a TMDb key
 nothing is queued. The scan also prunes tasks for items now complete, and it re-arms error rows:
 their causes are transient, and the item still needing work is why the scan came back.
 

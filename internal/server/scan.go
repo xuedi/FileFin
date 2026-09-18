@@ -52,6 +52,9 @@ func (s *Server) refillEnrich(ctx context.Context, pool *sql.DB) (int, error) {
 		s.elog().Error("some enrichment tasks could not be queued", logging.Fields{"failed": failed})
 	}
 	s.bestEffort(db.PruneEnrichedTasks(ctx, pool), "prune enriched tasks")
+	// Matched items still owe the merge an OMDb snapshot of their own; queued after the prune,
+	// which would otherwise drop them again, and only as many as today's budget allows.
+	queued += s.queueOMDbSnapshots(ctx, pool)
 	return queued, nil
 }
 
@@ -376,6 +379,7 @@ func (s *Server) dropMediaFromCache(ctx context.Context, pool *sql.DB, id, why s
 	s.bestEffort(db.PruneOptimizeForMedia(ctx, pool, id), "prune "+why+" optimize task")
 	s.bestEffort(db.PruneProbe(ctx, pool, id), "prune "+why+" probe task")
 	s.bestEffort(db.PrunePeople(ctx, pool, id), "prune "+why+" people task")
+	s.bestEffort(db.PruneTMDb(ctx, pool, id), "prune "+why+" TMDb task")
 }
 
 // reconcileItem processes one media item in the rolling pass: if its folder fingerprint

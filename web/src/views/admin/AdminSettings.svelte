@@ -19,6 +19,7 @@
     { key: 'enrich', label: 'Metadata' },
     { key: 'thumbnail', label: 'Thumbnails' },
     { key: 'probe', label: 'Probe' },
+    { key: 'tmdb', label: 'TMDb matching' },
     { key: 'people', label: 'Cast photos' },
   ]
 </script>
@@ -113,6 +114,30 @@
       <button class="button is-primary" disabled={!app.libraryDirty} onclick={() => app.saveLibrary()}>Save</button>
     </div>
   </div>
+  <div class="box ff-settings-card">
+    <h2 class="title is-6">Metadata source rules</h2>
+    <p class="help ff-rules-intro">
+      When OMDb and TMDb disagree about a field, a rule decides it for the whole library. Rules are
+      made with "remember" in the merge view; removing one puts its conflicts back on Needs attention.
+    </p>
+    {#if app.metadataRules.length}
+      <table class="table is-fullwidth ff-rules-table">
+        <thead><tr><th>Field</th><th>Prefer</th><th>Set</th><th></th></tr></thead>
+        <tbody>
+          {#each app.metadataRules as r (r.field)}
+            <tr>
+              <td>{r.label}</td>
+              <td>{r.order.join(' > ')}</td>
+              <td class="has-text-grey">{r.set}</td>
+              <td class="ff-attention-fix"><button class="button is-small" onclick={() => app.deleteRule(r.field)}>Remove</button></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {:else}
+      <p class="has-text-grey">No rules yet: every disagreement waits for a decision per item.</p>
+    {/if}
+  </div>
 {:else if app.settingsTab === 'playback'}
   <div class="box ff-settings-card">
     <div class="field">
@@ -200,6 +225,10 @@
     <div class="ff-maint-row">
       <div class="ff-maint-text"><strong>Re-scan metadata (OMDb)</strong><p class="help">Queue media missing or stale OMDb metadata.</p></div>
       <button class="button" disabled={app.enrichScanning} onclick={() => app.enrichScan()}>{app.enrichScanning ? 'Scanning...' : 'Run'}</button>
+    </div>
+    <div class="ff-maint-row">
+      <div class="ff-maint-text"><strong>Re-scan metadata (TMDb)</strong><p class="help">Queue media missing or stale TMDb metadata.</p></div>
+      <button class="button" disabled={app.tmdbScanning || !app.settingsBaseline.tmdbKey} onclick={() => app.tmdbScan()}>{app.tmdbScanning ? 'Scanning...' : 'Run'}</button>
     </div>
     <div class="ff-maint-row">
       <div class="ff-maint-text"><strong>Re-scan optimizer</strong><p class="help">Queue files to pre-transcode in the background.</p></div>

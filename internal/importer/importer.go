@@ -58,7 +58,35 @@ type Meta struct {
 	// Cast is the credited cast resolved on TMDb, written only by the people agent. Actors
 	// stays what the other sources wrote; Cast is what the Cast card shows when present.
 	Cast *Cast `json:"cast,omitempty"`
+	// Sources keeps each metadata database's own answer, keyed by source ("omdb", "tmdb"), so
+	// the top-level fields can be merged from them and a disagreement stays visible. Choices
+	// pins a field to one source, to the union of them ("union"), or to the value it already
+	// has ("manual"); the merge never overrides a pinned field.
+	Sources map[string]*Snapshot `json:"sources,omitempty"`
+	Choices map[string]string    `json:"choices,omitempty"`
 }
+
+// Snapshot is one metadata database's record of an item, in the same field shape as the
+// top level. Error records why a lookup found nothing, so it is not repeated every sweep.
+type Snapshot struct {
+	ID          string            `json:"id,omitempty"`
+	Kind        string            `json:"kind,omitempty"` // "movie" or "series"
+	ImdbID      string            `json:"imdbID,omitempty"`
+	Fetched     int64             `json:"fetched"`
+	Error       string            `json:"error,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	AltTitles   []string          `json:"altTitles,omitempty"`
+	Year        int               `json:"year,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Ratings     map[string]string `json:"ratings,omitempty"`
+	Actors      []string          `json:"actors,omitempty"`
+	Genres      []string          `json:"genres,omitempty"`
+	Poster      string            `json:"poster,omitempty"` // the source's poster reference
+}
+
+// Usable reports whether a snapshot holds a record rather than a failed lookup.
+func (s *Snapshot) Usable() bool { return s != nil && s.Error == "" }
 
 // Cast is the TMDb cast of one item, resolved through the IMDb id it records, so a re-match
 // to another IMDb id is seen as stale. Error explains an empty Members (the title is not on
@@ -80,13 +108,34 @@ type CastMember struct {
 	Order     int    `json:"order"`
 }
 
-// CurrentCast is the TMDb cast when it still belongs to the item's IMDb id. After a re-match
-// the old cast describes another title, so it is ignored until the people agent refreshes it.
+// CastCurrent reports whether the cast block still describes the item as matched now: the
+// same IMDb id, or for an item without one, the same TMDb title. After a re-match the old
+// cast describes another title and is ignored until the people agent refreshes it.
+func (m Meta) CastCurrent() bool {
+	if m.Cast == nil {
+		return false
+	}
+	if imdb := m.Metadata["imdbID"]; imdb != "" {
+		return m.Cast.ImdbID == imdb
+	}
+	t := m.Sources["tmdb"]
+	return m.Cast.ImdbID == "" && t.Usable() && strconv.Itoa(m.Cast.TMDbID) == t.ID && m.Cast.Kind == TMDbKind(t.Kind)
+}
+
+// CurrentCast is the cast when it is current (see CastCurrent), else nothing.
 func (m Meta) CurrentCast() []CastMember {
-	if m.Cast == nil || m.Cast.ImdbID == "" || m.Cast.ImdbID != m.Metadata["imdbID"] {
+	if !m.CastCurrent() {
 		return nil
 	}
 	return m.Cast.Members
+}
+
+// TMDbKind maps a snapshot's kind onto TMDb's path segment ("series" is TMDb's "tv").
+func TMDbKind(kind string) string {
+	if kind == "series" {
+		return "tv"
+	}
+	return "movie"
 }
 
 // FacetActors is the searchable cast of an item: the actors every source wrote, plus each

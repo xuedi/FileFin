@@ -136,10 +136,15 @@ func (s *Server) attentionCounts(ctx context.Context, pool *sql.DB, diskIssues i
 	if err != nil {
 		return attentionStats{}, err
 	}
+	conflicts, err := s.conflictItems(ctx, pool)
+	if err != nil {
+		return attentionStats{}, err
+	}
 	a := attentionStats{
 		NoMetadata: len(unmatched), Name: len(misnamed), Category: len(misfiled), Disk: diskIssues,
+		Conflict: len(conflicts),
 	}
-	a.Total = a.NoMetadata + a.Name + a.Category + a.Disk
+	a.Total = a.NoMetadata + a.Name + a.Category + a.Disk + a.Conflict
 	return a, nil
 }
 
@@ -152,6 +157,7 @@ type taskBacklog struct {
 	Thumbnail int `json:"thumbnail"`
 	Probe     int `json:"probe"`
 	People    int `json:"people"`
+	TMDb      int `json:"tmdb"`
 }
 
 // handleTaskBacklog returns how many background tasks are outstanding per agent type. It is
@@ -175,6 +181,8 @@ func (s *Server) handleTaskBacklog(w http.ResponseWriter, r *http.Request) {
 	prA, _ := db.ListActiveProbe(ctx, pool)
 	peP, _ := db.CountPendingPeople(ctx, pool)
 	peA, _ := db.ListActivePeople(ctx, pool)
+	tmP, _ := db.CountPendingTMDb(ctx, pool)
+	tmA, _ := db.ListActiveTMDb(ctx, pool)
 	writeJSON(w, taskBacklog{
 		Imports:   imports,
 		Optimize:  optP + len(optA),
@@ -182,6 +190,7 @@ func (s *Server) handleTaskBacklog(w http.ResponseWriter, r *http.Request) {
 		Thumbnail: thP + len(thA),
 		Probe:     prP + len(prA),
 		People:    peP + len(peA),
+		TMDb:      tmP + len(tmA),
 	})
 }
 
@@ -231,6 +240,7 @@ type attentionStats struct {
 	Name       int `json:"name"`
 	Category   int `json:"category"`
 	Disk       int `json:"disk"`
+	Conflict   int `json:"conflict"`
 }
 
 // healthStats is the dashboard's discovery/health overview: how many items carry issues,

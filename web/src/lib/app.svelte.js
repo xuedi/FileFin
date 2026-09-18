@@ -119,6 +119,43 @@ export function humanSize(bytes) {
   return `${u === 0 || n >= 100 ? Math.round(n) : n.toFixed(1)} ${units[u]}`
 }
 
+// mergeUnion combines the sources' entries of a list field, each once, in column order.
+function mergeUnion(row) {
+  const out = []
+  const seen = new Set()
+  for (const vals of Object.values(row.values)) {
+    for (const v of vals) {
+      const k = v.toLowerCase()
+      if (!seen.has(k)) {
+        seen.add(k)
+        out.push(v)
+      }
+    }
+  }
+  return out
+}
+
+function sameList(a, b) {
+  return a.length === b.length && a.every((v, i) => v.toLowerCase() === b[i].toLowerCase())
+}
+
+// mergeDefaultPick is the radio a merge row starts on: the source whose value the item holds,
+// the union when it holds that, else "keep what it has".
+export function mergeDefaultPick(row) {
+  for (const [src, vals] of Object.entries(row.values)) {
+    if (sameList(vals, row.current)) return src
+  }
+  if (row.list && sameList(mergeUnion(row), row.current)) return 'union'
+  return 'manual'
+}
+
+// mergePreview is the value a merge row would take with a pick.
+export function mergePreview(row, pick) {
+  if (pick === 'union') return mergeUnion(row)
+  if (pick === 'manual') return row.current
+  return row.values[pick] ?? row.current
+}
+
 export function fmtTime(ts) {
   if (!ts) return 'never'
   const d = new Date(ts * 1000)
@@ -171,11 +208,17 @@ export class AppState {
   // problem, sorted by severity. counts drives the filter chips; filter is the chip in force.
   // The rest is the OMDb drill-in: an editable title/year/IMDb-id form and its candidates.
   attention = $state({
-    rows: [], counts: { all: 0, metadata: 0, name: 0, category: 0, disk: 0 },
+    rows: [], counts: { all: 0, metadata: 0, conflict: 0, name: 0, category: 0, disk: 0 },
     filter: 'all', loading: false, renaming: '', openDetail: '',
-    detailId: '', detail: null,
-    form: { title: '', year: '', imdbId: '' }, candidates: null, searching: false, applying: false,
+    detailId: '', detail: null, source: 'omdb',
+    form: { title: '', year: '', imdbId: '' }, candidates: null, tmdbCandidates: null, searching: false, applying: false,
   })
+
+  // admin: the merge view (/admin/attention/merge/{id}). view is the server's merge page;
+  // picks holds the radio chosen per field ("omdb", "tmdb", "union", or "manual" for keeping
+  // the current value), initial the same as the page first showed it, remember the fields to
+  // turn into library rules, and poster the source whose poster should replace the item's.
+  merge = $state({ id: '', view: null, picks: {}, initial: {}, remember: {}, poster: '', applying: false, showSettled: false })
 
   // admin: metadata editor (library detail "Edit" -> /media/{id}/edit). The raw editable
   // meta.json fields, the folder facts shown alongside, and in-flight flags. posterVersion
@@ -280,6 +323,7 @@ export class AppState {
   importFolder = $state('')
   omdbKey = $state('')
   tmdbKey = $state('')
+  metadataRules = $state([])
   logLevel = $state('info')
   logOutput = $state('STDOUT')
   transcodeEnabled = $state(true)
@@ -348,6 +392,7 @@ export class AppState {
   thumbnailScanning = $state(false)
   probeScanning = $state(false)
   peopleScanning = $state(false)
+  tmdbScanning = $state(false)
   repairingSubs = $state(false)
   sweeping = $state(false)
   sweepProgress = $state(null) // { total, done, subtitles, finished, error } while a full sweep runs
@@ -1274,7 +1319,7 @@ export class AppState {
       // "unhealthy" was this page's first name; links to it still work.
       const asked = segs[1] === 'unhealthy' ? 'attention' : segs[1]
       const page = ['dashboard', 'stats', 'library', 'tags', 'import', 'users', 'settings', 'progress', 'attention'].includes(asked) ? asked : 'dashboard'
-      this.applyAdmin(page, segs[2])
+      this.applyAdmin(page, segs[2], segs[3])
       return
     }
     if (segs[0] === 'settings') {
@@ -1324,7 +1369,7 @@ export class AppState {
 
   // applyAdmin sets the admin sub-view and loads its data, without touching history.
   // sub is the optional third path segment ("import" resumes a prepared import).
-  applyAdmin(page, sub) {
+  applyAdmin(page, sub, sub2) {
     const prev = this.adminView
     if (page !== 'progress') this.stopProgressPoll() // leaving Progress stops its poller
     if (page !== 'settings') this.stopSettingsClock() // leaving Settings stops its countdown
@@ -1374,7 +1419,7 @@ export class AppState {
     } else if (page === 'progress') {
       this.startProgressPoll()
     } else if (page === 'attention') {
-      this.openAttention(sub)
+      this.openAttention(sub, sub2)
     }
   }
 
@@ -1434,6 +1479,7 @@ export class AppState {
     this.importFolder = r.importFolder
     this.omdbKey = r.omdbKey
     this.tmdbKey = r.tmdbKey
+    this.metadataRules = r.metadataRules || []
     this.logLevel = r.logLevel
     this.logOutput = r.logOutput
     this.transcodeEnabled = r.transcodeEnabled
@@ -1603,7 +1649,13 @@ export class AppState {
 
   // openAttention loads the page: either one item's OMDb match context (a media id in the
   // URL) or the merged problem list, with the filter chip taken from the query string.
-  async openAttention(id) {
+  async openAttention(id, mergeID) {
+    this.merge.id = ''
+    if (id === 'merge' && mergeID) {
+      this.attention.detailId = ''
+      await this.openMerge(mergeID)
+      return
+    }
     this.attention.detailId = id || ''
     if (id) {
       await this.openUnmatched(id)
@@ -1626,8 +1678,9 @@ export class AppState {
       }
     }
     try {
-      const [unmatched, misnamed, misfiled, health] = await Promise.all([
+      const [unmatched, conflicts, misnamed, misfiled, health] = await Promise.all([
         get('/api/admin/unmatched'),
+        get('/api/admin/conflicts'),
         get('/api/admin/misnamed'),
         get('/api/admin/misfiled'),
         get('/api/admin/health'),
@@ -1646,6 +1699,12 @@ export class AppState {
           what: it.status === 'error' ? it.error || 'the lookup found nothing' : 'waiting in the enrich queue',
           then: it.lastAttempt ? 'last tried ' + fmtTime(it.lastAttempt) : '',
         })),
+        ...conflicts.map((it) => ({
+          key: 'conflict:' + it.id, problem: 'conflict', id: it.id,
+          title: it.title, folder: it.folder, category: it.category,
+          what: 'the sources disagree on ' + it.fields.join(', '),
+          then: it.identity ? 'they may describe different works' : '',
+        })),
         ...misnamed.map((it) => ({
           key: 'name:' + it.id, problem: 'name', id: it.id,
           title: it.title, folder: it.plan.folder.from, category: it.category,
@@ -1661,7 +1720,7 @@ export class AppState {
       ]
       this.attention.rows = rows
       this.attention.counts = {
-        all: rows.length, metadata: unmatched.length, name: misnamed.length,
+        all: rows.length, metadata: unmatched.length, conflict: conflicts.length, name: misnamed.length,
         category: misfiled.length, disk: health.length,
       }
     } finally {
@@ -1701,8 +1760,103 @@ export class AppState {
     }
   }
 
-  goAttention(id) {
-    this.go('/admin/attention/' + id)
+  goAttention(id, source) {
+    this.go('/admin/attention/' + id + (source ? '?source=' + source : ''))
+  }
+
+  goMerge(id) {
+    this.go('/admin/attention/merge/' + id)
+  }
+
+  // --- admin: merge view ---
+
+  // openMerge loads one item's merge page and seeds every field's radio from what the item
+  // holds now: its pin when it has one, else the source whose value it carries, else "keep".
+  async openMerge(id) {
+    this.merge = { id, view: null, picks: {}, initial: {}, remember: {}, poster: '', applying: false, showSettled: false }
+    try {
+      const v = await api('/api/admin/media/' + id + '/merge')
+      const picks = {}
+      for (const r of v.rows) {
+        if (!r.pickable || !Object.keys(r.values).length) continue
+        picks[r.field] = r.choice || mergeDefaultPick(r)
+      }
+      this.merge.view = v
+      this.merge.picks = picks
+      this.merge.initial = { ...picks }
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not load that item')
+      this.go('/admin/attention?problem=conflict')
+    }
+  }
+
+  setMergePick(field, pick) {
+    this.merge.picks[field] = pick
+    if (!this.merge.view?.sources.some((s) => s.name === pick)) delete this.merge.remember[field]
+  }
+
+  // takeAllFrom sets every field the source has a value for to that source. With remember on,
+  // each of those fields also becomes a library rule when applied.
+  takeAllFrom(src, remember) {
+    for (const r of this.merge.view.rows) {
+      if (r.pickable && r.values[src]) {
+        this.merge.picks[r.field] = src
+        if (remember) this.merge.remember[r.field] = true
+      }
+    }
+  }
+
+  toggleMergeRemember(field) {
+    this.merge.remember[field] = !this.merge.remember[field]
+  }
+
+  // mergeChanges counts the fields whose value the picks would change.
+  get mergeChanges() {
+    const v = this.merge.view
+    if (!v) return 0
+    let n = 0
+    for (const r of v.rows) {
+      const pick = this.merge.picks[r.field]
+      if (pick && mergePreview(r, pick).join('\u0000') !== r.current.join('\u0000')) n++
+    }
+    return n + (this.merge.poster ? 1 : 0)
+  }
+
+  // mergeDirty is whether Apply has anything to send: a changed pick, a rule, a poster, or a
+  // conflict to settle (applying pins its field to the pick shown, even left at the default).
+  get mergeDirty() {
+    const m = this.merge
+    if (!m.view) return false
+    return m.poster !== '' || Object.values(m.remember).some(Boolean) ||
+      Object.keys(m.picks).some((f) => m.picks[f] !== m.initial[f]) ||
+      m.view.rows.some((r) => r.status === 'conflict' && r.pickable)
+  }
+
+  async applyMerge() {
+    const m = this.merge
+    if (!m.view) return
+    const picks = {}
+    for (const r of m.view.rows) {
+      const pick = m.picks[r.field]
+      if (!pick) continue
+      if (pick !== m.initial[r.field] || r.status === 'conflict' || m.remember[r.field]) picks[r.field] = pick
+    }
+    const remember = Object.keys(m.remember).filter((f) => m.remember[f] && picks[f])
+    m.applying = true
+    try {
+      const r = await api('/api/admin/media/' + m.id + '/merge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ picks, remember, poster: m.poster }),
+      })
+      this.toast('success', 'Saved "' + m.view.title + '"' + (remember.length ? '; ' + remember.length + ' rule' + (remember.length === 1 ? '' : 's') + ' applied to the library.' : '.'))
+      if (r.next) this.goMerge(r.next)
+      else this.go('/admin/attention?problem=conflict')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not save the merge')
+    } finally {
+      m.applying = false
+    }
   }
 
   // renameFromEditor applies the rename the editor offers, then follows the item to the id
@@ -1727,6 +1881,8 @@ export class AppState {
   async openUnmatched(id) {
     this.attention.detail = null
     this.attention.candidates = null
+    this.attention.tmdbCandidates = null
+    this.attention.source = new URLSearchParams(location.search).get('source') === 'tmdb' ? 'tmdb' : 'omdb'
     try {
       const c = await api('/api/admin/media/' + id + '/match')
       this.attention.detail = c
@@ -1766,6 +1922,47 @@ export class AppState {
       this.attention.candidates = []
     } finally {
       this.attention.searching = false
+    }
+  }
+
+  async searchTMDb() {
+    const d = this.attention.detail
+    if (!d) return
+    this.attention.searching = true
+    this.attention.tmdbCandidates = null
+    try {
+      const r = await api('/api/admin/media/' + d.id + '/tmdb-search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: this.attention.form.title.trim(), year: Number(this.attention.form.year) || 0 }),
+      })
+      this.attention.tmdbCandidates = r.candidates || []
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'TMDb search failed')
+      this.attention.tmdbCandidates = []
+    } finally {
+      this.attention.searching = false
+    }
+  }
+
+  // applyTMDbMatch records the chosen TMDb title for the item (and re-matches OMDb to the same
+  // IMDb id when TMDb links one), then shows the merge of the two.
+  async applyTMDbMatch(cand) {
+    const d = this.attention.detail
+    if (!d) return
+    this.attention.applying = true
+    try {
+      await api('/api/admin/media/' + d.id + '/tmdb-match', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: cand.kind, id: cand.id }),
+      })
+      this.toast('success', 'Matched "' + cand.title + '" on TMDb.')
+      this.goMerge(d.id)
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not apply the match')
+    } finally {
+      this.attention.applying = false
     }
   }
 
@@ -1999,6 +2196,28 @@ export class AppState {
       this.toast('error', (await errText(e)) || 'Probe scan failed')
     } finally {
       this.probeScanning = false
+    }
+  }
+
+  async tmdbScan() {
+    this.tmdbScanning = true
+    try {
+      const r = await api('/api/admin/tmdb/scan', { method: 'POST' })
+      this.toast('success', `Queued ${r.candidates} folder${r.candidates === 1 ? '' : 's'} for TMDb; ${r.pending} waiting in line.`)
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'TMDb scan failed')
+    } finally {
+      this.tmdbScanning = false
+    }
+  }
+
+  // deleteRule drops one field's library-wide source rule; the server re-merges the library.
+  async deleteRule(field) {
+    try {
+      this.applySettings(await api('/api/admin/settings/metadata-rules/' + encodeURIComponent(field), { method: 'DELETE' }))
+      this.toast('success', 'Rule removed; the library is re-merged in the background.')
+    } catch (e) {
+      this.toast('error', (await errText(e)) || 'Could not remove the rule')
     }
   }
 

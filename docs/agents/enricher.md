@@ -82,13 +82,31 @@ from the thumbnail agent's frame-extraction path instead (see `thumbnailer.md`).
 | `poster.*` | downloaded into the media folder **only when the folder has no poster** and OMDb returns one; an existing poster is never overwritten |
 | `media` cache row | description, plot, and poster name updated; `enriched` set |
 
+## The OMDb snapshot and the merge
+
+Every successful lookup also stores OMDb's own record of the item as its OMDb snapshot in
+`meta.json`, and the write ends by re-running the merge of all the item's sources (see
+`../sources.md`), so a TMDb record already there is cross-checked and its gaps filled.
+
+- **Lookup by id when one is known.** An item another source already tied to an IMDb id (a
+  TMDb match, see `tmdb.md`) is looked up by that id rather than by its title.
+- **Snapshots for items already matched.** An item matched before snapshots existed (or
+  matched by TMDb alone) has no OMDb snapshot to compare with. The enrich refill queues these
+  as well, as by-id lookups that only record the snapshot and re-merge; the item's own fields
+  change only where the merge says so. A free OMDb key allows 1000 requests a day, and new
+  items and re-matches need their share, so at most **200 such lookups a day** are spent,
+  counted by the agent and checked by the refill. A large library catches up over a few days.
+  An id OMDb no longer knows is kept as a failed snapshot and retried after 14 days.
+
 ## Additive vs replace: one write path, two callers
 
 The write above is the **additive** mode of a shared write path. The admin manual re-match (see
 `../rematch.md`) reuses the same path in **replace** mode: the chosen OMDb record wins over the
 existing `meta.json`, the cache row's title/year are corrected to the admin-confirmed values (the
 agent instead pins them to the folder), and the poster is refreshed (the old base poster and its
-sized variants removed so the thumbnailer rebuilds them). Both modes preserve the ffprobe
+sized variants removed so the thumbnailer rebuilds them). A replace also keeps the curated
+tags, the added date, the cast block and the other sources' snapshots (dropping another
+source's record of the old match), and unpins every field except those set by hand. Both modes preserve the ffprobe
 `technical` block and the per-user `state`, and both go through the same per-folder lock - so an
 admin fixing a wrong match and the agent filling a fresh one share one code path and one set of
 invariants.

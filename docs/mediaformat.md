@@ -13,7 +13,8 @@ dataDir/
       <media-folder>/                 no config.json, has video -> media item
         <video file(s)>
         meta.json                     version, title, year, rich fields, genres, tags,
-                                      technical, added date, per-user state, TMDb cast
+                                      technical, added date, per-user state, TMDb cast,
+                                      per-source snapshots + per-field picks
         poster.*                      base poster (jpg/png/webp)
         poster_280.webp               detail variant (thumbnail agent)
         poster_180.webp               tile variant (thumbnail agent)
@@ -142,7 +143,7 @@ references (a bookmark, an id a client is holding) are affected. See [`rename.md
 | on disk (authoritative) | in the cache (rebuildable) |
 |-------------------------|----------------------------|
 | `config.json` (id, alias, top-level other-media, position, markers) | `categories` rows (parent_id, effective other_media, position) |
-| `meta.json` (version, title, year, rich fields, genres, tags, technical, added date, per-user state, TMDb cast) | `media` / `media_files` / `media_facets` rows |
+| `meta.json` (version, title, year, rich fields, genres, tags, technical, added date, per-user state, TMDb cast, source snapshots, picks) | `media` / `media_files` / `media_facets` rows |
 | `poster.*` and the sized `poster_<W>.webp` variants | the `poster` basename on the media row |
 | `.people/<id>/` (`person.json` + photo) | nothing: read straight from disk when a Cast card is shown |
 

@@ -141,6 +141,10 @@ func (s *Server) runRebuild(ctx context.Context, pool *sql.DB, dataDir string) {
 		s.rebuildJob.fail("could not clear probe tasks")
 		return
 	}
+	if err := db.ClearTMDbTasksAll(ctx, pool); err != nil {
+		s.rebuildJob.fail("could not clear TMDb tasks")
+		return
+	}
 	if err := db.ClearPeopleTasksAll(ctx, pool); err != nil {
 		s.rebuildJob.fail("could not clear people tasks")
 		return

@@ -28,6 +28,7 @@ var (
 	thumbnailQueue = taskQueue{table: "thumbnail_tasks", pending: ThumbStatusPending, active: ThumbStatusGenerating, errored: ThumbStatusError}
 	probeQueue     = taskQueue{table: "probe_tasks", pending: ProbeStatusPending, active: ProbeStatusProbing, errored: ProbeStatusError}
 	peopleQueue    = taskQueue{table: "people_tasks", pending: PeopleStatusPending, active: PeopleStatusResolving, errored: PeopleStatusError}
+	tmdbQueue      = taskQueue{table: "tmdb_tasks", pending: TMDbStatusPending, active: TMDbStatusMatching, errored: TMDbStatusError}
 )
 
 // claim runs the race-free read-then-flip transaction shared by every queue: it selects

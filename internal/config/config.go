@@ -128,10 +128,30 @@ type Config struct {
 	SubtitleLanguage string `json:"subtitleLanguage"` // preferred sidecar language; "" => "en"
 	OptimizeMode     string `json:"optimizeMode"`     // none|cpu|gpu|all; "" => none (off)
 
+	// MetadataRules are the admin's library-wide choices of which metadata source wins a
+	// field when the sources disagree, keyed by field ("runtime", "description", ...).
+	MetadataRules map[string]MetadataRule `json:"metadataRules,omitempty"`
+
 	// DiscoveryInterval is the background discovery sweep period in seconds; 0 (the
 	// default) turns the agent off. Only the fixed set in ValidDiscoveryInterval is
 	// accepted (off / 1h / 3h / 12h / 24h).
 	DiscoveryInterval int `json:"discoveryInterval"`
+}
+
+// MetadataRule is one field's source preference, most preferred first, and when it was set
+// (unix seconds).
+type MetadataRule struct {
+	Order []string `json:"order"`
+	Set   int64    `json:"set"`
+}
+
+// RuleOrders returns the metadata rules as the merge reads them: field -> source order.
+func (c *Config) RuleOrders() map[string][]string {
+	out := make(map[string][]string, len(c.MetadataRules))
+	for field, r := range c.MetadataRules {
+		out[field] = append([]string(nil), r.Order...)
+	}
+	return out
 }
 
 // Discovery sweep intervals (seconds). 0 is off; the rest are 1h / 3h / 12h / 24h.

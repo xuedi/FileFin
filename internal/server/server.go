@@ -83,6 +83,18 @@ type Server struct {
 	peopleStart sync.Once
 	newTMDb     func(key string) *tmdb.Client
 
+	// tmdbStart guards the single TMDb matching agent goroutine.
+	tmdbStart sync.Once
+
+	// The day's budget of OMDb lookups spent on snapshots of items already matched (see
+	// merge.go), and the guard that keeps one library-wide re-apply of the metadata rules
+	// running at a time, with a flag asking for one more pass when the rules change mid-way.
+	omdbBudgetMu   sync.Mutex
+	omdbBudgetDay  string
+	omdbBudgetUsed int
+	reapplying     atomic.Bool
+	reapplyAgain   atomic.Bool
+
 	// backfillMu serializes the version-gated cache backfill. ensureDB runs on every request,
 	// so without it a burst of concurrent first requests each start the whole pass before any
 	// of them stamps the new version - on a large library, the same walk several times over.
@@ -208,6 +220,7 @@ func Run() error {
 		s.startThumbnailAgent()
 		s.startProbeAgent()
 		s.startPeopleAgent()
+		s.startTMDbAgent()
 		s.startDiscovery()
 		s.signalReconfigOpt()
 		s.signalReconfigDisc()
@@ -362,6 +375,15 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("POST /api/admin/probe/scan", s.admin(s.handleProbeScan))
 		mux.Handle("GET /api/admin/people/active", s.admin(s.handleActivePeople))
 		mux.Handle("POST /api/admin/people/scan", s.admin(s.handlePeopleScan))
+		mux.Handle("GET /api/admin/tmdb/active", s.admin(s.handleActiveTMDb))
+		mux.Handle("POST /api/admin/tmdb/scan", s.admin(s.handleTMDbScan))
+		mux.Handle("GET /api/admin/tmdb/poster", s.admin(s.handleTMDbPoster))
+		mux.Handle("GET /api/admin/conflicts", s.admin(s.handleConflicts))
+		mux.Handle("GET /api/admin/media/{id}/merge", s.admin(s.handleMergeView))
+		mux.Handle("POST /api/admin/media/{id}/merge", s.admin(s.handleApplyMerge))
+		mux.Handle("POST /api/admin/media/{id}/tmdb-search", s.admin(s.handleTMDbSearch))
+		mux.Handle("POST /api/admin/media/{id}/tmdb-match", s.admin(s.handleApplyTMDbMatch))
+		mux.Handle("DELETE /api/admin/settings/metadata-rules/{field}", s.admin(s.handleDeleteRule))
 		mux.Handle("POST /api/admin/rebuild", s.admin(s.handleRebuild))
 		mux.Handle("GET /api/admin/rebuild/progress", s.admin(s.handleRebuildProgress))
 		mux.Handle("GET /api/admin/import/folder", s.admin(s.handleImportFolder))

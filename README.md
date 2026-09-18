@@ -1,7 +1,7 @@
 # FileFin
 
 [![CI](https://github.com/xuedi/FileFin/actions/workflows/ci.yml/badge.svg)](https://github.com/xuedi/FileFin/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.27.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
+[![Version](https://img.shields.io/badge/Version-0.28.0-31c754.svg)](https://github.com/xuedi/FileFin/releases)
 [![License](https://img.shields.io/badge/License-EUPL_v1.2-31c754.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26+-31c754.svg)](https://go.dev)
 
@@ -115,8 +115,9 @@ the server to transcode them. It is not yet released - see that repo's own READM
   row's target category is preselected from what past imports taught.
 - **Import from Plex, Jellyfin, or your browser** - bring an existing library across (Jellyfin/Kodi NFO
   libraries included), or upload files straight from the browser.
-- **Metadata three ways** - background OMDb enrichment, a manual search-and-match page for what it
-  missed, and a hand-editor for every field with poster upload.
+- **Metadata from two databases** - background OMDb and TMDb matching merged field by field, a
+  Conflict list with a side-by-side merge view (pick per field, per item or as a library rule), a
+  manual search-and-match page for what both missed, and a hand-editor for every field.
 - **Cast with faces** - with a TMDb key, each item's full billed cast and characters, and every
   actor's photo stored once on your own disk, so the Cast card stays local and offline.
 - **Direct streaming with on-demand transcoding** - byte-range direct play decided by the *probed*

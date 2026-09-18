@@ -87,7 +87,7 @@ func New(credential string) *Client {
 	c := &Client{
 		http:    &http.Client{Timeout: 15 * time.Second, CheckRedirect: httpsafe.NoInternalRedirect},
 		baseURL: "https://api.themoviedb.org/3",
-		imgURL:  "https://image.tmdb.org/t/p/" + ProfileSize,
+		imgURL:  "https://image.tmdb.org/t/p",
 		pace:    defaultPace,
 	}
 	credential = strings.TrimSpace(credential)
@@ -100,7 +100,7 @@ func New(credential string) *Client {
 }
 
 // NewAt returns a Client that talks to a TMDb-compatible API and image host other than the
-// public ones, such as a test server.
+// public ones, such as a test server. imageURL is the base the size segment is appended to.
 func NewAt(credential, apiURL, imageURL string) *Client {
 	c := New(credential)
 	c.baseURL, c.imgURL = apiURL, imageURL
@@ -202,19 +202,49 @@ func (c *Client) Person(ctx context.Context, id int) (Person, error) {
 
 // ProfileImage downloads a person's photo at ProfileSize from TMDb's image host.
 func (c *Client) ProfileImage(ctx context.Context, profilePath string) ([]byte, error) {
-	if !strings.HasPrefix(profilePath, "/") || strings.Contains(profilePath, "..") {
-		return nil, fmt.Errorf("tmdb image: bad path %q", profilePath)
+	return c.image(ctx, ProfileSize, profilePath)
+}
+
+// image downloads one file from TMDb's image host. Only a plain "/name.ext" path at a
+// "w<digits>" or "original" size is accepted, so nothing a caller passes can steer the request
+// anywhere else.
+func (c *Client) image(ctx context.Context, size, imagePath string) ([]byte, error) {
+	if !validImagePath(imagePath) || !validImageSize(size) {
+		return nil, fmt.Errorf("tmdb image: bad path %q", imagePath)
 	}
-	resp, err := c.do(ctx, c.imgURL+profilePath, false)
+	resp, err := c.do(ctx, c.imgURL+"/"+size+imagePath, false)
 	if err != nil {
-		return nil, fmt.Errorf("tmdb image %s: %w", profilePath, err)
+		return nil, fmt.Errorf("tmdb image %s: %w", imagePath, err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(httpsafe.LimitBody(resp.Body))
 	if err != nil {
-		return nil, fmt.Errorf("tmdb image read %s: %w", profilePath, err)
+		return nil, fmt.Errorf("tmdb image read %s: %w", imagePath, err)
 	}
 	return data, nil
+}
+
+func validImagePath(p string) bool {
+	if len(p) < 2 || p[0] != '/' {
+		return false
+	}
+	for _, r := range p[1:] {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return !strings.Contains(p, "..")
+}
+
+func validImageSize(s string) bool {
+	if s == "original" {
+		return true
+	}
+	if len(s) < 2 || s[0] != 'w' {
+		return false
+	}
+	_, err := strconv.Atoi(s[1:])
+	return err == nil
 }
 
 // get performs an authenticated API GET and decodes the JSON body into v.
