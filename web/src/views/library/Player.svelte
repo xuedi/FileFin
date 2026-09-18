@@ -1,5 +1,5 @@
 <script>
-  import { getContext } from 'svelte'
+  import { getContext, untrack } from 'svelte'
   const app = getContext('app')
 
   // hls is private to one mounted player instance.
@@ -35,8 +35,10 @@
     }
 
     // Subtitles are independent of the stream, so native <track>s work for both
-    // direct-play and HLS. Clear any from the previous file, then add this file's.
+    // direct-play and HLS. Clear any from the previous file, then add this file's, turning
+    // on the first one in the user's remembered language for this item.
     el.querySelectorAll('track').forEach((t) => t.remove())
+    let active = untrack(() => app.detail.subtitle) || ''
     for (const sub of f?.subtitles ?? []) {
       const track = document.createElement('track')
       track.kind = 'subtitles'
@@ -45,6 +47,39 @@
       track.src = base + '/sub/' + sub.index
       el.appendChild(track)
     }
+    const applySubtitle = () => {
+      let on = false
+      for (const t of el.textTracks) {
+        const want = !on && !!active && (t.language || 'und') === active
+        on ||= want
+        const mode = want ? 'showing' : 'disabled'
+        if (t.mode !== mode) t.mode = mode
+      }
+    }
+    applySubtitle()
+    // The browser runs its own automatic track selection whenever tracks are added or a
+    // source (re)loads - a new file or an HLS recovery - and switches on extra tracks. Until
+    // the media has loaded, every change is the browser's and is overridden; after that, a
+    // single showing track is the user's pick and is remembered, several mean the browser
+    // added one. An episode lacking the language just plays without, keeping the choice.
+    let settling = true
+    const onSettled = () => {
+      settling = false
+      applySubtitle()
+    }
+    const onTrackChange = () => {
+      const showing = Array.from(el.textTracks).filter((t) => t.mode === 'showing')
+      if (settling || showing.length > 1) {
+        applySubtitle()
+        return
+      }
+      const lang = showing.length ? showing[0].language || 'und' : ''
+      if (lang === active) return
+      active = lang
+      app.setSubtitlePref(lang)
+    }
+    el.textTracks.addEventListener('change', onTrackChange)
+    el.addEventListener('loadeddata', onSettled)
 
     // A fatal hls.js error otherwise stops all loading for good: buffered content still
     // plays but nothing ahead ever arrives. Rebuild from the playlist at the current
@@ -52,11 +87,20 @@
     // budget refills once playback moves again, so a truly broken stream cannot loop.
     let recoveries = 0
     const startHls = (Hls, url, startPosition) => {
-      hls = new Hls({ startPosition })
+      // hls.js's text controllers disable every subtitle track and wipe its cues on attach,
+      // detach and playlist load, which would kill our sidecar <track>s on each recovery.
+      // Subtitles never come through the playlist, so they are left out.
+      hls = new Hls({
+        startPosition,
+        subtitleTrackController: null,
+        subtitleStreamController: null,
+        timelineController: null,
+      })
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal || cancelled) return
         if (recoveries >= 3) return
         recoveries++
+        settling = true
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           hls.recoverMediaError()
           return
@@ -94,6 +138,8 @@
         el.removeEventListener('timeupdate', onTime)
         el.removeEventListener('pause', onPause)
         el.removeEventListener('ended', onEnded)
+        el.textTracks.removeEventListener('change', onTrackChange)
+        el.removeEventListener('loadeddata', onSettled)
         el.querySelectorAll('track').forEach((t) => t.remove())
       }
       if (hls) {

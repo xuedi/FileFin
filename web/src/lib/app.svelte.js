@@ -955,6 +955,20 @@ export class AppState {
     }
   }
 
+  // Remembers the subtitle language switched on in the player ("" = off) so the next
+  // episode or a reload starts with it. Best-effort: a failed save only loses the preference.
+  async setSubtitlePref(lang) {
+    if (!this.detail || this.detail.subtitle === lang) return
+    this.detail.subtitle = lang
+    try {
+      await api('/api/media/' + this.detail.id + '/subtitle', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subtitle: lang }),
+      })
+    } catch {}
+  }
+
   // --- MyDramaList import (user settings) ---
 
   async saveMDLUsername() {

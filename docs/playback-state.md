@@ -13,6 +13,11 @@ that item. An entry records a resume pointer, a permanent watched flag, a favour
 optional 1-10 `rating`, and an `updated` unix-seconds timestamp. A folder nobody has touched
 carries no `state` key.
 
+An entry also remembers the **subtitle language** the user last switched on in the player (empty
+= off). Sidecar tracks are numbered per file, so the language, not the track, is what carries
+over: the next episode or a reload turns on the first track in that language, and an episode
+without it simply starts with subtitles off (without forgetting the choice).
+
 The `rating` is independent of the resume engine: the pure `Apply` never touches it and clearing
 watched never clears it. It is set directly (like the favourite flag), by the detail page or by the
 [MyDramaList import](mdl.md).
@@ -96,3 +101,4 @@ state handlers go through `Manager.UpdateState` (read entry, apply the engine fu
 | `DELETE /api/media/{id}/watched`       | clear the watched flag (and the pointer)       |
 | `POST   /api/media/{id}/favorite`      | set/clear the favourite flag                   |
 | `POST   /api/media/{id}/rating`        | set (1-10) or clear (0) the user's rating      |
+| `POST   /api/media/{id}/subtitle`      | remember (language) or clear (empty) the subtitle choice |

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"filefin/internal/db"
 	"filefin/internal/ffprobe"
@@ -70,6 +71,7 @@ type mediaDetail struct {
 	Watched         bool       `json:"watched"`
 	Favorite        bool       `json:"favorite"`
 	Rating          int        `json:"rating"`
+	Subtitle        string     `json:"subtitle"`
 	ContinueIndex   int        `json:"continueIndex"`
 	ContinueSeconds int        `json:"continueSeconds"`
 }
@@ -357,6 +359,7 @@ func (s *Server) handleMediaDetail(w http.ResponseWriter, r *http.Request) {
 	d.Watched = v.Watched
 	d.Favorite = us.Favorite
 	d.Rating = us.Rating
+	d.Subtitle = us.Subtitle
 	d.ContinueIndex = v.ContinueIndex
 	d.ContinueSeconds = v.ContinueSeconds
 	for i := range d.Files {
@@ -476,6 +479,42 @@ func (s *Server) handleRating(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSubtitlePref records the subtitle language the user switched on for an item ("" =
+// off). A sidecar without a language infix is tagged "und" by the player.
+func (s *Server) handleSubtitlePref(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeJSON[struct {
+		Subtitle string `json:"subtitle"`
+	}](w, r)
+	if err != nil || !validSubtitlePref(req.Subtitle) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	folder, ok := s.folderFor(w, r)
+	if !ok {
+		return
+	}
+	if err := s.writeState(folder, r.PathValue("id"), userFrom(r), func(us state.UserState) state.UserState {
+		us.Subtitle = req.Subtitle
+		return us
+	}); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validSubtitlePref(lang string) bool {
+	if len(lang) > 8 {
+		return false
+	}
+	for _, c := range lang {
+		if !unicode.IsLetter(c) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleClearProgress(w http.ResponseWriter, r *http.Request) {

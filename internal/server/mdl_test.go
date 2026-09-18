@@ -62,3 +62,29 @@ func TestMDLProfileAndApply(t *testing.T) {
 		t.Fatalf("apply did not record rating+watched: %+v err=%v", m.State, err)
 	}
 }
+
+func TestSubtitlePrefEndpoint(t *testing.T) {
+	s, h, admin, dataDir, catID := mediaTestServer(t)
+	id, dir := seedMedia(t, s, dataDir, "Movies", catID, "(1999) The Matrix", "(1999) The Matrix.mp4",
+		importer.Meta{Title: "The Matrix", Year: 1999})
+
+	if rr := do(t, h, "POST", "/api/media/"+id+"/subtitle", `{"subtitle":"en"}`, admin); rr.Code != 204 {
+		t.Fatalf("set subtitle: %d %s", rr.Code, rr.Body.String())
+	}
+	if m, err := importer.ReadMeta(dir); err != nil || m.State["admin"].Subtitle != "en" {
+		t.Fatalf("subtitle not recorded: %+v err=%v", m.State, err)
+	}
+	if rr := do(t, h, "GET", "/api/media/"+id, "", admin); !strings.Contains(rr.Body.String(), `"subtitle":"en"`) {
+		t.Fatalf("detail missing subtitle: %s", rr.Body.String())
+	}
+
+	if rr := do(t, h, "POST", "/api/media/"+id+"/subtitle", `{"subtitle":"../x"}`, admin); rr.Code != 400 {
+		t.Fatalf("expected 400 for a non-language value, got %d", rr.Code)
+	}
+	if rr := do(t, h, "POST", "/api/media/"+id+"/subtitle", `{"subtitle":""}`, admin); rr.Code != 204 {
+		t.Fatalf("clear subtitle: %d", rr.Code)
+	}
+	if m, _ := importer.ReadMeta(dir); m.State["admin"].Subtitle != "" {
+		t.Fatalf("subtitle not cleared: %+v", m.State)
+	}
+}

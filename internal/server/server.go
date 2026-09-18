@@ -287,6 +287,7 @@ func (s *Server) handler() http.Handler {
 		mux.Handle("GET /api/media/{id}/poster", s.auth(s.handlePoster))
 		mux.Handle("POST /api/media/{id}/favorite", s.auth(s.handleFavorite))
 		mux.Handle("POST /api/media/{id}/rating", s.auth(s.handleRating))
+		mux.Handle("POST /api/media/{id}/subtitle", s.auth(s.handleSubtitlePref))
 		mux.Handle("POST /api/media/{id}/progress", s.auth(s.handleProgress))
 		mux.Handle("DELETE /api/media/{id}/progress", s.auth(s.handleClearProgress))
 		mux.Handle("POST /api/media/{id}/watched", s.auth(s.handleSetWatched))

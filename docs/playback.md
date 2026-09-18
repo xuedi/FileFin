@@ -126,6 +126,14 @@ flowchart TD
   parse is dropped rather than failing the render, so a partly malformed script still shows
   the cues it does have.
 
+The player turns on the user's remembered subtitle language for the item when it loads each
+file, and saves a new choice whenever the user switches subtitles (see `playback-state.md`).
+The browser runs its own automatic track selection whenever tracks are added or a source
+(re)loads, so until the media has loaded every track change is treated as the browser's and
+overridden; only a change after that counts as the user's pick. hls.js runs without its own
+subtitle and caption components: they would disable the sidecar tracks and wipe their cues on
+every attach, so an HLS stream rebuilt by the recovery keeps its subtitles.
+
 Sniffing at serve time is what makes an already-imported mislabelled file play without
 touching the disk; import does the same check when placing the sidecar (see `import.md`).
 

@@ -26,6 +26,10 @@ type UserState struct {
 	// resume engine: Apply never touches it and clearing watched never clears it. The
 	// MyDramaList import is one writer; the detail page is another.
 	Rating int `json:"rating,omitempty"`
+	// Subtitle is the language tag of the subtitle the user last switched on for this item
+	// ("" = off), so the next episode or a reload starts with the same one. Sidecar indexes
+	// differ per file, the language does not.
+	Subtitle string `json:"subtitle,omitempty"`
 	// Updated is the unix-seconds time of the last change, stamped by the writer. It is
 	// the ordering key the home buckets sort by (newest-first); meta.json's own mtime is
 	// useless for that since the importer and enricher also touch the file.
