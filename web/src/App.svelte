@@ -195,7 +195,7 @@
   </div>
 {/if}
 
-<svelte:window onkeydown={(e) => app.tokKeydown(e)} />
+<svelte:window onkeydowncapture={(e) => app.playerKeydown(e)} />
 
 {#if app.tokOn}
   <TokPlayer />

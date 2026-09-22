@@ -1,4 +1,5 @@
 import { api, errText } from './api.js'
+import { seekBy, toggleFullscreen } from './player.js'
 
 // --- pure helpers (no app state) ---
 
@@ -982,6 +983,23 @@ export class AppState {
     this.playing = true
   }
 
+  // The detail item's files in the order the episode list shows them, and the neighbours of
+  // the one playing - null at either end - for the player's episode-jump buttons.
+  playlist = $derived(this.seasons.flatMap((s) => s.episodes))
+  prevFile = $derived(this.playlist[this.playlist.findIndex((f) => f.index === this.currentFile) - 1] ?? null)
+  nextFile = $derived.by(() => {
+    const i = this.playlist.findIndex((f) => f.index === this.currentFile)
+    return i < 0 ? null : (this.playlist[i + 1] ?? null)
+  })
+
+  // stepFile plays the previous (-1) or next (+1) file, moving the episode list to its season.
+  stepFile(dir) {
+    const f = dir < 0 ? this.prevFile : this.nextFile
+    if (!f) return
+    this.currentSeason = f.season || 0
+    this.playFile(f.index)
+  }
+
   async toggleFavorite() {
     const next = !this.detail.favorite
     this.detail.favorite = next // optimistic
@@ -1292,8 +1310,37 @@ export class AppState {
     }
   }
 
+  // playerKeydown is the keyboard for whichever player is up: space pauses/resumes, f
+  // toggles fullscreen, up/down step the volume by 10% and, on the detail player, left/right
+  // jump 10 seconds (TokTok keeps them for the previous/next video). It works anywhere on the
+  // page except while typing into a field. It runs in the capture phase and stops the event,
+  // so a focused <video> (whose native controls also bind these keys) or a focused button
+  // doesn't act on the same press a second time.
+  playerKeydown(e) {
+    const el = this.tokOn ? this.tokVideoEl : this.playing ? this.videoEl : null
+    if (!el || e.ctrlKey || e.metaKey || e.altKey) return
+    const t = e.target
+    if (t?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName)) return
+    if (e.key === ' ') {
+      if (el.paused) el.play?.().catch(() => {})
+      else el.pause()
+    } else if (e.key === 'f' || e.key === 'F') {
+      toggleFullscreen(el)
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const step = e.key === 'ArrowUp' ? 0.1 : -0.1
+      el.volume = Math.min(1, Math.max(0, Math.round((el.volume + step) * 10) / 10))
+      if (step > 0) el.muted = false
+    } else if (!this.tokOn && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      seekBy(el, e.key === 'ArrowRight' ? 10 : -10)
+    } else {
+      if (this.tokOn) this.tokKeydown(e)
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
   tokKeydown(e) {
-    if (!this.tokOn) return
     if (e.key === 'Escape') {
       this.stopTokTok()
     } else if (e.key === 'ArrowRight') {

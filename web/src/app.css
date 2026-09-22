@@ -508,7 +508,39 @@ body { min-height: 100vh; }
 .ff-detail-main { flex: 1 1 0; min-width: 0; }
 .ff-detail-poster { flex: 0 0 22%; }
 .ff-detail-poster img { width: 100%; border-radius: 8px; display: block; }
-.ff-video-player { width: 100%; max-height: 70vh; background: black; border-radius: 8px; margin: 0.75rem 0; }
+.ff-video-player { display: block; width: 100%; max-height: 70vh; background: black; border-radius: 8px; }
+
+/* player frame: the video plus its overlay buttons; fullscreen takes the frame, and in
+   fullscreen a resting mouse hides the overlay and the cursor (.ff-idle, set by idleChrome) */
+.ff-player-frame { position: relative; margin: 0.75rem 0; }
+.ff-player-frame:fullscreen { margin: 0; background: #000; display: flex; flex-direction: column; justify-content: center; }
+.ff-player-frame:fullscreen .ff-video-player { height: 100%; max-height: none; border-radius: 0; object-fit: contain; }
+.ff-player-frame.ff-idle { cursor: none; }
+.ff-player-overlay { transition: opacity 0.25s; }
+.ff-player-frame.ff-idle .ff-player-overlay { opacity: 0; pointer-events: none; }
+.ff-player-frame > .ff-player-overlay:not(.tok-bar) {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  gap: 0.4rem;
+  opacity: 0;
+}
+.ff-player-frame:hover > .ff-player-overlay,
+.ff-player-frame:focus-within > .ff-player-overlay { opacity: 1; }
+.ff-player-frame.ff-idle > .ff-player-overlay { opacity: 0; }
+.ff-player-btn {
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+.ff-player-btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.8); border-color: #fff; }
+.ff-player-btn:disabled { opacity: 0.4; cursor: default; }
 .ff-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .ff-title-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
 /* keep the rating select and every action button the same height and radius */
@@ -597,7 +629,7 @@ body { min-height: 100vh; }
 .ff-pivot:hover { color: var(--bulma-link); text-decoration: underline; }
 
 /* fullscreen TokTok player */
-.tok { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; flex-direction: column; }
+.tok { position: fixed; inset: 0; margin: 0; z-index: 1000; background: #000; display: flex; flex-direction: column; }
 .tok-bar {
   position: absolute;
   top: 0;

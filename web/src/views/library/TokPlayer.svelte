@@ -1,5 +1,6 @@
 <script>
   import { getContext } from 'svelte'
+  import { idleChrome, seekBy, toggleFullscreen } from '../../lib/player.js'
   const app = getContext('app')
 
   // Wire the TokTok player whenever the current item changes (same direct-play vs HLS
@@ -68,13 +69,17 @@
   })
 </script>
 
-<div class="tok">
-  <div class="tok-bar">
+<div class="tok ff-player-frame" use:idleChrome>
+  <div class="tok-bar ff-player-overlay">
     <span class="tok-title">{app.tokTitle}</span>
     <div class="tok-actions">
-      <button class="tok-btn" title="Next video" onclick={() => app.advanceTok()}>&#9197;</button>
+      <button class="tok-btn" title="Previous video (←)" onclick={() => app.previousTok()}>&#9198;</button>
+      <button class="tok-btn" title="Back 10 seconds" onclick={() => seekBy(app.tokVideoEl, -10)}>&#8634; 10</button>
+      <button class="tok-btn" title="Forward 10 seconds" onclick={() => seekBy(app.tokVideoEl, 10)}>10 &#8635;</button>
+      <button class="tok-btn" title="Next video (→)" onclick={() => app.advanceTok()}>&#9197;</button>
+      <button class="tok-btn" title="Fullscreen (f)" onclick={() => toggleFullscreen(app.tokVideoEl)}>&#x26F6;</button>
       <button class="tok-btn" title="Close (Esc)" onclick={() => app.stopTokTok()}>&#10005;</button>
     </div>
   </div>
-  <video class="tok-video" controls autoplay playsinline bind:this={app.tokVideoEl}></video>
+  <video class="tok-video" controls controlslist="nofullscreen" autoplay playsinline bind:this={app.tokVideoEl}></video>
 </div>

@@ -1,6 +1,7 @@
 <script>
   import { getContext, untrack } from 'svelte'
   import { preferredSubtitle } from '../../lib/app.svelte.js'
+  import { idleChrome, seekBy, toggleFullscreen } from '../../lib/player.js'
   const app = getContext('app')
 
   // hls is private to one mounted player instance.
@@ -150,4 +151,19 @@
   })
 </script>
 
-<video class="ff-video-player" controls autoplay bind:this={app.videoEl}></video>
+<!-- The browser's own fullscreen button would take the bare video there, leaving the overlay
+     behind, so it is swapped for ours, which takes the whole frame. -->
+<div class="ff-player-frame" use:idleChrome>
+  <video class="ff-video-player" controls controlslist="nofullscreen" autoplay bind:this={app.videoEl}></video>
+  <div class="ff-player-overlay">
+    {#if app.playlist.length > 1}
+      <button class="ff-player-btn" title="Previous episode" disabled={!app.prevFile} onclick={() => app.stepFile(-1)}>&#9198;</button>
+    {/if}
+    <button class="ff-player-btn" title="Back 10 seconds (←)" onclick={() => seekBy(app.videoEl, -10)}>&#8634; 10</button>
+    <button class="ff-player-btn" title="Forward 10 seconds (→)" onclick={() => seekBy(app.videoEl, 10)}>10 &#8635;</button>
+    {#if app.playlist.length > 1}
+      <button class="ff-player-btn" title="Next episode" disabled={!app.nextFile} onclick={() => app.stepFile(1)}>&#9197;</button>
+    {/if}
+    <button class="ff-player-btn" title="Fullscreen (f)" onclick={() => toggleFullscreen(app.videoEl)}>&#x26F6;</button>
+  </div>
+</div>

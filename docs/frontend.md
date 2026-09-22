@@ -33,6 +33,16 @@ cleanup), which must run inside the component that owns the element, so it lives
 and `TokPlayer.svelte`. `pendingSeek` and `tokHls` stay on `AppState` because they are shared
 across the effect and other methods; the detail player's `hls` is private to `Player.svelte`.
 
+Both players sit in a frame that carries their overlay buttons (10-second jumps, fullscreen, and
+previous/next episode on a multi-file item or previous/next video in TokTok). Fullscreen always
+takes the frame, never the bare video, so the overlay comes along; the browser's own fullscreen
+button is hidden for that reason. In fullscreen the native control bar and the overlay start
+hidden, appear on a mouse move or click, and hide again once the mouse rests; the native bar is
+switched off outright rather than left to the browser's fade, which can stay stuck on screen.
+One window-level key handler drives whichever player is up: space pauses and resumes, `f`
+toggles fullscreen, up/down step the volume, and left/right jump 10 seconds on the detail player
+while TokTok keeps them for the previous/next video.
+
 ```mermaid
 flowchart TD
   App["App.svelte<br/>(boot, auth gate, navbar, sidebar, router)"] -->|context: app| State["AppState<br/>(lib/app.svelte.js)"]
